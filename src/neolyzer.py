@@ -564,6 +564,9 @@ class SkyMapCanvas(FigureCanvas):
         self.animation_playing = False  # Track animation state
         self.animation_paused = False   # Track if paused (vs stopped)
 
+        # Store last visible data for histogram equalization
+        self._last_visible_data = None
+
         # FPS tracking
         self._frame_times = []
         self._last_fps_print = 0
@@ -2316,16 +2319,21 @@ class SkyMapCanvas(FigureCanvas):
         else:
             offsets = np.column_stack([lon, lat])
             dist = visible[:, 3]
-        
-        # Sizes based on selected property with user-configurable mapping
+
+        # Store visible data for histogram equalization access
+        self._last_visible_data = visible
+
+        # Sizes based on selected property with bin-based mapping
+        # size_min/size_max are pixel diameters, converted to area for matplotlib
         if len(mag) > 0:
             size_by = size_settings.get('size_by', 'V magnitude')
-            size_min = size_settings.get('size_min', 10)
-            size_max = size_settings.get('size_max', 150)
+            size_min_diam = size_settings.get('size_min', 2)  # pixel diameter
+            size_max_diam = size_settings.get('size_max', 12)  # pixel diameter
             data_min = size_settings.get('data_min', 19.0)
-            data_max = size_settings.get('data_max', 23.0)
+            data_max = size_settings.get('data_max', 25.0)
+            bin_size = size_settings.get('bin_size', 0.25)
             invert = size_settings.get('invert', True)
-            
+
             # Get data values based on size_by
             if size_by == 'V magnitude':
                 data_vals = mag
@@ -2344,28 +2352,45 @@ class SkyMapCanvas(FigureCanvas):
             else:
                 # Default to V magnitude
                 data_vals = mag
-            
-            # Linear mapping from data range to size range
-            # Normalize data values to 0-1 range
+
+            # Calculate number of bins
             data_range = data_max - data_min
-            if abs(data_range) > 0.0001:
-                normalized = (data_vals - data_min) / data_range
+            if abs(data_range) > 0.0001 and bin_size > 0:
+                n_bins = max(1, int(np.ceil(data_range / bin_size)))
             else:
-                normalized = np.full(len(data_vals), 0.5)
-            
-            # Clip to 0-1 range
-            normalized = np.clip(normalized, 0, 1)
-            
-            # Apply invert if requested
+                n_bins = 1
+
+            # Check for histogram equalization
+            equalization_bins = size_settings.get('equalization_bins')
+
+            if equalization_bins is not None:
+                # Use percentile-based bin edges for equalization
+                # equalization_bins contains the bin edges computed from percentiles
+                bin_indices = np.digitize(data_vals, equalization_bins) - 1
+                bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+            else:
+                # Linear binning: assign each value to a bin based on data range
+                normalized = (data_vals - data_min) / data_range if data_range > 0 else np.zeros(len(data_vals))
+                normalized = np.clip(normalized, 0, 0.9999)  # Keep in [0, 1) for binning
+                bin_indices = (normalized * n_bins).astype(int)
+                bin_indices = np.clip(bin_indices, 0, n_bins - 1)
+
+            # Create array of symbol diameters for each bin
+            if n_bins > 1:
+                bin_diameters = np.linspace(size_min_diam, size_max_diam, n_bins)
+            else:
+                bin_diameters = np.array([(size_min_diam + size_max_diam) / 2])
+
+            # Apply invert: flip bin assignment if needed
             if invert:
-                normalized = 1 - normalized
-            
-            # Map to size range
-            size_range = size_max - size_min
-            sizes = size_min + normalized * size_range
-            
-            # Final clipping
-            sizes = np.clip(sizes, 1, 500)
+                bin_indices = (n_bins - 1) - bin_indices
+
+            # Get diameter for each object based on its bin
+            diameters = bin_diameters[bin_indices]
+
+            # Convert diameter to area for matplotlib scatter (s parameter is area in points²)
+            # Area of circle = π × (diameter/2)² = π × diameter²/4
+            sizes = np.pi * (diameters ** 2) / 4
         else:
             sizes = np.array([])
         
@@ -7484,30 +7509,30 @@ class ColorbarPanel(QWidget):
         size_row.addStretch()
         layout.addLayout(size_row)
         
-        # Symbol size range (min/max pixels²)
+        # Symbol size range (min/max pixel diameter)
         symbol_row = QHBoxLayout()
         symbol_row.addWidget(QLabel("Symbol:"))
         symbol_row.addWidget(QLabel("Min"))
         self.size_min_spin = QSpinBox()
-        self.size_min_spin.setRange(1, 500)
-        self.size_min_spin.setValue(10)
-        self.size_min_spin.setMaximumWidth(55)
-        self.size_min_spin.setToolTip("Minimum symbol size (pixels²)")
+        self.size_min_spin.setRange(1, 50)
+        self.size_min_spin.setValue(2)
+        self.size_min_spin.setMaximumWidth(45)
+        self.size_min_spin.setToolTip("Minimum symbol diameter (pixels)")
         self.size_min_spin.valueChanged.connect(self.on_settings_changed)
         symbol_row.addWidget(self.size_min_spin)
         symbol_row.addWidget(QLabel("Max"))
         self.size_max_spin = QSpinBox()
-        self.size_max_spin.setRange(1, 500)
-        self.size_max_spin.setValue(150)
-        self.size_max_spin.setMaximumWidth(55)
-        self.size_max_spin.setToolTip("Maximum symbol size (pixels²)")
+        self.size_max_spin.setRange(1, 50)
+        self.size_max_spin.setValue(12)
+        self.size_max_spin.setMaximumWidth(45)
+        self.size_max_spin.setToolTip("Maximum symbol diameter (pixels)")
         self.size_max_spin.valueChanged.connect(self.on_settings_changed)
         symbol_row.addWidget(self.size_max_spin)
-        symbol_row.addWidget(QLabel("px²"))
+        symbol_row.addWidget(QLabel("px"))
         symbol_row.addStretch()
         layout.addLayout(symbol_row)
-        
-        # Data range (min/max values)
+
+        # Data range (min/max values) and bin size
         data_row = QHBoxLayout()
         data_row.addWidget(QLabel("Data:"))
         data_row.addWidget(QLabel("Min"))
@@ -7516,53 +7541,175 @@ class ColorbarPanel(QWidget):
         self.data_min_spin.setValue(19.0)
         self.data_min_spin.setDecimals(2)
         self.data_min_spin.setSingleStep(0.5)
-        self.data_min_spin.setMaximumWidth(65)
+        self.data_min_spin.setMaximumWidth(60)
         self.data_min_spin.setToolTip("Data value that maps to minimum symbol size")
         self.data_min_spin.valueChanged.connect(self.on_settings_changed)
         data_row.addWidget(self.data_min_spin)
         data_row.addWidget(QLabel("Max"))
         self.data_max_spin = QDoubleSpinBox()
         self.data_max_spin.setRange(-1000, 1000)
-        self.data_max_spin.setValue(23.0)
+        self.data_max_spin.setValue(25.0)
         self.data_max_spin.setDecimals(2)
         self.data_max_spin.setSingleStep(0.5)
-        self.data_max_spin.setMaximumWidth(65)
+        self.data_max_spin.setMaximumWidth(60)
         self.data_max_spin.setToolTip("Data value that maps to maximum symbol size")
         self.data_max_spin.valueChanged.connect(self.on_settings_changed)
         data_row.addWidget(self.data_max_spin)
         self.data_unit_label = QLabel("mag")
-        self.data_unit_label.setMinimumWidth(30)
+        self.data_unit_label.setMinimumWidth(25)
         data_row.addWidget(self.data_unit_label)
         data_row.addStretch()
         layout.addLayout(data_row)
+
+        # Bin size row
+        bin_row = QHBoxLayout()
+        bin_row.addWidget(QLabel("Bin size:"))
+        self.bin_size_spin = QDoubleSpinBox()
+        self.bin_size_spin.setRange(0.01, 100)
+        self.bin_size_spin.setValue(0.25)
+        self.bin_size_spin.setDecimals(2)
+        self.bin_size_spin.setSingleStep(0.05)
+        self.bin_size_spin.setMaximumWidth(60)
+        self.bin_size_spin.setToolTip("Size of each data bin for symbol size mapping")
+        self.bin_size_spin.valueChanged.connect(self.on_settings_changed)
+        bin_row.addWidget(self.bin_size_spin)
+        self.bin_unit_label = QLabel("mag")
+        self.bin_unit_label.setMinimumWidth(25)
+        bin_row.addWidget(self.bin_unit_label)
+        bin_row.addStretch()
+        layout.addLayout(bin_row)
         
-        # Invert checkbox and reset button
+        # Invert checkbox, reset button, and equalize button
         options_row = QHBoxLayout()
         self.size_invert_check = QCheckBox("Invert")
         self.size_invert_check.setChecked(True)  # V mag: brighter = bigger
         self.size_invert_check.setToolTip("Invert mapping (e.g., brighter magnitudes = bigger symbols)")
         self.size_invert_check.stateChanged.connect(self.on_settings_changed)
         options_row.addWidget(self.size_invert_check)
-        self.size_reset_btn = QPushButton("reset")
-        self.size_reset_btn.setMaximumWidth(45)
+        self.size_reset_btn = QPushButton("Reset")
+        self.size_reset_btn.setMaximumWidth(50)
         self.size_reset_btn.setToolTip("Reset size controls to defaults for current property")
         self.size_reset_btn.clicked.connect(self.reset_size_defaults)
         options_row.addWidget(self.size_reset_btn)
+        self.equalize_btn = QPushButton("Equalize")
+        self.equalize_btn.setMaximumWidth(65)
+        self.equalize_btn.setToolTip("Compute histogram equalization from visible objects for uniform size distribution")
+        self.equalize_btn.clicked.connect(self.on_equalize)
+        options_row.addWidget(self.equalize_btn)
         options_row.addStretch()
         layout.addLayout(options_row)
+
+        # Equalization state indicator
+        self.equalize_label = QLabel("")
+        self.equalize_label.setStyleSheet("color: #666; font-style: italic;")
+        layout.addWidget(self.equalize_label)
         
         self.setLayout(layout)
         
         # Store default values for each size-by option
+        # size_min/size_max are pixel diameters, bin_size is in data units
         self.size_defaults = {
-            'V magnitude': {'data_min': 19.0, 'data_max': 23.0, 'invert': True, 'unit': 'mag'},
-            'H magnitude': {'data_min': 15.0, 'data_max': 28.0, 'invert': True, 'unit': 'mag'},
-            'Distance': {'data_min': 0.5, 'data_max': 2.0, 'invert': True, 'unit': 'AU'},
-            'Earth MOID': {'data_min': 0.0, 'data_max': 0.05, 'invert': True, 'unit': 'AU'},
-            'Period': {'data_min': 0.5, 'data_max': 5.0, 'invert': True, 'unit': 'yr'},
-            'Eccentricity': {'data_min': 0.0, 'data_max': 1.0, 'invert': False, 'unit': ''}
+            'V magnitude': {'data_min': 19.0, 'data_max': 25.0, 'bin_size': 0.25, 'invert': True, 'unit': 'mag', 'size_min': 2, 'size_max': 12},
+            'H magnitude': {'data_min': 18.0, 'data_max': 28.0, 'bin_size': 0.25, 'invert': True, 'unit': 'mag', 'size_min': 2, 'size_max': 12},
+            'Distance': {'data_min': 0.0, 'data_max': 2.0, 'bin_size': 0.05, 'invert': True, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
+            'Earth MOID': {'data_min': 0.0, 'data_max': 0.1, 'bin_size': 0.005, 'invert': True, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
+            'Period': {'data_min': 0.5, 'data_max': 5.0, 'bin_size': 0.25, 'invert': True, 'unit': 'yr', 'size_min': 2, 'size_max': 12},
+            'Eccentricity': {'data_min': 0.0, 'data_max': 1.0, 'bin_size': 0.05, 'invert': False, 'unit': '', 'size_min': 2, 'size_max': 12}
         }
-    
+
+        # Histogram equalization state
+        # When active, stores percentile-based bin edges for equal-count distribution
+        self._equalization_bins = None  # Array of bin edges based on percentiles
+        self._equalization_property = None  # Which property was equalized
+
+    def on_equalize(self):
+        """Compute histogram equalization from currently visible objects."""
+        # Get the parent window to access visible data
+        parent = self.parent()
+        while parent and not hasattr(parent, 'canvas'):
+            parent = parent.parent()
+
+        if not parent or not hasattr(parent, 'canvas'):
+            self.equalize_label.setText("Error: Cannot access visible data")
+            return
+
+        canvas = parent.canvas
+        if not hasattr(canvas, '_last_visible_data') or canvas._last_visible_data is None:
+            self.equalize_label.setText("No visible data to equalize")
+            return
+
+        visible = canvas._last_visible_data
+        if len(visible) == 0:
+            self.equalize_label.setText("No visible objects")
+            return
+
+        size_by = self.size_combo.currentText()
+
+        # Get data values based on current size_by setting
+        if size_by == 'V magnitude':
+            data_vals = visible[:, 4]  # V magnitude
+        elif size_by == 'Distance':
+            data_vals = visible[:, 3]  # geocentric distance
+        else:
+            # For other properties, need asteroid lookup - use V mag as fallback
+            data_vals = visible[:, 4]
+
+        # Filter out invalid values (NaN, inf)
+        valid_mask = np.isfinite(data_vals)
+        data_vals = data_vals[valid_mask]
+
+        if len(data_vals) < 10:
+            self.equalize_label.setText("Too few valid values")
+            return
+
+        # Get current bin settings
+        data_min_val = float(np.min(data_vals))
+        data_max_val = float(np.max(data_vals))
+        bin_size = self.bin_size_spin.value()
+
+        # Calculate number of bins
+        data_range = data_max_val - data_min_val
+        if data_range > 0 and bin_size > 0:
+            n_bins = max(1, int(np.ceil(data_range / bin_size)))
+        else:
+            n_bins = 1
+
+        # Compute percentile-based bin edges for equal-count distribution
+        # Each bin will have approximately equal number of objects
+        percentile_points = np.linspace(0, 100, n_bins + 1)
+        bin_edges = np.percentile(data_vals, percentile_points)
+
+        # Store the bin edges for use in size calculation
+        self._equalization_bins = bin_edges
+        self._equalization_property = size_by
+
+        # Update data min/max spinners to reflect actual data range
+        self.data_min_spin.blockSignals(True)
+        self.data_max_spin.blockSignals(True)
+        self.data_min_spin.setValue(data_min_val)
+        self.data_max_spin.setValue(data_max_val)
+        self.data_min_spin.blockSignals(False)
+        self.data_max_spin.blockSignals(False)
+
+        # Update label to show equalization is active
+        self.equalize_label.setText(f"Equalized: {len(data_vals)} objects in {n_bins} bins")
+
+        # Change button appearance to indicate active state
+        self.equalize_btn.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+        self.equalize_btn.setText("Equalized")
+
+        # Trigger redraw
+        self.on_settings_changed()
+
+    def clear_equalization(self):
+        """Clear histogram equalization state."""
+        self._equalization_bins = None
+        self._equalization_property = None
+        self.equalize_label.setText("")
+        # Restore button appearance
+        self.equalize_btn.setStyleSheet("")
+        self.equalize_btn.setText("Equalize")
+
     def reset_colorbar(self):
         """Reset colorbar to defaults (19.0 - 23.0)"""
         self.cbar_min.setValue(19.0)
@@ -7605,46 +7752,63 @@ class ColorbarPanel(QWidget):
     
     def get_size_settings(self):
         """Return all symbol size settings"""
-        return {
+        settings = {
             'size_by': self.size_combo.currentText(),
             'size_min': self.size_min_spin.value(),
             'size_max': self.size_max_spin.value(),
             'data_min': self.data_min_spin.value(),
             'data_max': self.data_max_spin.value(),
+            'bin_size': self.bin_size_spin.value(),
             'invert': self.size_invert_check.isChecked()
         }
+        # Include equalization bins if active and matches current property
+        if (self._equalization_bins is not None and
+            self._equalization_property == settings['size_by']):
+            settings['equalization_bins'] = self._equalization_bins
+        return settings
     
     def on_size_by_changed(self, value):
         """Update defaults when size-by option changes"""
+        # Clear equalization when property changes (it's specific to the property)
+        self.clear_equalization()
+
         if value in self.size_defaults:
             defaults = self.size_defaults[value]
             # Block signals to avoid multiple redraws
             self.data_min_spin.blockSignals(True)
             self.data_max_spin.blockSignals(True)
+            self.bin_size_spin.blockSignals(True)
             self.size_invert_check.blockSignals(True)
-            
+
             self.data_min_spin.setValue(defaults['data_min'])
             self.data_max_spin.setValue(defaults['data_max'])
+            self.bin_size_spin.setValue(defaults['bin_size'])
             self.size_invert_check.setChecked(defaults['invert'])
             self.data_unit_label.setText(defaults['unit'])
-            
+            self.bin_unit_label.setText(defaults['unit'])
+
             self.data_min_spin.blockSignals(False)
             self.data_max_spin.blockSignals(False)
+            self.bin_size_spin.blockSignals(False)
             self.size_invert_check.blockSignals(False)
-        
+
         self.on_settings_changed()
-    
+
     def reset_size_defaults(self):
         """Reset size controls to defaults for current property"""
         value = self.size_combo.currentText()
         if value in self.size_defaults:
             defaults = self.size_defaults[value]
-            self.size_min_spin.setValue(10)
-            self.size_max_spin.setValue(150)
+            self.size_min_spin.setValue(defaults.get('size_min', 2))
+            self.size_max_spin.setValue(defaults.get('size_max', 12))
             self.data_min_spin.setValue(defaults['data_min'])
             self.data_max_spin.setValue(defaults['data_max'])
+            self.bin_size_spin.setValue(defaults['bin_size'])
             self.size_invert_check.setChecked(defaults['invert'])
             self.data_unit_label.setText(defaults['unit'])
+            self.bin_unit_label.setText(defaults['unit'])
+        # Clear any active equalization
+        self.clear_equalization()
     
     def reset_defaults(self):
         """Reset all to default values"""
