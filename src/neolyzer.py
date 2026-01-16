@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.01 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.02 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -8814,7 +8814,7 @@ class NEOVisualizer(QMainWindow):
         # Table dialog (non-modal, persists)
         self.table_dialog = None
         
-        self.setWindowTitle("NEOlyzer v3.01")
+        self.setWindowTitle("NEOlyzer v3.02")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -9964,7 +9964,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.01',
+                'version': '3.02',
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
