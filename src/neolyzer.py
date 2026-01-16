@@ -7737,7 +7737,30 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(450)
         self.setMinimumHeight(400)
         # No maximum height - allow dialog to expand as needed
-        
+
+        # Force light theme to protect against system dark mode
+        # Use minimal styling to preserve native widget indicators (checkbox boxes, spinner arrows)
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f5f5;
+            }
+            QLabel {
+                color: #000000;
+            }
+            QCheckBox {
+                color: #000000;
+            }
+            QRadioButton {
+                color: #000000;
+            }
+            QGroupBox {
+                color: #000000;
+            }
+            QGroupBox::title {
+                color: #000000;
+            }
+        """)
+
         # Main layout with scroll area
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(5, 5, 5, 5)
@@ -9218,8 +9241,8 @@ class NEOVisualizer(QMainWindow):
         self.statusbar.addPermanentWidget(save_btn)
         
         # Reset dropdown menu
-        self.reset_btn = QPushButton("🔄 Reset ▾")
-        self.reset_btn.setMaximumWidth(75)
+        self.reset_btn = QPushButton("🔄 Reset")
+        self.reset_btn.setMaximumWidth(85)
         reset_menu = QMenu(self.reset_btn)
         reset_menu.addAction("Restore saved settings", self.restore_settings)
         reset_menu.addAction("Factory defaults", self.reset_all)
