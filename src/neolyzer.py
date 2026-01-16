@@ -2018,14 +2018,19 @@ class SkyMapCanvas(FigureCanvas):
         
         logger.debug(f"Drew horizon boundaries for observer at ({observer_lat:.2f}, {observer_lon:.2f})")
     
-    def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True, 
-                    h_min=None, h_max=None, selected_classes=None, 
+    def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True,
+                    h_min=None, h_max=None, selected_classes=None,
                     moid_enabled=False, moid_min=None, moid_max=None,
                     orb_filters=None, asteroids=None, size_settings=None,
                     galactic_settings=None, opposition_settings=None, hide_before_discovery=False,
                     hide_missing_discovery=False, color_by='V magnitude', show_legend=False,
                     site_filter=None):
         """Update plot with positions"""
+        _profile = self._show_fps
+        if _profile:
+            _t0 = time.time()
+            _times = {}
+
         # Store data for click-to-identify
         self.current_positions = positions
         self.current_asteroids = asteroids
@@ -2058,7 +2063,10 @@ class SkyMapCanvas(FigureCanvas):
             if not hasattr(self, 'last_jd') or self.last_jd is None or abs(jd - self.last_jd) > 0.01:
                 self.draw_celestial_overlays(jd)
                 self.last_jd = jd
-        
+
+        if _profile:
+            _times['overlays'] = time.time() - _t0
+
         if positions is None or len(positions) == 0:
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
@@ -2195,6 +2203,9 @@ class SkyMapCanvas(FigureCanvas):
             self.draw()
             return
         
+        if _profile:
+            _times['magfilter'] = time.time() - _t0
+
         # Filter by discovery date if enabled
         if hide_before_discovery and asteroids is not None and jd is not None:
             current_mjd = jd - 2400000.5  # Convert JD to MJD
@@ -2299,9 +2310,12 @@ class SkyMapCanvas(FigureCanvas):
                     self.draw()
                     return
         
+        if _profile:
+            _times['sitefilter'] = time.time() - _t0
+
         # Use display_mag for color mapping
         mag = display_mag
-        
+
         # Transform coordinates
         if self.coord_system == 'ecliptic':
             lon, lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
@@ -2718,6 +2732,9 @@ class SkyMapCanvas(FigureCanvas):
         # Ensure consistent layout before drawing
         self.fig.subplots_adjust(left=0.02, right=0.95, top=0.97, bottom=0.04)
 
+        if _profile:
+            _times['bindraw'] = time.time() - _t0
+
         # FPS tracking during animation (enabled with --fps flag)
         if self._show_fps and getattr(self, 'animation_playing', False):
             now = time.time()
@@ -2738,7 +2755,17 @@ class SkyMapCanvas(FigureCanvas):
             self.blit_update()
         else:
             self.draw()  # Force immediate redraw
-    
+
+        if _profile:
+            _times['draw'] = time.time() - _t0
+            # Print breakdown
+            overlays = _times.get('overlays', 0) * 1000
+            magf = (_times.get('magfilter', 0) - _times.get('overlays', 0)) * 1000
+            sitef = (_times.get('sitefilter', 0) - _times.get('magfilter', 0)) * 1000
+            bindraw = (_times.get('bindraw', 0) - _times.get('sitefilter', 0)) * 1000
+            draw = (_times.get('draw', 0) - _times.get('bindraw', 0)) * 1000
+            print(f"    overlays:{overlays:.0f} mag:{magf:.0f} site:{sitef:.0f} bindraw:{bindraw:.0f} draw:{draw:.0f}ms")
+
     def on_stats_pick(self, event):
         """Handle pick event on stats/calendar text - toggle stats visibility"""
         if event.artist == self.stats_text and self.stats_visible:
@@ -8268,7 +8295,39 @@ class SettingsDialog(QDialog):
         self.clear_trails_btn.clicked.connect(self.on_clear_trails)
         self.clear_trails_btn.setMaximumWidth(100)
         advanced_layout.addWidget(self.clear_trails_btn)
-        
+
+        # Fast animation section
+        fast_sep = QFrame()
+        if PYQT_VERSION == 6:
+            fast_sep.setFrameShape(QFrame.Shape.HLine)
+        else:
+            fast_sep.setFrameShape(QFrame.HLine)
+        fast_sep.setStyleSheet("color: #ccc;")
+        advanced_layout.addWidget(fast_sep)
+
+        fast_label = QLabel("Animation Performance:")
+        fast_label.setStyleSheet("font-weight: bold;")
+        advanced_layout.addWidget(fast_label)
+
+        # Fast animation checkbox
+        self.fast_animation_check = QCheckBox("Fast animation mode")
+        self.fast_animation_check.setChecked(False)
+        self.fast_animation_check.setToolTip("Show fewer points during animation for smoother playback")
+        advanced_layout.addWidget(self.fast_animation_check)
+
+        # Decimation factor
+        decimate_row = QHBoxLayout()
+        decimate_row.addWidget(QLabel("Show every"))
+        self.decimate_spin = QSpinBox()
+        self.decimate_spin.setRange(2, 20)
+        self.decimate_spin.setValue(4)
+        self.decimate_spin.setMaximumWidth(50)
+        self.decimate_spin.setToolTip("Show every Nth point during animation (4 = 25% of points)")
+        decimate_row.addWidget(self.decimate_spin)
+        decimate_row.addWidget(QLabel("points"))
+        decimate_row.addStretch()
+        advanced_layout.addLayout(decimate_row)
+
         # Hidden controls for backward compatibility with factory reset
         self.trails_before_discovery_check = QCheckBox()
         self.trails_before_discovery_check.hide()
@@ -8686,7 +8745,14 @@ class SettingsDialog(QDialog):
             'weight': self.trail_weight_spin.value(),
             'color': self.trail_color.text()
         }
-    
+
+    def get_fast_animation_settings(self):
+        """Return fast animation settings"""
+        return {
+            'enabled': self.fast_animation_check.isChecked(),
+            'decimation': self.decimate_spin.value()
+        }
+
     def on_trailing_changed(self):
         """Handle changes to trailing settings"""
         # Enable/disable dependent controls
@@ -9569,17 +9635,35 @@ class NEOVisualizer(QMainWindow):
                 return
             
             # ALWAYS compute on-the-fly for smooth animation
-            positions = self.calculator.calculate_batch(asteroids, jd)
-            
+            if self.show_fps:
+                t0 = time.time()
+
+            # Apply decimation for fast animation mode
+            is_animating = self.time_panel.animation_timer.isActive()
+            display_asteroids = asteroids
+            if is_animating and self.settings_dialog and hasattr(self.settings_dialog, 'get_fast_animation_settings'):
+                fast_settings = self.settings_dialog.get_fast_animation_settings()
+                if fast_settings.get('enabled', False):
+                    decimation = fast_settings.get('decimation', 4)
+                    display_asteroids = asteroids[::decimation]
+
+            positions = self.calculator.calculate_batch(display_asteroids, jd)
+            if self.show_fps:
+                t1 = time.time()
+
             # Update plot with hollow symbol visibility setting and all filter info
             # Pass asteroids list for click-to-identify feature
             self.canvas.update_plot(positions, mag_min, mag_max, jd, self.neo_classes_panel.show_hollow_check.isChecked(),
                                    h_min, h_max, selected_classes, moid_enabled, moid_min, moid_max, orb_filters,
-                                   asteroids=asteroids, size_settings=size_settings,
+                                   asteroids=display_asteroids, size_settings=size_settings,
                                    galactic_settings=galactic_settings, opposition_settings=opposition_settings,
                                    hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
                                    color_by=color_by, show_legend=show_legend, site_filter=site_filter)
-            
+
+            if self.show_fps:
+                t2 = time.time()
+                print(f"  calc: {(t1-t0)*1000:.0f}ms  plot: {(t2-t1)*1000:.0f}ms  total: {(t2-t0)*1000:.0f}ms")
+
             # Status
             if positions is not None and len(positions) > 0:
                 mag = positions[:, 4]
