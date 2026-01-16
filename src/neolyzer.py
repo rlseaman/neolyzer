@@ -2867,17 +2867,15 @@ class SkyMapCanvas(FigureCanvas):
             calculator = parent_window.calculator
         
         # Calculate screen position from canvas event coordinates
-        # Convert matplotlib canvas coords to global screen coords
+        # Use Qt's cursor position which is reliable across all platforms/displays
         click_screen_pos = None
         try:
-            canvas_widget = self.fig.canvas
-            # Get global position of canvas
-            global_pos = canvas_widget.mapToGlobal(canvas_widget.rect().topLeft())
-            # event.x and event.y are in canvas pixel coordinates (origin at bottom-left)
-            # Convert to screen coordinates
-            click_screen_x = global_pos.x() + event.x
-            click_screen_y = global_pos.y() + (canvas_widget.height() - event.y)  # Flip Y
-            click_screen_pos = (click_screen_x, click_screen_y)
+            from PyQt6.QtGui import QCursor
+        except ImportError:
+            from PyQt5.QtGui import QCursor
+        try:
+            cursor_pos = QCursor.pos()
+            click_screen_pos = (cursor_pos.x(), cursor_pos.y())
         except:
             pass
         
@@ -3188,11 +3186,11 @@ class SkyMapCanvas(FigureCanvas):
 
 class NEOInfoDialog(QDialog):
     """Dialog showing detailed information about a clicked NEO"""
-    
-    # Class variable to remember last position
-    last_position = None
-    
-    def __init__(self, asteroid, ra, dec, dist, mag, jd, parent=None, canvas=None, 
+
+    # Class variable to remember user's preferred position (only set after manual drag)
+    user_position = None
+
+    def __init__(self, asteroid, ra, dec, dist, mag, jd, parent=None, canvas=None,
                  mag_max=None, calculator=None, click_screen_pos=None):
         super().__init__(parent)
         self.canvas = canvas  # Reference to canvas for clearing highlight
@@ -3201,6 +3199,7 @@ class NEOInfoDialog(QDialog):
         self.calculator = calculator
         self.current_jd = jd
         self.click_screen_pos = click_screen_pos  # Store click position
+        self._initial_position_applied = False  # Track if initial move is done
         
         # Use readable_designation if available for window title
         readable = asteroid.get('readable_designation', '').strip()
@@ -3249,16 +3248,12 @@ class NEOInfoDialog(QDialog):
         self.adjustSize()
         
         # Store position to apply in showEvent (for macOS reliability)
-        # Priority: 1) User's last moved position, 2) Calculate from click to avoid occlusion
-        self._pending_position = None
-        if NEOInfoDialog.last_position is not None:
-            # User has moved a previous dialog - use that position
-            self._pending_position = NEOInfoDialog.last_position
+        # Priority: 1) User's manually set position, 2) Calculate from click
+        if NEOInfoDialog.user_position is not None:
+            self._pending_position = NEOInfoDialog.user_position
         elif click_screen_pos is not None:
-            # First time or no user movement - position away from click
             self._pending_position = self._calc_position_from_click(click_screen_pos)
         else:
-            # Fallback - position at top-left with offset
             self._pending_position = self._get_fallback_position()
     
     def _get_fallback_position(self):
@@ -3282,30 +3277,49 @@ class NEOInfoDialog(QDialog):
             from PyQt6.QtCore import QPoint
         except ImportError:
             from PyQt5.QtCore import QPoint
-        
+
         click_x, click_y = click_pos
         dialog_width = self.sizeHint().width() or 360
         dialog_height = self.sizeHint().height() or 600
-        
-        # Get screen geometry
-        screen = QApplication.primaryScreen()
+
+        # Find the screen containing the click position (handles multi-monitor)
+        screen = None
+        click_point = QPoint(int(click_x), int(click_y))
+        for s in QApplication.screens():
+            if s.geometry().contains(click_point):
+                screen = s
+                break
+        # Fallback to primary screen if click point not found on any screen
+        if screen is None:
+            screen = QApplication.primaryScreen()
+
         if screen:
             screen_rect = screen.availableGeometry()
-            
-            # Always position dialog on opposite side from click
-            # Use screen center as dividing line
+
+            # Position dialog on opposite side from click (both horizontally and vertically)
             center_x = screen_rect.center().x()
-            
+            center_y = screen_rect.center().y()
+
+            # Horizontal positioning
             if click_x > center_x:
-                # Click on right half - put dialog on left side with margin from edge
+                # Click on right half - put dialog on left side
                 new_x = screen_rect.left() + 30
             else:
                 # Click on left half - put dialog on right side
                 new_x = screen_rect.right() - dialog_width - 30
-            
-            # Vertical: position near top of screen but not at edge
-            new_y = screen_rect.top() + 50
-            
+
+            # Vertical positioning - opposite half from click
+            if click_y > center_y:
+                # Click on bottom half - put dialog at top
+                new_y = screen_rect.top() + 30
+            else:
+                # Click on top half - put dialog at bottom
+                new_y = screen_rect.bottom() - dialog_height - 30
+
+            # Ensure dialog stays within screen bounds
+            new_x = max(screen_rect.left() + 10, min(new_x, screen_rect.right() - dialog_width - 10))
+            new_y = max(screen_rect.top() + 10, min(new_y, screen_rect.bottom() - dialog_height - 10))
+
             return QPoint(int(new_x), int(new_y))
         return None
     
@@ -3314,17 +3328,18 @@ class NEOInfoDialog(QDialog):
         super().showEvent(event)
         if self._pending_position is not None:
             self.move(self._pending_position)
-    
+        # Mark initial positioning as done - subsequent moves are user drags
+        self._initial_position_applied = True
+
     def moveEvent(self, event):
-        """Track when user moves the dialog"""
+        """Track when user manually drags the dialog"""
         super().moveEvent(event)
-        # Update last_position when dialog is moved (after initial positioning)
-        if self.isVisible():
-            NEOInfoDialog.last_position = self.pos()
-    
+        # Only remember position if this is a user drag (after initial positioning)
+        if self._initial_position_applied and self.isVisible():
+            NEOInfoDialog.user_position = self.pos()
+
     def closeEvent(self, event):
-        """Remember position and clear highlight when closing"""
-        NEOInfoDialog.last_position = self.pos()
+        """Clear highlight when closing"""
         if self.canvas:
             self.canvas.clear_highlight()
         super().closeEvent(event)
