@@ -564,11 +564,6 @@ class SkyMapCanvas(FigureCanvas):
         self.animation_playing = False  # Track animation state
         self.animation_paused = False   # Track if paused (vs stopped)
 
-        # Blitting support for animation performance
-        self._background = None
-        self._use_blitting = False
-        self._animated_artists = []
-
         # FPS tracking
         self._frame_times = []
         self._last_fps_print = 0
@@ -731,12 +726,6 @@ class SkyMapCanvas(FigureCanvas):
             picker=True  # Enable click detection
         )
 
-        # List of artists to animate during blitting (marked animated only when blitting active)
-        self._animated_artists = [
-            self.scatter, self.scatter_far, self.scatter_highlight,
-            self.stats_text, self.calendar_text, self.phase_text
-        ]
-
         # Connect click handler for stats dismissal/restoration
         self.mpl_connect('pick_event', self.on_stats_pick)
         
@@ -747,51 +736,19 @@ class SkyMapCanvas(FigureCanvas):
         # Don't use tight_layout - manual margins for maximum plot area
         self.draw()
 
-    def capture_background(self):
-        """Capture static background for blitting."""
-        # Mark all animated artists so they're excluded from background capture
-        for artist in self._animated_artists:
-            artist.set_animated(True)
-        self.fig.canvas.draw()
-        self._background = self.fig.canvas.copy_from_bbox(self.ax.bbox)
-
-    def disable_blitting(self):
-        """Disable blitting and restore normal drawing."""
-        self._use_blitting = False
-        self._background = None
-        # Unmark artists so they render normally
-        for artist in self._animated_artists:
-            artist.set_animated(False)
-        # Also unmark any trail lines that were added
-        for line in self.trail_lines:
-            line.set_animated(False)
-
-    def blit_update(self):
-        """Fast blitted update - only redraws animated artists."""
-        if self._background is None:
-            self.draw()
-            return
-        self.fig.canvas.restore_region(self._background)
-        for artist in self._animated_artists:
-            if artist.get_visible():
-                self.ax.draw_artist(artist)
-        self.fig.canvas.blit(self.ax.bbox)
-
     def set_projection(self, projection):
         """Change projection"""
         self.projection = projection
         self.trail_history.clear()  # Clear trails - old coordinates invalid
         self._clear_trails()
-        self._background = None  # Invalidate blitting background
         logger.debug(f"TRAIL: Cleared due to projection change to {projection}")
         self.setup_plot()
-    
+
     def set_coordinate_system(self, coord_system):
         """Change coordinate system"""
         self.coord_system = coord_system
         self.trail_history.clear()  # Clear trails - old coordinates invalid
         self._clear_trails()
-        self._background = None  # Invalidate blitting background
         logger.debug(f"TRAIL: Cleared due to coordinate system change to {coord_system}")
         self.setup_plot()
     
@@ -831,7 +788,7 @@ class SkyMapCanvas(FigureCanvas):
         if not settings.get('enabled', False):
             self.trail_history.clear()
             self._clear_trails()
-    
+
     def _clear_trails(self):
         """Remove all trail lines from the plot"""
         for line in self.trail_lines:
@@ -932,7 +889,7 @@ class SkyMapCanvas(FigureCanvas):
         
         # Clear existing trail lines
         self._clear_trails()
-        
+
         # Draw trails ONLY for currently visible objects
         lines_drawn = 0
         for ast_id in visible_ids:
@@ -983,7 +940,9 @@ class SkyMapCanvas(FigureCanvas):
                 xs = [p[0] for p in seg]
                 ys = [p[1] for p in seg]
                 line, = self.ax.plot(xs, ys, color=trail_color, linewidth=trail_weight,
-                                     alpha=0.7, zorder=1)
+                                     alpha=0.7, zorder=1, clip_on=True)
+                # Ensure proper clipping for non-rectangular projections
+                line.set_clip_path(self.ax.patch)
                 self.trail_lines.append(line)
                 lines_drawn += 1
         
@@ -2745,16 +2704,7 @@ class SkyMapCanvas(FigureCanvas):
                 print(f"FPS: {fps:.1f}")
                 self._last_fps_print = now
 
-        # Use blitting for faster animation updates
-        if self._use_blitting and getattr(self, 'animation_playing', False):
-            # Ensure trail lines are marked as animated
-            for line in self.trail_lines:
-                if line not in self._animated_artists:
-                    line.set_animated(True)
-                    self._animated_artists.append(line)
-            self.blit_update()
-        else:
-            self.draw()  # Force immediate redraw
+        self.draw()  # Force immediate redraw
 
         if _profile:
             _times['draw'] = time.time() - _t0
@@ -4936,8 +4886,6 @@ class ControlsPanel(QWidget):
             if self.parent_window and hasattr(self.parent_window, 'canvas'):
                 self.parent_window.canvas.animation_playing = False
                 self.parent_window.canvas.animation_paused = True  # Mark as paused
-                # Disable blitting since animation stopped
-                self.parent_window.canvas.disable_blitting()
                 # Trigger redraw to restore display mode (density/contours)
                 self.parent_window.update_display()
             # Sync statusbar button if it exists
@@ -4974,10 +4922,6 @@ class ControlsPanel(QWidget):
             if self.parent_window and hasattr(self.parent_window, 'canvas'):
                 self.parent_window.canvas.animation_playing = True
                 self.parent_window.canvas.animation_paused = False
-
-                # Enable blitting for faster animation updates
-                self.parent_window.canvas._use_blitting = True
-                self.parent_window.canvas.capture_background()
 
                 # Only clear trails on FRESH start, not on resume from pause
                 if not is_resuming:
@@ -5018,8 +4962,6 @@ class ControlsPanel(QWidget):
         if self.parent_window and hasattr(self.parent_window, 'canvas'):
             self.parent_window.canvas.animation_playing = False
             self.parent_window.canvas.animation_paused = False  # Not paused - fully stopped
-            # Disable blitting since animation stopped
-            self.parent_window.canvas.disable_blitting()
         # Sync statusbar button if it exists
         if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
             self.parent_window.statusbar_play_btn.setText("▶ Play")
@@ -8525,7 +8467,7 @@ class SettingsDialog(QDialog):
         self.trail_length_spin.setEnabled(trailing_enabled)
         self.trail_weight_spin.setEnabled(trailing_enabled)
         self.trail_color.setEnabled(trailing_enabled)
-        self.clear_trails_btn.setEnabled(trailing_enabled)
+        # Clear Trails button always enabled (can clear old trails even when trailing disabled)
     
     def closeEvent(self, event):
         """Override close event to hide instead of close (preserves settings)"""
@@ -8798,8 +8740,8 @@ class SettingsDialog(QDialog):
         self.trail_length_spin.setEnabled(enabled)
         self.trail_weight_spin.setEnabled(enabled)
         self.trail_color.setEnabled(enabled)
-        self.clear_trails_btn.setEnabled(enabled)
-        
+        # Clear Trails button always enabled (can clear old trails even when trailing disabled)
+
         # Notify parent
         parent = self.parent()
         if parent and hasattr(parent, 'on_trailing_changed'):
