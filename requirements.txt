@@ -1,0 +1,31 @@
+# NEO Visualizer - Python Dependencies
+# Python 3.9+ required
+
+# Core scientific computing
+numpy>=1.24.0
+cython>=3.0.0
+pandas>=2.0.0
+
+# Database
+sqlalchemy>=2.0.0
+
+# HDF5 support for caching
+h5py>=3.8.0
+
+# Astronomy libraries
+skyfield>=1.45
+jplephem>=2.20
+
+# GUI framework
+PyQt6>=6.5.0
+matplotlib>=3.7.0
+
+# Utilities
+requests>=2.31.0
+tqdm>=4.65.0
+
+# Optional: for galactic coordinates
+astropy>=5.3.0
+
+# Optional: for smoother density contours
+scipy>=1.10.0

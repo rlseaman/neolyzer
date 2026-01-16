@@ -1,0 +1,345 @@
+PLATFORM-SPECIFIC NOTES
+========================
+
+This document covers platform-specific considerations for running
+NEOlyzer (the NEO visualizer) on different systems.
+
+
+═══════════════════════════════════════════════════════════════════
+macOS (Apple Silicon - M1/M2/M3/M4)
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - macOS 11 (Big Sur) or later
+  - Python 3.10+ (Homebrew recommended)
+  - Homebrew for HDF5: brew install hdf5
+
+INSTALLATION:
+  ./install.sh
+
+NOTES:
+  - Native ARM64 packages are used automatically
+  - HDF5 installed via Homebrew at /opt/homebrew/opt/hdf5
+  - Performance is excellent on Apple Silicon
+
+TYPICAL PERFORMANCE:
+  - Initial load: 2-3 seconds
+  - Animation: 60+ FPS easily
+  - Cache build: ~15 minutes
+
+
+═══════════════════════════════════════════════════════════════════
+macOS (Intel)
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - macOS 10.15 (Catalina) or later
+  - Python 3.10+
+  - Homebrew for HDF5: brew install hdf5
+
+INSTALLATION:
+  ./install.sh
+
+NOTES:
+  - x86_64 packages used
+  - HDF5 at /usr/local/opt/hdf5
+  - May be slower than Apple Silicon
+
+
+═══════════════════════════════════════════════════════════════════
+RHEL / Rocky Linux / CentOS / AlmaLinux
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - RHEL 8+ / Rocky 8+ / CentOS Stream 8+
+  - Python 3.10+ (may need local install if system Python is frozen)
+  - Display (X11 or Wayland)
+
+SYSTEM DEPENDENCIES (requires sudo):
+  sudo dnf install hdf5-devel mesa-libGL gcc gcc-c++ libxcb \
+       xcb-util-wm xcb-util-image xcb-util-keysyms libxkbcommon-x11
+
+FROZEN PYTHON WORKAROUND:
+  If your system administrator has frozen the Python version, you can
+  build Python locally without needing root access.
+  
+  *** IMPORTANT: OpenSSL dev libraries MUST be installed BEFORE ***
+  *** building Python, or pip won't work (SSL errors)!          ***
+
+  # Step 1: Ask admin to install build dependencies (one-time)
+  sudo dnf install openssl-devel bzip2-devel libffi-devel \
+       readline-devel sqlite-devel zlib-devel xz-devel
+
+  # Step 2: Download and build Python 3.12
+  wget https://www.python.org/ftp/python/3.12.0/Python-3.12.0.tgz
+  tar xzf Python-3.12.0.tgz
+  cd Python-3.12.0
+  ./configure --prefix=$HOME/python312 --enable-optimizations
+  make -j$(nproc)
+  make install
+  cd ..
+  
+  # Step 3: Verify SSL works
+  $HOME/python312/bin/python3 -c "import ssl; print('SSL OK')"
+  
+  # Step 4: Install NEO Visualizer with local Python
+  ./install.sh --python $HOME/python312/bin/python3
+  
+  If you see "No module named '_ssl'", the OpenSSL dev libraries
+  were not installed when Python was built. You must:
+  1. Install openssl-devel (see Step 1)
+  2. Rebuild Python (Steps 2-3)
+  3. Re-run the installer (Step 4)
+
+DISPLAY SETUP:
+  For remote access, use X11 forwarding:
+    ssh -X username@hostname
+  
+  Or set DISPLAY manually:
+    export DISPLAY=:0
+
+CRITICAL Qt6 RUNTIME DEPENDENCY:
+  Qt 6.5+ requires xcb-cursor library. Without it you'll see:
+    "Could not load the Qt platform plugin xcb"
+    "Aborted (core dumped)"
+  
+  Fix:
+    sudo dnf install xcb-util-cursor
+
+NOTES:
+  - Enterprise Linux often has older system Python (3.6-3.9)
+  - PyQt6 requires various xcb libraries for display
+  - If Qt fails, try: pip install PyQt5 (and modify imports)
+
+
+═══════════════════════════════════════════════════════════════════
+Fedora
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - Fedora 37+ (has Python 3.11+)
+  - Display (X11 or Wayland)
+
+SYSTEM DEPENDENCIES:
+  sudo dnf install hdf5-devel mesa-libGL qt6-qtbase gcc gcc-c++
+
+INSTALLATION:
+  ./install.sh
+
+NOTES:
+  - Fedora typically has recent Python versions
+  - Qt6 packages available in default repos
+  - Wayland is default but X11 apps work via XWayland
+
+
+═══════════════════════════════════════════════════════════════════
+Ubuntu / Debian
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - Ubuntu 22.04+ / Debian 12+
+  - Python 3.10+
+
+SYSTEM DEPENDENCIES:
+  sudo apt update
+  sudo apt install libhdf5-dev libgl1-mesa-glx libxcb-xinerama0 \
+       libxcb-cursor0 libxkbcommon-x11-0 build-essential
+
+NEWER PYTHON (if needed):
+  # Ubuntu - use deadsnakes PPA
+  sudo add-apt-repository ppa:deadsnakes/ppa
+  sudo apt update
+  sudo apt install python3.12 python3.12-venv python3.12-dev
+  
+  ./install.sh --python /usr/bin/python3.12
+
+INSTALLATION:
+  ./install.sh
+
+NOTES:
+  - Ubuntu 22.04 has Python 3.10
+  - Ubuntu 24.04 has Python 3.12
+  - Qt6 may need additional packages
+
+
+═══════════════════════════════════════════════════════════════════
+Raspberry Pi
+═══════════════════════════════════════════════════════════════════
+
+REQUIREMENTS:
+  - Raspberry Pi 4 or 5 (Pi 3 may be too slow)
+  - Raspberry Pi OS (64-bit recommended)
+  - At least 4GB RAM recommended
+  - Display connected or VNC
+
+SYSTEM DEPENDENCIES:
+  sudo apt update
+  sudo apt install libhdf5-dev libgl1-mesa-glx python3-pyqt6 \
+       python3-numpy build-essential
+
+INSTALLATION:
+  ./install.sh
+
+NOTES:
+  - 32-bit OS works but 64-bit is faster
+  - System PyQt6 preferred over pip (faster install, better integration)
+  - Cache build may take 1-2 hours on Pi 4
+  - Consider reducing cache resolution for memory constraints
+  - Animation may be limited to 10-20 FPS
+
+MEMORY OPTIMIZATION:
+  If you run out of memory during cache build:
+  - Reduce the number of asteroids cached
+  - Use swap: sudo dphys-swapfile swapoff && sudo nano /etc/dphys-swapfile
+    Set CONF_SWAPSIZE=2048, then: sudo dphys-swapfile setup && sudo dphys-swapfile swapon
+
+VNC ACCESS:
+  If running headless:
+  1. Enable VNC: sudo raspi-config → Interface Options → VNC
+  2. Connect via VNC Viewer
+
+
+═══════════════════════════════════════════════════════════════════
+Multi-User Deployment
+═══════════════════════════════════════════════════════════════════
+
+SCENARIO: Multiple users sharing one installation on a Linux server
+
+CONCURRENT READS (multiple users running visualizer): ✓ SAFE
+  - Each user gets their own memory space
+  - Database is read-only during normal use
+  - Cache is read-only during normal use
+
+CONCURRENT INSTALLS/SETUPS: ✗ PROTECTED
+  - install.sh uses file locking to prevent concurrent runs
+  - setup_database.py uses file locking to prevent concurrent runs
+  - If lock detected, shows error and instructions to remove stale lock
+
+RECOMMENDED DEPLOYMENT OPTIONS:
+
+Option 1: Shared Read-Only Installation
+  # Admin installs once
+  /opt/neo_visualizer/           # Shared, read-only
+  
+  # Each user creates symlink or alias
+  alias neo_viz='/opt/neo_visualizer/run_neolyzer.sh'
+
+Option 2: Per-User Data Directories (for large teams)
+  # Shared code
+  /opt/neo_visualizer/src/
+  /opt/neo_visualizer/venv/
+  
+  # Per-user data (via environment variable or symlink)
+  ~/.neo_visualizer/data/
+  ~/.neo_visualizer/cache/
+
+Option 3: Container Deployment (Docker/Podman)
+  Each user runs their own container instance.
+  See docker/ directory for Dockerfile (if provided).
+
+STALE LOCK FILES:
+  If install/setup crashes, lock file may remain:
+    rm /path/to/neo_visualizer/.install.lock
+    rm /path/to/neo_visualizer/.setup.lock
+
+
+═══════════════════════════════════════════════════════════════════
+Common Issues and Solutions
+═══════════════════════════════════════════════════════════════════
+
+ISSUE: "Could not load the Qt platform plugin xcb" / "Aborted (core dumped)"
+SOLUTION:
+  Qt 6.5+ requires xcb-cursor library:
+  - RHEL/Rocky/Fedora: sudo dnf install xcb-util-cursor
+  - Debian/Ubuntu: sudo apt install libxcb-cursor0
+  This is the #1 cause of crashes on Linux!
+
+ISSUE: "SSL: CERTIFICATE_VERIFY_FAILED" during setup
+SOLUTION:
+  This happens on Raspberry Pi and some Linux systems with incomplete
+  CA certificate stores. v1.64+ handles this automatically with fallbacks.
+  
+  If you see this error on older versions:
+  1. Update system certificates:
+     sudo apt update && sudo apt install ca-certificates
+     sudo update-ca-certificates
+  
+  2. Or install certifi:
+     pip install certifi
+  
+  3. Or upgrade to v1.64+ which has automatic SSL fallback
+
+ISSUE: "No module named PyQt6"
+SOLUTION:
+  - Linux: Install xcb libraries: apt/dnf install libxcb-*
+  - Try: pip uninstall PyQt6 && pip install PyQt6
+  - Raspberry Pi: Use system package: apt install python3-pyqt6
+
+ISSUE: "Cannot connect to X server"
+SOLUTION:
+  - Check DISPLAY is set: echo $DISPLAY
+  - Use X forwarding: ssh -X user@host
+  - For VNC: ensure VNC server is running
+
+ISSUE: "h5py failed to install"
+SOLUTION:
+  - Install HDF5 dev libraries:
+    - macOS: brew install hdf5
+    - RHEL: dnf install hdf5-devel
+    - Debian: apt install libhdf5-dev
+  - Reinstall: pip install h5py
+
+ISSUE: "Python 3.10+ not found"
+SOLUTION:
+  - Build locally (see RHEL section above)
+  - Or use pyenv:
+    curl https://pyenv.run | bash
+    pyenv install 3.12.0
+    ./install.sh --python ~/.pyenv/versions/3.12.0/bin/python3
+
+ISSUE: "OpenGL errors"
+SOLUTION:
+  - Linux: apt/dnf install mesa-libGL mesa-dri-drivers
+  - Try software rendering: export LIBGL_ALWAYS_SOFTWARE=1
+
+ISSUE: Slow animation on Linux
+SOLUTION:
+  - Ensure hardware acceleration: glxinfo | grep "direct rendering"
+  - Update graphics drivers
+  - Reduce FPS in Controls panel
+
+
+═══════════════════════════════════════════════════════════════════
+Environment Variables
+═══════════════════════════════════════════════════════════════════
+
+NEO_PYTHON=/path/to/python3
+  Specify Python interpreter for install script
+
+DISPLAY=:0
+  X11 display for GUI (Linux)
+
+HDF5_DIR=/path/to/hdf5
+  HDF5 library location for h5py build
+
+QT_QPA_PLATFORM=xcb
+  Force X11 backend for Qt (useful on Wayland)
+
+LIBGL_ALWAYS_SOFTWARE=1
+  Force software OpenGL rendering
+
+
+═══════════════════════════════════════════════════════════════════
+Performance Expectations by Platform
+═══════════════════════════════════════════════════════════════════
+
+| Platform            | Load Time | Animation FPS | Cache Build |
+|---------------------|-----------|---------------|-------------|
+| M1/M2/M3 Mac        | 2-3 sec   | 60+           | 15 min      |
+| Intel Mac           | 3-5 sec   | 30-60         | 25 min      |
+| Modern Linux (x86)  | 2-4 sec   | 30-60         | 20 min      |
+| Raspberry Pi 5      | 8-15 sec  | 15-30         | 60 min      |
+| Raspberry Pi 4      | 15-30 sec | 10-20         | 90-120 min  |
+
+Cache size: ~2 GB for all 40,000+ NEOs
+Database size: ~15 MB

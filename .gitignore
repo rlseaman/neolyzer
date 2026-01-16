@@ -1,0 +1,30 @@
+# Virtual environment
+venv/
+
+# Cache and data files
+cache/
+data/
+diagnostics/
+de421.bsp
+
+# Local config
+.neo_config
+
+# Claude Code internal
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
