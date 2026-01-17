@@ -37,6 +37,7 @@ cp requirements.txt "${TEMP_DIR}/${DIST_NAME}/"
 cp README.txt "${TEMP_DIR}/${DIST_NAME}/"
 cp PLATFORM_NOTES.txt "${TEMP_DIR}/${DIST_NAME}/"
 cp CLAUDE.md "${TEMP_DIR}/${DIST_NAME}/"
+cp EPHEMERIS.txt "${TEMP_DIR}/${DIST_NAME}/"
 
 # Copy diagnostic scripts
 cp diagnose_*.py "${TEMP_DIR}/${DIST_NAME}/" 2>/dev/null || true
