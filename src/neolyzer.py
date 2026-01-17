@@ -10497,9 +10497,9 @@ class NEOVisualizer(QMainWindow):
             # Clear trails if jump is > 1 day
             if delta > 1.0:
                 self.clear_trails()
-            current_jd = self.time_panel.current_jd
-            self.time_panel.set_jd(current_jd - delta)
-    
+            # Use jump_days which properly handles pre-1752 dates
+            self.time_panel.jump_days(-delta)
+
     def navigate_time_forward(self):
         """Navigate time forward by configured increment"""
         delta = self._get_time_delta()
@@ -10507,8 +10507,8 @@ class NEOVisualizer(QMainWindow):
             # Clear trails if jump is > 1 day
             if delta > 1.0:
                 self.clear_trails()
-            current_jd = self.time_panel.current_jd
-            self.time_panel.set_jd(current_jd + delta)
+            # Use jump_days which properly handles pre-1752 dates
+            self.time_panel.jump_days(delta)
     
     def _get_time_delta(self):
         """Get time delta in days based on settings"""
