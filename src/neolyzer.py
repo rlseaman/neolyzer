@@ -4772,6 +4772,14 @@ class TimeControlPanel(QWidget):
         current = self.datetime_edit.dateTime().toPyDateTime()
         new_dt = current + timedelta(days=days)
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(new_dt))
+
+        # Record time point if script recording is active
+        parent = self.parent()
+        while parent and not hasattr(parent, 'settings_dialog'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'settings_dialog') and parent.settings_dialog:
+            if parent.settings_dialog.is_script_recording():
+                parent.settings_dialog.record_time_point(self.current_jd)
     
 
 class ControlsPanel(QWidget):
@@ -4851,7 +4859,34 @@ class ControlsPanel(QWidget):
         annual_layout.addStretch()
         
         controls_layout.addLayout(annual_layout)
-        
+
+        # Script playback controls
+        script_layout = QHBoxLayout()
+        script_layout.addWidget(QLabel("Script:"))
+
+        self.script_combo = QComboBox()
+        self.script_combo.setMinimumWidth(140)
+        self.script_combo.setToolTip("Select a recording to play")
+        self.script_combo.currentIndexChanged.connect(self.on_script_selected)
+        script_layout.addWidget(self.script_combo)
+
+        self.script_refresh_btn = QPushButton("↻")
+        self.script_refresh_btn.setMaximumWidth(25)
+        self.script_refresh_btn.setToolTip("Refresh recordings list")
+        self.script_refresh_btn.clicked.connect(self.refresh_scripts)
+        script_layout.addWidget(self.script_refresh_btn)
+
+        self.script_stop_btn = QPushButton("■")
+        self.script_stop_btn.setMaximumWidth(25)
+        self.script_stop_btn.setToolTip("Stop script playback")
+        self.script_stop_btn.clicked.connect(self.stop_script)
+        self.script_stop_btn.setEnabled(False)
+        self.script_stop_btn.setVisible(False)
+        script_layout.addWidget(self.script_stop_btn)
+
+        script_layout.addStretch()
+        controls_layout.addLayout(script_layout)
+
         # Action buttons on one line - Table and More only (Help/Reset/Exit moved to status bar)
         buttons_layout = QHBoxLayout()
         buttons_layout.setSpacing(5)
@@ -4899,9 +4934,31 @@ class ControlsPanel(QWidget):
         
         controls_group.setLayout(controls_layout)
         layout.addWidget(controls_group)
-        
+
         self.setLayout(layout)
-    
+
+        # Refresh scripts list after initialization (delayed to ensure parent is set)
+        QTimer.singleShot(100, self._initial_refresh_scripts)
+
+    def _initial_refresh_scripts(self):
+        """Initial refresh of scripts list using default directory"""
+        import os
+        self.script_combo.blockSignals(True)
+        self.script_combo.clear()
+        self.script_combo.addItem("(select recording)", "")
+
+        # Use default directory on initial load
+        recordings_dir = "recordings"
+        if os.path.isdir(recordings_dir):
+            files = sorted([f for f in os.listdir(recordings_dir)
+                          if f.endswith('.txt') or f.endswith('.json')])
+            for f in files:
+                # Display name without extension, store full filename as data
+                display_name = os.path.splitext(f)[0]
+                self.script_combo.addItem(display_name, f)
+
+        self.script_combo.blockSignals(False)
+
     def toggle_play(self):
         if self.time_panel.animation_timer.isActive():
             # PAUSING - stop animation but preserve trails
@@ -4990,7 +5047,92 @@ class ControlsPanel(QWidget):
         # Sync statusbar button if it exists
         if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
             self.parent_window.statusbar_play_btn.setText("▶ Play")
-    
+
+    def refresh_scripts(self):
+        """Refresh the list of available recording scripts"""
+        import os
+        self.script_combo.blockSignals(True)
+        self.script_combo.clear()
+        self.script_combo.addItem("(select recording)", "")
+
+        # Get recordings directory
+        recordings_dir = "recordings"
+        if self.parent_window and hasattr(self.parent_window, 'settings_dialog') and self.parent_window.settings_dialog:
+            dir_text = self.parent_window.settings_dialog.script_dir_edit.text()
+            if dir_text:
+                recordings_dir = dir_text
+
+        if os.path.isdir(recordings_dir):
+            files = sorted([f for f in os.listdir(recordings_dir)
+                          if f.endswith('.txt') or f.endswith('.json')])
+            for f in files:
+                # Display name without extension, store full filename as data
+                display_name = os.path.splitext(f)[0]
+                self.script_combo.addItem(display_name, f)
+
+        self.script_combo.blockSignals(False)
+
+    def on_script_selected(self, index):
+        """Handle script selection from dropdown"""
+        if index <= 0:  # "(select recording)" or nothing
+            return
+
+        # Get filename from item data (full filename with extension)
+        filename = self.script_combo.currentData()
+        if not filename:
+            return
+
+        # Get recordings directory
+        recordings_dir = "recordings"
+        if self.parent_window and hasattr(self.parent_window, 'settings_dialog') and self.parent_window.settings_dialog:
+            dir_text = self.parent_window.settings_dialog.script_dir_edit.text()
+            if dir_text:
+                recordings_dir = dir_text
+
+        # Start playback
+        if self.parent_window and hasattr(self.parent_window, 'start_script_playback'):
+            import os
+            filepath = os.path.join(recordings_dir, filename)
+            self.parent_window.start_script_playback(filepath)
+
+    def stop_script(self):
+        """Stop script playback"""
+        if self.parent_window and hasattr(self.parent_window, 'stop_script_playback'):
+            self.parent_window.stop_script_playback()
+
+    def set_script_playing(self, playing, script_name=""):
+        """Update UI to show script playback state"""
+        import os
+        self.script_stop_btn.setEnabled(playing)
+        self.script_stop_btn.setVisible(playing)
+        self.script_refresh_btn.setVisible(not playing)
+        if playing:
+            # Show playing indicator in combo box
+            self.script_combo.blockSignals(True)
+            # Store current items (text and data), clear, add playing indicator
+            self._stored_scripts = [(self.script_combo.itemText(i), self.script_combo.itemData(i))
+                                    for i in range(self.script_combo.count())]
+            self.script_combo.clear()
+            # Strip extension from display name
+            display_name = os.path.splitext(script_name)[0] if script_name else "script"
+            self.script_combo.addItem(f"▶ {display_name}", "")
+            self.script_combo.setStyleSheet("QComboBox { background-color: #90EE90; font-weight: bold; }")
+            self.script_combo.setEnabled(False)
+            self.script_combo.blockSignals(False)
+        else:
+            # Restore normal state
+            self.script_combo.setStyleSheet("")
+            self.script_combo.setEnabled(True)
+            self.script_combo.blockSignals(True)
+            self.script_combo.clear()
+            if hasattr(self, '_stored_scripts') and self._stored_scripts:
+                for text, data in self._stored_scripts:
+                    self.script_combo.addItem(text, data)
+            else:
+                self.script_combo.addItem("(select recording)", "")
+            self.script_combo.setCurrentIndex(0)
+            self.script_combo.blockSignals(False)
+
     def advance_time(self):
         """Advance time based on rate and units or annual step mode"""
         # Check for annual step mode
@@ -7818,12 +7960,21 @@ class ColorbarPanel(QWidget):
         self.cbar_max.setValue(23.0)
         self.show_legend_check.setChecked(True)
         self.size_combo.setCurrentText('V magnitude')
-        self.size_min_spin.setValue(10)
-        self.size_max_spin.setValue(150)
+        self.size_min_spin.setValue(2)
+        self.size_max_spin.setValue(12)
         self.data_min_spin.setValue(19.0)
-        self.data_max_spin.setValue(23.0)
+        self.data_max_spin.setValue(25.0)
+        self.bin_size_spin.setValue(0.25)
         self.size_invert_check.setChecked(True)
         self.data_unit_label.setText('mag')
+
+        # Clear equalization
+        self._equalization_bins = None
+        self._equalization_property = None
+        self.equalize_btn.setStyleSheet("")
+        self.equalize_btn.setText("Equalize")
+        self.equalize_label.setText("")
+
         # Trigger visibility update
         self.on_color_by_changed('V magnitude')
     
@@ -8536,7 +8687,80 @@ class SettingsDialog(QDialog):
         advanced_group.setLayout(advanced_layout)
         self._layout.addWidget(advanced_group)
         self.collapsible_sections.append(advanced_group)
-        
+
+        # Scripted Playback section
+        script_group = CollapsibleGroupBox("Scripted Playback")
+        script_layout = QVBoxLayout()
+        script_layout.setSpacing(3)
+
+        # Directory path
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(QLabel("Directory:"))
+        self.script_dir_edit = QLineEdit("recordings")
+        self.script_dir_edit.setPlaceholderText("recordings")
+        self.script_dir_edit.setToolTip("Directory for script files (default: recordings/)")
+        dir_row.addWidget(self.script_dir_edit)
+        self.script_dir_btn = QPushButton("...")
+        self.script_dir_btn.setMaximumWidth(30)
+        self.script_dir_btn.setToolTip("Browse for directory")
+        self.script_dir_btn.clicked.connect(self.browse_script_dir)
+        dir_row.addWidget(self.script_dir_btn)
+        script_layout.addLayout(dir_row)
+
+        # Filename
+        file_row = QHBoxLayout()
+        file_row.addWidget(QLabel("Filename:"))
+        self.script_file_edit = QLineEdit("neolyzer_script.json")
+        self.script_file_edit.setToolTip("Script filename (.json extension recommended)")
+        file_row.addWidget(self.script_file_edit)
+        script_layout.addLayout(file_row)
+
+        # Options row
+        options_row = QHBoxLayout()
+        self.script_loop_check = QCheckBox("Loop")
+        self.script_loop_check.setChecked(False)
+        self.script_loop_check.setToolTip("Loop playback continuously (saved with recording)")
+        options_row.addWidget(self.script_loop_check)
+
+        self.script_append_check = QCheckBox("Append")
+        self.script_append_check.setChecked(False)
+        self.script_append_check.setToolTip("Append time points to existing file")
+        options_row.addWidget(self.script_append_check)
+        options_row.addStretch()
+        script_layout.addLayout(options_row)
+
+        # Record, Playback, and Delete buttons
+        btn_row = QHBoxLayout()
+        self.script_record_btn = QPushButton("Record")
+        self.script_record_btn.setToolTip("Start recording time points and state")
+        self.script_record_btn.clicked.connect(self.on_script_record)
+        btn_row.addWidget(self.script_record_btn)
+
+        self.script_play_btn = QPushButton("Playback")
+        self.script_play_btn.setToolTip("Play back recorded script")
+        self.script_play_btn.clicked.connect(self.on_script_play)
+        btn_row.addWidget(self.script_play_btn)
+
+        self.script_delete_btn = QPushButton("Delete")
+        self.script_delete_btn.setToolTip("Delete the script file")
+        self.script_delete_btn.clicked.connect(self.on_script_delete)
+        btn_row.addWidget(self.script_delete_btn)
+        btn_row.addStretch()
+        script_layout.addLayout(btn_row)
+
+        # Status label
+        self.script_status_label = QLabel("")
+        self.script_status_label.setStyleSheet("color: #666; font-style: italic;")
+        script_layout.addWidget(self.script_status_label)
+
+        script_group.setLayout(script_layout)
+        self._layout.addWidget(script_group)
+        self.collapsible_sections.append(script_group)
+
+        # Script recording state
+        self._script_recording = False
+        self._script_buffer = []  # List of JD values
+
         # Set content layout and add to scroll area
         content.setLayout(self._layout)
         scroll.setWidget(content)
@@ -8916,7 +9140,503 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         if parent and hasattr(parent, 'clear_trails'):
             parent.clear_trails()
-    
+
+    def browse_script_dir(self):
+        """Browse for script directory"""
+        current_dir = self.script_dir_edit.text() or "."
+        dir_path = QFileDialog.getExistingDirectory(self, "Select Script Directory", current_dir)
+        if dir_path:
+            self.script_dir_edit.setText(dir_path)
+
+    def on_script_record(self):
+        """Toggle script recording on/off"""
+        if not self._script_recording:
+            # Start recording
+            self._script_recording = True
+            self._script_buffer = []
+            self.script_record_btn.setText("Finish")
+            self.script_record_btn.setStyleSheet("background-color: #FFB6C1; font-weight: bold;")
+            self.script_play_btn.setEnabled(False)
+
+            # Record initial state (current JD)
+            parent = self.parent()
+            if parent and hasattr(parent, 'time_panel') and hasattr(parent.time_panel, 'current_jd'):
+                jd = parent.time_panel.current_jd
+                self._script_buffer.append(jd)
+                self.script_status_label.setText(f"Recording: 1 time point")
+            else:
+                self.script_status_label.setText("Recording started...")
+        else:
+            # Finish recording and save
+            self._script_recording = False
+            self.script_record_btn.setText("Record")
+            self.script_record_btn.setStyleSheet("")
+            self.script_play_btn.setEnabled(True)
+
+            if len(self._script_buffer) > 0:
+                self._save_script()
+            else:
+                self.script_status_label.setText("No time points recorded")
+
+    def record_time_point(self, jd):
+        """Record a time point during script recording (called from time panel)"""
+        if self._script_recording:
+            self._script_buffer.append(jd)
+            self.script_status_label.setText(f"Recording: {len(self._script_buffer)} time points")
+
+    def _save_script(self):
+        """Save recorded script to file with full state"""
+        import json
+        import os
+
+        script_dir = self.script_dir_edit.text() or "."
+        filename = self.script_file_edit.text() or "neolyzer_script.json"
+
+        # Ensure directory exists
+        if not os.path.exists(script_dir):
+            try:
+                os.makedirs(script_dir)
+            except Exception as e:
+                self.script_status_label.setText(f"Error creating directory: {e}")
+                return
+
+        filepath = os.path.join(script_dir, filename)
+        append_mode = self.script_append_check.isChecked()
+
+        # Handle append mode - load existing time points
+        existing_points = []
+        if append_mode and os.path.exists(filepath):
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                    if content.startswith('{'):
+                        # JSON format
+                        data = json.loads(content)
+                        existing_points = data.get('time_points', [])
+                    else:
+                        # Legacy format
+                        for line in content.split('\n'):
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                try:
+                                    existing_points.append(float(line))
+                                except ValueError:
+                                    pass
+            except Exception:
+                pass  # If reading fails, just start fresh
+
+        # Collect full state from parent window
+        parent = self.parent()
+        state = {}
+
+        if parent:
+            # Magnitude
+            if hasattr(parent, 'magnitude_panel'):
+                state['magnitude'] = {
+                    'v_min': parent.magnitude_panel.mag_min_spin.value(),
+                    'v_max': parent.magnitude_panel.mag_max_spin.value(),
+                    'h_min': parent.magnitude_panel.h_min_spin.value(),
+                    'h_max': parent.magnitude_panel.h_max_spin.value(),
+                    'show_all': parent.magnitude_panel.show_all_neos_check.isChecked(),
+                    'lunation_discoveries_only': parent.magnitude_panel.lunation_discoveries_check.isChecked()
+                }
+
+            # Animation
+            if hasattr(parent, 'controls_panel'):
+                state['animation'] = {
+                    'rate': parent.controls_panel.rate_spin.value(),
+                    'unit': parent.controls_panel.rate_unit.currentText(),
+                    'fps': parent.controls_panel.fps_spin.value()
+                }
+
+            # NEO classes
+            if hasattr(parent, 'neo_classes_panel'):
+                state['neo_classes'] = {
+                    'moid_enabled': parent.neo_classes_panel.moid_enabled_check.isChecked(),
+                    'moid_min': parent.neo_classes_panel.moid_min_spin.value(),
+                    'moid_max': parent.neo_classes_panel.moid_max_spin.value(),
+                    'show_hollow': parent.neo_classes_panel.show_hollow_check.isChecked(),
+                    'hide_before_discovery': parent.neo_classes_panel.hide_before_discovery_check.isChecked(),
+                    'selected': [cls for cls, cb in parent.neo_classes_panel.class_checks.items() if cb.isChecked()]
+                }
+
+            # Projection
+            if hasattr(parent, 'proj_panel'):
+                state['projection'] = {
+                    'type': parent.proj_panel.proj_combo.currentText(),
+                    'coord_system': parent.proj_panel.coord_combo.currentText()
+                }
+
+            # Colorbar and symbol size
+            if hasattr(parent, 'colorbar_panel'):
+                state['colorbar'] = {
+                    'color_by': parent.colorbar_panel.color_by_combo.currentText(),
+                    'colormap': parent.colorbar_panel.cmap_combo.currentText(),
+                    'min': parent.colorbar_panel.cbar_min.value(),
+                    'max': parent.colorbar_panel.cbar_max.value(),
+                    'show_legend': parent.colorbar_panel.show_legend_check.isChecked(),
+                    'size_by': parent.colorbar_panel.size_combo.currentText(),
+                    'size_min': parent.colorbar_panel.size_min_spin.value(),
+                    'size_max': parent.colorbar_panel.size_max_spin.value(),
+                    'data_min': parent.colorbar_panel.data_min_spin.value(),
+                    'data_max': parent.colorbar_panel.data_max_spin.value(),
+                    'bin_size': parent.colorbar_panel.bin_size_spin.value(),
+                    'size_invert': parent.colorbar_panel.size_invert_check.isChecked()
+                }
+
+                # Equalization bins
+                if (hasattr(parent.colorbar_panel, '_equalization_bins') and
+                    parent.colorbar_panel._equalization_bins is not None):
+                    state['equalization'] = {
+                        'property': parent.colorbar_panel._equalization_property,
+                        'bins': parent.colorbar_panel._equalization_bins.tolist()
+                    }
+
+            # Orbital Elements
+            if hasattr(parent, 'orbital_panel'):
+                state['orbital_elements'] = {
+                    'period_min': parent.orbital_panel.period_min_spin.value(),
+                    'period_max': parent.orbital_panel.period_max_spin.value(),
+                    'ecc_min': parent.orbital_panel.ecc_min_spin.value(),
+                    'ecc_max': parent.orbital_panel.ecc_max_spin.value(),
+                    'inc_min': parent.orbital_panel.inc_min_spin.value(),
+                    'inc_max': parent.orbital_panel.inc_max_spin.value()
+                }
+
+            # Settings dialog settings
+            # Trailing
+            state['trailing'] = {
+                'enabled': self.enable_trailing_check.isChecked(),
+                'length': self.trail_length_spin.value(),
+                'weight': self.trail_weight_spin.value(),
+                'color': self.trail_color.text()
+            }
+
+            # Fast Animation
+            state['fast_animation'] = {
+                'enabled': self.fast_animation_check.isChecked(),
+                'decimation': self.decimate_spin.value()
+            }
+
+            # Planes
+            state['planes'] = {}
+            for plane_name, controls in self.plane_controls.items():
+                state['planes'][plane_name] = {
+                    'enabled': controls['plane_cb'].isChecked(),
+                    'color': controls['color_edit'].text(),
+                    'pole': controls['pole_cb'].isChecked()
+                }
+
+            # Sun and Moon
+            state['sunmoon'] = {
+                'show_sun': self.show_sun_check.isChecked(),
+                'show_moon': self.show_moon_check.isChecked(),
+                'show_phases': self.show_moon_phases_check.isChecked(),
+                'lunar_exclusion_enabled': self.lunar_exclusion_check.isChecked(),
+                'lunar_radius': self.lunar_radius_spin.value(),
+                'lunar_penalty': self.lunar_penalty_spin.value(),
+                'lunar_color': self.lunar_color_edit.text(),
+                'lunar_show_bounds': self.lunar_show_bounds.isChecked()
+            }
+
+            # Galactic Exclusion
+            state['galactic'] = {
+                'enabled': self.galactic_enable_check.isChecked(),
+                'offset': self.galactic_offset_spin.value(),
+                'penalty': self.galactic_penalty_spin.value(),
+                'color': self.galactic_color_edit.text(),
+                'show_bounds': self.galactic_show_bounds.isChecked()
+            }
+
+            # Opposition Benefit
+            state['opposition'] = {
+                'enabled': self.opposition_enable_check.isChecked(),
+                'radius': self.opposition_radius_spin.value(),
+                'benefit': self.opposition_benefit_spin.value(),
+                'color': self.opposition_color_edit.text(),
+                'show_bounds': self.opposition_show_bounds.isChecked()
+            }
+
+        try:
+            loop_enabled = self.script_loop_check.isChecked()
+            all_points = existing_points + self._script_buffer
+
+            script_data = {
+                'version': '3.02',
+                'loop': loop_enabled,
+                'state': state,
+                'time_points': all_points
+            }
+
+            with open(filepath, 'w') as f:
+                json.dump(script_data, f, indent=2)
+
+            loop_str = " (loop)" if loop_enabled else ""
+            append_str = " (appended)" if append_mode and existing_points else ""
+            self.script_status_label.setText(f"Saved {len(all_points)} points{loop_str}{append_str} to {filename}")
+        except Exception as e:
+            self.script_status_label.setText(f"Error saving: {e}")
+
+    def on_script_play(self):
+        """Play back recorded script or stop if already playing"""
+        import json
+        import os
+
+        # Check if playback is already running
+        parent = self.parent()
+        if parent and hasattr(parent, '_script_timer') and parent._script_timer.isActive():
+            # Stop playback
+            parent._script_timer.stop()
+            self.script_play_btn.setText("Playback")
+            self.script_play_btn.setStyleSheet("")
+            self.script_status_label.setText("Playback stopped")
+            self.script_record_btn.setEnabled(True)
+            # Update controls panel
+            if hasattr(parent, 'controls_panel'):
+                parent.controls_panel.set_script_playing(False)
+            return
+
+        script_dir = self.script_dir_edit.text() or "."
+        filename = self.script_file_edit.text() or "neolyzer_script.json"
+
+        filepath = os.path.join(script_dir, filename)
+
+        if not os.path.exists(filepath):
+            self.script_status_label.setText(f"File not found: {filename}")
+            return
+
+        # Load script
+        try:
+            time_points = []
+            loop_enabled = False
+            state = None
+
+            with open(filepath, 'r') as f:
+                content = f.read()
+
+            # Check if JSON format (new) or legacy format
+            if content.strip().startswith('{'):
+                # JSON format
+                data = json.loads(content)
+                time_points = data.get('time_points', [])
+                loop_enabled = data.get('loop', False)
+                state = data.get('state')
+            else:
+                # Legacy format
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line.startswith('# loop:'):
+                        loop_str = line.split(':', 1)[1].strip().lower()
+                        loop_enabled = loop_str == 'true'
+                    elif line and not line.startswith('#'):
+                        try:
+                            jd = float(line)
+                            time_points.append(jd)
+                        except ValueError:
+                            pass
+
+            if len(time_points) == 0:
+                self.script_status_label.setText("No valid time points in script")
+                return
+
+            # Update loop checkbox to match file setting
+            self.script_loop_check.setChecked(loop_enabled)
+
+            # Restore state if available
+            if state and parent:
+                self._restore_script_state(parent, state)
+
+            loop_str = " (loop)" if loop_enabled else ""
+            self.script_status_label.setText(f"Playing {len(time_points)} time points{loop_str}...")
+
+            # Change button to Stop
+            self.script_play_btn.setText("Stop")
+            self.script_play_btn.setStyleSheet("background-color: #FFB6C1;")
+            self.script_record_btn.setEnabled(False)
+
+            # Get parent window for playback
+            if parent and hasattr(parent, 'play_script'):
+                parent.play_script(time_points, loop=loop_enabled, script_name=filename)
+            else:
+                self.script_status_label.setText("Playback not available")
+                self.script_play_btn.setText("Playback")
+                self.script_play_btn.setStyleSheet("")
+                self.script_record_btn.setEnabled(True)
+
+        except Exception as e:
+            self.script_status_label.setText(f"Error loading: {e}")
+
+    def _restore_script_state(self, parent, state):
+        """Restore saved state from script file"""
+        import numpy as np
+
+        try:
+            # Magnitude
+            if 'magnitude' in state and hasattr(parent, 'magnitude_panel'):
+                m = state['magnitude']
+                parent.magnitude_panel.mag_min_spin.setValue(m.get('v_min', 19.0))
+                parent.magnitude_panel.mag_max_spin.setValue(m.get('v_max', 22.0))
+                parent.magnitude_panel.h_min_spin.setValue(m.get('h_min', 9.0))
+                parent.magnitude_panel.h_max_spin.setValue(m.get('h_max', 22.0))
+                parent.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
+                parent.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
+
+            # Animation
+            if 'animation' in state and hasattr(parent, 'controls_panel'):
+                a = state['animation']
+                parent.controls_panel.rate_spin.setValue(a.get('rate', 1.0))
+                parent.controls_panel.rate_unit.setCurrentText(a.get('unit', 'days/sec'))
+                parent.controls_panel.fps_spin.setValue(a.get('fps', 10))
+
+            # NEO classes
+            if 'neo_classes' in state and hasattr(parent, 'neo_classes_panel'):
+                n = state['neo_classes']
+                parent.neo_classes_panel.moid_enabled_check.setChecked(n.get('moid_enabled', False))
+                parent.neo_classes_panel.moid_min_spin.setValue(n.get('moid_min', 0.0))
+                parent.neo_classes_panel.moid_max_spin.setValue(n.get('moid_max', 0.05))
+                parent.neo_classes_panel.show_hollow_check.setChecked(n.get('show_hollow', False))
+                parent.neo_classes_panel.hide_before_discovery_check.setChecked(n.get('hide_before_discovery', False))
+                if 'selected' in n:
+                    for cls, cb in parent.neo_classes_panel.class_checks.items():
+                        cb.setChecked(cls in n['selected'])
+
+            # Projection
+            if 'projection' in state and hasattr(parent, 'proj_panel'):
+                p = state['projection']
+                parent.proj_panel.proj_combo.setCurrentText(p.get('type', 'Aitoff'))
+                parent.proj_panel.coord_combo.setCurrentText(p.get('coord_system', 'Equatorial'))
+
+            # Colorbar and symbol size
+            if 'colorbar' in state and hasattr(parent, 'colorbar_panel'):
+                c = state['colorbar']
+                parent.colorbar_panel.color_by_combo.setCurrentText(c.get('color_by', 'V magnitude'))
+                parent.colorbar_panel.cmap_combo.setCurrentText(c.get('colormap', 'viridis_r'))
+                parent.colorbar_panel.cbar_min.setValue(c.get('min', 19.0))
+                parent.colorbar_panel.cbar_max.setValue(c.get('max', 23.0))
+                parent.colorbar_panel.show_legend_check.setChecked(c.get('show_legend', True))
+                parent.colorbar_panel.size_combo.setCurrentText(c.get('size_by', 'V magnitude'))
+                parent.colorbar_panel.size_min_spin.setValue(c.get('size_min', 2))
+                parent.colorbar_panel.size_max_spin.setValue(c.get('size_max', 12))
+                parent.colorbar_panel.data_min_spin.setValue(c.get('data_min', 19.0))
+                parent.colorbar_panel.data_max_spin.setValue(c.get('data_max', 25.0))
+                parent.colorbar_panel.bin_size_spin.setValue(c.get('bin_size', 0.25))
+                parent.colorbar_panel.size_invert_check.setChecked(c.get('size_invert', True))
+
+            # Equalization
+            if 'equalization' in state and hasattr(parent, 'colorbar_panel'):
+                eq = state['equalization']
+                parent.colorbar_panel._equalization_property = eq.get('property')
+                bins = eq.get('bins')
+                if bins:
+                    parent.colorbar_panel._equalization_bins = np.array(bins)
+                    parent.colorbar_panel.equalize_btn.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+                    parent.colorbar_panel.equalize_btn.setText("Equalized")
+                    parent.colorbar_panel.equalize_label.setText(f"Equalized: {len(bins)-1} bins")
+
+            # Orbital Elements
+            if 'orbital_elements' in state and hasattr(parent, 'orbital_panel'):
+                oe = state['orbital_elements']
+                parent.orbital_panel.period_min_spin.setValue(oe.get('period_min', 0.0))
+                parent.orbital_panel.period_max_spin.setValue(oe.get('period_max', 10.0))
+                parent.orbital_panel.ecc_min_spin.setValue(oe.get('ecc_min', 0.0))
+                parent.orbital_panel.ecc_max_spin.setValue(oe.get('ecc_max', 1.0))
+                parent.orbital_panel.inc_min_spin.setValue(oe.get('inc_min', 0.0))
+                parent.orbital_panel.inc_max_spin.setValue(oe.get('inc_max', 180.0))
+
+            # Trailing
+            if 'trailing' in state:
+                t = state['trailing']
+                self.enable_trailing_check.setChecked(t.get('enabled', False))
+                self.trail_length_spin.setValue(t.get('length', 50))
+                self.trail_weight_spin.setValue(t.get('weight', 1.0))
+                self.trail_color.setText(t.get('color', '#00AA00'))
+
+            # Fast Animation
+            if 'fast_animation' in state:
+                fa = state['fast_animation']
+                self.fast_animation_check.setChecked(fa.get('enabled', False))
+                self.decimate_spin.setValue(fa.get('decimation', 4))
+
+            # Planes
+            if 'planes' in state:
+                for plane_name, plane_settings in state['planes'].items():
+                    if plane_name in self.plane_controls:
+                        controls = self.plane_controls[plane_name]
+                        controls['plane_cb'].setChecked(plane_settings.get('enabled', False))
+                        controls['color_edit'].setText(plane_settings.get('color', self.DEFAULT_COLORS.get(plane_name, '#FFFFFF')))
+                        controls['pole_cb'].setChecked(plane_settings.get('pole', False))
+
+            # Sun and Moon
+            if 'sunmoon' in state:
+                s = state['sunmoon']
+                self.show_sun_check.setChecked(s.get('show_sun', True))
+                self.show_moon_check.setChecked(s.get('show_moon', True))
+                self.show_moon_phases_check.setChecked(s.get('show_phases', False))
+                self.lunar_exclusion_check.setChecked(s.get('lunar_exclusion_enabled', False))
+                self.lunar_radius_spin.setValue(s.get('lunar_radius', 30.0))
+                self.lunar_penalty_spin.setValue(s.get('lunar_penalty', 3.0))
+                self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
+                self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
+
+            # Galactic Exclusion
+            if 'galactic' in state:
+                g = state['galactic']
+                self.galactic_enable_check.setChecked(g.get('enabled', False))
+                self.galactic_offset_spin.setValue(g.get('offset', 15.0))
+                self.galactic_penalty_spin.setValue(g.get('penalty', 2.0))
+                self.galactic_color_edit.setText(g.get('color', '#FF99FF'))
+                self.galactic_show_bounds.setChecked(g.get('show_bounds', True))
+
+            # Opposition Benefit
+            if 'opposition' in state:
+                o = state['opposition']
+                self.opposition_enable_check.setChecked(o.get('enabled', False))
+                self.opposition_radius_spin.setValue(o.get('radius', 5.0))
+                self.opposition_benefit_spin.setValue(o.get('benefit', 2.0))
+                self.opposition_color_edit.setText(o.get('color', '#90EE90'))
+                self.opposition_show_bounds.setChecked(o.get('show_bounds', True))
+
+            # Update control states and display
+            self._initialize_control_states()
+            if hasattr(parent, 'update_display'):
+                parent.update_display()
+
+        except Exception as e:
+            logger.warning(f"Error restoring script state: {e}")
+
+    def is_script_recording(self):
+        """Check if script recording is active"""
+        return self._script_recording
+
+    def on_script_delete(self):
+        """Delete the current script file"""
+        script_dir = self.script_dir_edit.text() or "."
+        filename = self.script_file_edit.text() or "neolyzer_script.json"
+
+        import os
+        filepath = os.path.join(script_dir, filename)
+
+        if not os.path.exists(filepath):
+            self.script_status_label.setText(f"File not found: {filename}")
+            return
+
+        # Confirm deletion
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "Delete Script",
+            f"Delete script file '{filename}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                os.remove(filepath)
+                self.script_status_label.setText(f"Deleted: {filename}")
+            except Exception as e:
+                self.script_status_label.setText(f"Error deleting: {e}")
+
     def on_plane_changed(self):
         """Emit signal when any plane setting changes"""
         # Notify parent to redraw
@@ -9149,7 +9869,10 @@ class NEOVisualizer(QMainWindow):
         # Create dialog only once, then show/hide
         if self.settings_dialog is None:
             self.settings_dialog = SettingsDialog(self.orbital_panel, self.proj_panel, self.colorbar_panel, self)
-        
+            # Populate scripts dropdown now that settings_dialog exists with recordings path
+            if hasattr(self, 'controls_panel'):
+                self.controls_panel.refresh_scripts()
+
         if self.settings_dialog.isVisible():
             self.settings_dialog.hide()
         else:
@@ -9240,7 +9963,158 @@ class NEOVisualizer(QMainWindow):
         # Force redraw to show cleared trails
         if hasattr(self.canvas, 'draw'):
             self.canvas.draw()
-    
+
+    def play_script(self, time_points, loop=False, script_name=""):
+        """Play back a list of JD time points as a script"""
+        if not time_points:
+            return
+
+        # Store script data for playback
+        self._script_time_points = time_points
+        self._script_index = 0
+        self._script_loop = loop
+        self._script_loop_count = 0
+        self._script_name = script_name
+
+        # Create timer for playback if it doesn't exist
+        if not hasattr(self, '_script_timer'):
+            self._script_timer = QTimer()
+            self._script_timer.timeout.connect(self._script_step)
+
+        # Get playback speed from animation controls (use same FPS)
+        fps = 10  # Default FPS
+        if hasattr(self, 'controls_panel') and hasattr(self.controls_panel, 'fps_spin'):
+            fps = self.controls_panel.fps_spin.value()
+
+        # Start playback
+        interval = int(1000 / fps)  # ms per frame
+        self._script_timer.start(interval)
+
+        # Update controls panel
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.set_script_playing(True, script_name or "script")
+
+        # Update status
+        loop_str = " (loop)" if loop else ""
+        if self.settings_dialog:
+            self.settings_dialog.script_status_label.setText(f"Playing{loop_str}: 0/{len(time_points)}")
+
+    def _script_step(self):
+        """Execute one step of script playback"""
+        if self._script_index >= len(self._script_time_points):
+            if self._script_loop:
+                # Loop back to start
+                self._script_index = 0
+                self._script_loop_count += 1
+            else:
+                # Script finished
+                self._script_timer.stop()
+                # Update controls panel
+                if hasattr(self, 'controls_panel'):
+                    self.controls_panel.set_script_playing(False)
+                if self.settings_dialog:
+                    self.settings_dialog.script_status_label.setText(
+                        f"Playback complete: {len(self._script_time_points)} points")
+                    # Reset button
+                    self.settings_dialog.script_play_btn.setText("Playback")
+                    self.settings_dialog.script_play_btn.setStyleSheet("")
+                    self.settings_dialog.script_record_btn.setEnabled(True)
+                return
+
+        # Set time to script point
+        jd = self._script_time_points[self._script_index]
+        self.time_panel.set_jd(jd)
+
+        self._script_index += 1
+
+        # Update status
+        if self.settings_dialog:
+            loop_info = f" (loop {self._script_loop_count + 1})" if self._script_loop else ""
+            self.settings_dialog.script_status_label.setText(
+                f"Playing{loop_info}: {self._script_index}/{len(self._script_time_points)}")
+
+    def start_script_playback(self, filepath):
+        """Start script playback from a file path (called from Controls dropdown)"""
+        import json
+        import os
+
+        if not os.path.exists(filepath):
+            self.status_label.setText(f"Script not found: {filepath}")
+            return
+
+        script_name = os.path.basename(filepath)
+
+        try:
+            time_points = []
+            loop_enabled = False
+            state = None
+
+            with open(filepath, 'r') as f:
+                content = f.read()
+
+            # Check if JSON format (new) or legacy format
+            if content.strip().startswith('{'):
+                # JSON format
+                data = json.loads(content)
+                time_points = data.get('time_points', [])
+                loop_enabled = data.get('loop', False)
+                state = data.get('state')
+            else:
+                # Legacy format
+                for line in content.split('\n'):
+                    line = line.strip()
+                    if line.startswith('# loop:'):
+                        loop_str = line.split(':', 1)[1].strip().lower()
+                        loop_enabled = loop_str == 'true'
+                    elif line and not line.startswith('#'):
+                        try:
+                            jd = float(line)
+                            time_points.append(jd)
+                        except ValueError:
+                            pass
+
+            if len(time_points) == 0:
+                self.status_label.setText("No valid time points in script")
+                return
+
+            # Restore state if available
+            if state:
+                # Ensure settings_dialog exists for state restoration
+                if self.settings_dialog is None:
+                    self.settings_dialog = SettingsDialog(self.orbital_panel, self.proj_panel, self.colorbar_panel, self)
+                self.settings_dialog._restore_script_state(self, state)
+
+            # Start playback
+            self.play_script(time_points, loop=loop_enabled, script_name=script_name)
+
+            # Update settings dialog if it exists
+            if self.settings_dialog:
+                self.settings_dialog.script_loop_check.setChecked(loop_enabled)
+                self.settings_dialog.script_play_btn.setText("Stop")
+                self.settings_dialog.script_play_btn.setStyleSheet("background-color: #FFB6C1;")
+                self.settings_dialog.script_record_btn.setEnabled(False)
+
+        except Exception as e:
+            self.status_label.setText(f"Error loading script: {e}")
+
+    def stop_script_playback(self):
+        """Stop the currently playing script"""
+        if hasattr(self, '_script_timer') and self._script_timer.isActive():
+            self._script_timer.stop()
+
+            # Update controls panel
+            if hasattr(self, 'controls_panel'):
+                self.controls_panel.set_script_playing(False)
+
+            # Update settings dialog
+            if self.settings_dialog:
+                self.settings_dialog.script_play_btn.setText("Playback")
+                self.settings_dialog.script_play_btn.setStyleSheet("")
+                self.settings_dialog.script_record_btn.setEnabled(True)
+                self.settings_dialog.script_status_label.setText("Playback stopped")
+
+            self.status_label.setText("Script playback stopped")
+
     def toggle_drawer(self):
         """Toggle the control panel drawer open/closed"""
         self.drawer_collapsed = not self.drawer_collapsed
@@ -9979,7 +10853,11 @@ class NEOVisualizer(QMainWindow):
             self.controls_panel.rate_spin.setValue(1.0)
             self.controls_panel.rate_unit.setCurrentText('days/sec')
             self.controls_panel.fps_spin.setValue(10)
+            self.controls_panel.annual_step_check.setChecked(False)
+            self.controls_panel.annual_pace_spin.setValue(1.0)
             self.controls_panel.stop_animation()
+            # Stop any script playback
+            self.stop_script_playback()
             
             # Magnitude panel
             self.magnitude_panel.mag_min_spin.setValue(19.0)
@@ -10063,7 +10941,11 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.trail_length_spin.setValue(50)
                 self.settings_dialog.trail_weight_spin.setValue(1.0)
                 self.settings_dialog.trail_color.setText("#00AA00")
-                
+
+                # Fast Animation
+                self.settings_dialog.fast_animation_check.setChecked(False)
+                self.settings_dialog.decimate_spin.setValue(4)
+
                 # Horizon/Twilight
                 self.settings_dialog.horizon_enable_check.setChecked(False)
                 self.settings_dialog.observer_lat_spin.setValue(32.2226)  # Tucson
@@ -10114,7 +10996,8 @@ class NEOVisualizer(QMainWindow):
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
                     'h_min': self.magnitude_panel.h_min_spin.value(),
                     'h_max': self.magnitude_panel.h_max_spin.value(),
-                    'show_all': self.magnitude_panel.show_all_neos_check.isChecked()
+                    'show_all': self.magnitude_panel.show_all_neos_check.isChecked(),
+                    'lunation_discoveries_only': self.magnitude_panel.lunation_discoveries_check.isChecked()
                 },
                 'animation': {
                     'rate': self.controls_panel.rate_spin.value(),
@@ -10144,10 +11027,22 @@ class NEOVisualizer(QMainWindow):
                     'size_max': self.colorbar_panel.size_max_spin.value(),
                     'data_min': self.colorbar_panel.data_min_spin.value(),
                     'data_max': self.colorbar_panel.data_max_spin.value(),
+                    'bin_size': self.colorbar_panel.bin_size_spin.value(),
                     'size_invert': self.colorbar_panel.size_invert_check.isChecked()
+                },
+                'time': {
+                    'jd': self.time_panel.current_jd
+                },
+                'orbital_elements': {
+                    'period_min': self.orbital_panel.period_min_spin.value(),
+                    'period_max': self.orbital_panel.period_max_spin.value(),
+                    'ecc_min': self.orbital_panel.ecc_min_spin.value(),
+                    'ecc_max': self.orbital_panel.ecc_max_spin.value(),
+                    'inc_min': self.orbital_panel.inc_min_spin.value(),
+                    'inc_max': self.orbital_panel.inc_max_spin.value()
                 }
             }
-            
+
             # Add all Settings dialog settings if it exists
             if self.settings_dialog:
                 # Appearance
@@ -10220,7 +11115,21 @@ class NEOVisualizer(QMainWindow):
                     'weight': self.settings_dialog.trail_weight_spin.value(),
                     'color': self.settings_dialog.trail_color.text()
                 }
-                
+
+                # Fast Animation
+                settings['fast_animation'] = {
+                    'enabled': self.settings_dialog.fast_animation_check.isChecked(),
+                    'decimation': self.settings_dialog.decimate_spin.value()
+                }
+
+                # Symbol size equalization (if active)
+                if (hasattr(self.colorbar_panel, '_equalization_bins') and
+                    self.colorbar_panel._equalization_bins is not None):
+                    settings['equalization'] = {
+                        'property': self.colorbar_panel._equalization_property,
+                        'bins': self.colorbar_panel._equalization_bins.tolist()
+                    }
+
                 # Horizon/Twilight
                 settings['horizon'] = {
                     'enabled': self.settings_dialog.horizon_enable_check.isChecked(),
@@ -10268,7 +11177,8 @@ class NEOVisualizer(QMainWindow):
                 self.magnitude_panel.h_min_spin.setValue(m.get('h_min', 9.0))
                 self.magnitude_panel.h_max_spin.setValue(m.get('h_max', 22.0))
                 self.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
-            
+                self.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
+
             # Animation
             if 'animation' in settings:
                 a = settings['animation']
@@ -10303,11 +11213,40 @@ class NEOVisualizer(QMainWindow):
                 self.colorbar_panel.cbar_max.setValue(c.get('max', 23.0))
                 self.colorbar_panel.show_legend_check.setChecked(c.get('show_legend', True))
                 self.colorbar_panel.size_combo.setCurrentText(c.get('size_by', 'V magnitude'))
-                self.colorbar_panel.size_min_spin.setValue(c.get('size_min', 10))
-                self.colorbar_panel.size_max_spin.setValue(c.get('size_max', 150))
+                self.colorbar_panel.size_min_spin.setValue(c.get('size_min', 2))
+                self.colorbar_panel.size_max_spin.setValue(c.get('size_max', 12))
                 self.colorbar_panel.data_min_spin.setValue(c.get('data_min', 19.0))
-                self.colorbar_panel.data_max_spin.setValue(c.get('data_max', 23.0))
+                self.colorbar_panel.data_max_spin.setValue(c.get('data_max', 25.0))
+                self.colorbar_panel.bin_size_spin.setValue(c.get('bin_size', 0.25))
                 self.colorbar_panel.size_invert_check.setChecked(c.get('size_invert', True))
+
+            # Time
+            if 'time' in settings:
+                jd = settings['time'].get('jd')
+                if jd:
+                    self.time_panel.set_jd(jd)
+
+            # Orbital Elements
+            if 'orbital_elements' in settings:
+                oe = settings['orbital_elements']
+                self.orbital_panel.period_min_spin.setValue(oe.get('period_min', 0.0))
+                self.orbital_panel.period_max_spin.setValue(oe.get('period_max', 10.0))
+                self.orbital_panel.ecc_min_spin.setValue(oe.get('ecc_min', 0.0))
+                self.orbital_panel.ecc_max_spin.setValue(oe.get('ecc_max', 1.0))
+                self.orbital_panel.inc_min_spin.setValue(oe.get('inc_min', 0.0))
+                self.orbital_panel.inc_max_spin.setValue(oe.get('inc_max', 180.0))
+
+            # Equalization
+            if 'equalization' in settings:
+                eq = settings['equalization']
+                import numpy as np
+                self.colorbar_panel._equalization_property = eq.get('property')
+                bins = eq.get('bins')
+                if bins:
+                    self.colorbar_panel._equalization_bins = np.array(bins)
+                    self.colorbar_panel.equalize_btn.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+                    self.colorbar_panel.equalize_btn.setText("Equalized")
+                    self.colorbar_panel.equalize_label.setText(f"Equalized: {len(bins)-1} bins")
             
             # Settings dialog settings
             if self.settings_dialog:
@@ -10380,7 +11319,13 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.trail_length_spin.setValue(t.get('length', 50))
                     self.settings_dialog.trail_weight_spin.setValue(t.get('weight', 1.0))
                     self.settings_dialog.trail_color.setText(t.get('color', '#00AA00'))
-                
+
+                # Fast Animation
+                if 'fast_animation' in settings:
+                    fa = settings['fast_animation']
+                    self.settings_dialog.fast_animation_check.setChecked(fa.get('enabled', False))
+                    self.settings_dialog.decimate_spin.setValue(fa.get('decimation', 4))
+
                 # Horizon/Twilight
                 if 'horizon' in settings:
                     h = settings['horizon']

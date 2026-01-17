@@ -5,6 +5,7 @@ venv/
 cache/
 data/
 diagnostics/
+recordings/
 de421.bsp
 
 # Local config
