@@ -567,6 +567,11 @@ class SkyMapCanvas(FigureCanvas):
         self.animation_playing = False  # Track animation state
         self.animation_paused = False   # Track if paused (vs stopped)
 
+        # Hysteresis state for magnitude filtering (reduces twinkling)
+        self._visible_objects = set()  # Set of object IDs currently visible
+        self._hysteresis_enabled = False  # Only active during animation
+        self._mag_hysteresis = 0.10  # Default hysteresis value (magnitudes)
+
         # Store last visible data for histogram equalization
         self._last_visible_data = None
 
@@ -2157,8 +2162,27 @@ class SkyMapCanvas(FigureCanvas):
             # Subtract benefit from effective magnitude (makes objects appear brighter)
             effective_mag[near_opposition] -= benefit
         
-        # Filter by effective magnitude
-        keep_mask = (effective_mag >= mag_min) & (effective_mag < mag_max)
+        # Filter by effective magnitude (with optional hysteresis)
+        # Hysteresis prevents twinkling at filter boundaries during animation
+        hysteresis = getattr(self, '_mag_hysteresis', 0.0)
+        self._hysteresis_saved = 0  # Diagnostic counter
+        if hysteresis > 0 and self._hysteresis_enabled:
+            # Objects already visible get expanded thresholds to reduce flicker
+            keep_mask = np.zeros(len(effective_mag), dtype=bool)
+            object_ids = visible[:, 0].astype(int)
+            for i, (obj_id, emag) in enumerate(zip(object_ids, effective_mag)):
+                normal_pass = (emag >= mag_min) & (emag < mag_max)
+                if obj_id in self._visible_objects:
+                    hysteresis_pass = (emag >= mag_min - hysteresis) & (emag < mag_max + hysteresis)
+                    keep_mask[i] = hysteresis_pass
+                    if hysteresis_pass and not normal_pass:
+                        self._hysteresis_saved += 1
+                else:
+                    keep_mask[i] = normal_pass
+            if self._hysteresis_saved > 0:
+                logger.debug(f"Hysteresis saved {self._hysteresis_saved} objects from magnitude boundary flicker")
+        else:
+            keep_mask = (effective_mag >= mag_min) & (effective_mag < mag_max)
         visible = visible[keep_mask]
         ra = ra[keep_mask]
         dec = dec[keep_mask]
@@ -2335,6 +2359,10 @@ class SkyMapCanvas(FigureCanvas):
 
         # Store visible data for histogram equalization access
         self._last_visible_data = visible
+
+        # Update hysteresis visibility state (track which objects are currently visible)
+        if self._hysteresis_enabled:
+            self._visible_objects = set(visible[:, 0].astype(int))
 
         # Sizes based on selected property with bin-based mapping
         # size_min/size_max are pixel diameters, converted to area for matplotlib
@@ -2646,7 +2674,7 @@ class SkyMapCanvas(FigureCanvas):
                 neos_str = f'NEOs: {n_near} + {n_far} behind sun'
             else:
                 neos_str = f'NEOs: {n_near}'
-            
+
             # V magnitude range (aligned with fixed width)
             v_str = f' {mag_min:4.1f} ≤ V ≤ {mag_max:4.1f}'
             
@@ -5048,6 +5076,7 @@ class ControlsPanel(QWidget):
             if self.parent_window and hasattr(self.parent_window, 'canvas'):
                 self.parent_window.canvas.animation_playing = False
                 self.parent_window.canvas.animation_paused = True  # Mark as paused
+                self.parent_window.canvas._hysteresis_enabled = False  # Disable hysteresis
                 # Trigger redraw to restore display mode (density/contours)
                 self.parent_window.update_display()
             # Sync statusbar button if it exists
@@ -5085,10 +5114,19 @@ class ControlsPanel(QWidget):
                 self.parent_window.canvas.animation_playing = True
                 self.parent_window.canvas.animation_paused = False
 
-                # Only clear trails on FRESH start, not on resume from pause
+                # Enable hysteresis - get value from settings dialog if open, else use canvas default
+                if self.parent_window.settings_dialog and hasattr(self.parent_window.settings_dialog, 'mag_hysteresis_spin'):
+                    hysteresis = self.parent_window.settings_dialog.mag_hysteresis_spin.value()
+                    self.parent_window.canvas._mag_hysteresis = hysteresis
+                else:
+                    hysteresis = self.parent_window.canvas._mag_hysteresis  # Use canvas default (0.10)
+                self.parent_window.canvas._hysteresis_enabled = (hysteresis > 0)
+
+                # Only clear trails and hysteresis state on FRESH start, not on resume from pause
                 if not is_resuming:
                     self.parent_window.canvas.trail_history.clear()
                     self.parent_window.canvas._clear_trails()
+                    self.parent_window.canvas._visible_objects.clear()  # Clear hysteresis state
                     logger.debug("TRAIL: Cleared for fresh animation start")
                 else:
                     logger.debug("TRAIL: Resuming from pause - preserving trails")
@@ -5124,6 +5162,8 @@ class ControlsPanel(QWidget):
         if self.parent_window and hasattr(self.parent_window, 'canvas'):
             self.parent_window.canvas.animation_playing = False
             self.parent_window.canvas.animation_paused = False  # Not paused - fully stopped
+            self.parent_window.canvas._hysteresis_enabled = False
+            self.parent_window.canvas._visible_objects.clear()
         # Sync statusbar button if it exists
         if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
             self.parent_window.statusbar_play_btn.setText("▶ Play")
@@ -8766,6 +8806,27 @@ class SettingsDialog(QDialog):
         help_label = QLabel("Press Shift+[ to go back, Shift+] to go forward in time")
         help_label.setStyleSheet("color: gray; font-style: italic;")
         advanced_layout.addWidget(help_label)
+
+        # Magnitude hysteresis (reduces twinkling at filter boundaries)
+        hyst_row = QHBoxLayout()
+        hyst_row.addWidget(QLabel("Mag hysteresis:"))
+        self.mag_hysteresis_spin = QDoubleSpinBox()
+        self.mag_hysteresis_spin.setRange(0.00, 0.50)
+        self.mag_hysteresis_spin.setValue(0.10)
+        self.mag_hysteresis_spin.setDecimals(2)
+        self.mag_hysteresis_spin.setSingleStep(0.05)
+        self.mag_hysteresis_spin.setMaximumWidth(60)
+        self.mag_hysteresis_spin.setToolTip("Prevents objects from flickering at magnitude filter boundaries during animation")
+        self.mag_hysteresis_spin.valueChanged.connect(self._on_hysteresis_changed)
+        hyst_row.addWidget(self.mag_hysteresis_spin)
+        hyst_row.addWidget(QLabel("mag"))
+        hyst_row.addStretch()
+        advanced_layout.addLayout(hyst_row)
+
+        hyst_help = QLabel("Set to 0.00 to disable. Reduces 'twinkling' at filter boundaries.")
+        hyst_help.setStyleSheet("color: gray; font-style: italic;")
+        advanced_layout.addWidget(hyst_help)
+
         advanced_group.setLayout(advanced_layout)
         self._layout.addWidget(advanced_group)
         self.collapsible_sections.append(advanced_group)
@@ -9165,7 +9226,12 @@ class SettingsDialog(QDialog):
             # Now trigger update
             self.on_horizon_changed()
         # "Custom" just leaves current values alone
-    
+
+    def _on_hysteresis_changed(self, value):
+        """Update canvas hysteresis value when spinner changes"""
+        if hasattr(self, 'parent_window') and self.parent_window and hasattr(self.parent_window, 'canvas'):
+            self.parent_window.canvas._mag_hysteresis = value
+
     def get_appearance_settings(self):
         """Return current appearance settings"""
         return {
@@ -11179,6 +11245,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.lr_unit_combo.setCurrentText("hour")
                 self.settings_dialog.ud_increment_spin.setValue(1)
                 self.settings_dialog.ud_unit_combo.setCurrentText("lunation")
+                self.settings_dialog.mag_hysteresis_spin.setValue(0.10)
                 
                 # Trailing
                 self.settings_dialog.enable_trailing_check.setChecked(False)
@@ -11349,7 +11416,8 @@ class NEOVisualizer(QMainWindow):
                 # Advanced Controls
                 settings['advanced'] = {
                     'lr_increment': self.settings_dialog.lr_increment_spin.value(),
-                    'lr_unit': self.settings_dialog.lr_unit_combo.currentText()
+                    'lr_unit': self.settings_dialog.lr_unit_combo.currentText(),
+                    'mag_hysteresis': self.settings_dialog.mag_hysteresis_spin.value()
                 }
                 
                 # Trailing
@@ -11555,6 +11623,7 @@ class NEOVisualizer(QMainWindow):
                     a = settings['advanced']
                     self.settings_dialog.lr_increment_spin.setValue(a.get('lr_increment', 1))
                     self.settings_dialog.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
+                    self.settings_dialog.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
                 
                 # Trailing
                 if 'trailing' in settings:
