@@ -1,7 +1,7 @@
 """
 Cache Manager - Efficient storage and retrieval of pre-computed positions
 Uses HDF5 for fast access and compression
-Implements variable precision: daily within ±6 months, weekly outside
+Implements variable precision: daily within ±1 year, weekly outside
 """
 
 import h5py
@@ -19,7 +19,7 @@ class PositionCache:
     Manage cached asteroid positions with variable precision
     
     Storage strategy:
-    - High precision window (±6 months from reference): daily positions
+    - High precision window (±1 year from reference): daily positions
     - Medium precision (±5 years): weekly positions  
     - Low precision (±50 years): monthly positions
     - On-demand computation for anything else
@@ -350,7 +350,7 @@ class CacheBuilder:
         show_progress : bool
             Show progress bar
         high_precision_only : bool
-            If True, only build ±6 month high-precision cache (faster for testing)
+            If True, only build ±1 year high-precision cache (faster for testing)
         """
         from tqdm import tqdm
         
@@ -367,7 +367,7 @@ class CacheBuilder:
         logger.info(f"Building cache for {len(asteroids)} asteroids")
         logger.info(f"Total dates to compute: {total_dates}")
         if high_precision_only:
-            logger.info("High-precision only mode (±6 months, daily)")
+            logger.info("High-precision only mode (±1 year, daily)")
         
         # Progress bar
         pbar = tqdm(total=total_dates, disable=not show_progress, 
@@ -387,7 +387,7 @@ class CacheBuilder:
         """Generate Julian Dates for each precision tier"""
         ranges = {}
         
-        # High precision: ±6 months, daily
+        # High precision: ±1 year, daily
         high_start = reference_jd - self.cache.HIGH_PRECISION_DAYS
         high_end = reference_jd + self.cache.HIGH_PRECISION_DAYS
         ranges['high'] = np.arange(high_start, high_end + 1, 

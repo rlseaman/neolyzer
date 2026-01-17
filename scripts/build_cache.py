@@ -66,7 +66,7 @@ def main():
     logger.info("This will take approximately 25-30 minutes")
     logger.info("")
     logger.info("Cache strategy:")
-    logger.info("  • High precision (±6 months): daily positions")
+    logger.info("  • High precision (±1 year): daily positions")
     logger.info("  • Medium precision (±5 years): weekly positions")
     logger.info("  • Low precision (±27 years): monthly positions")
     logger.info("")

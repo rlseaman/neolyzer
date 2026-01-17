@@ -310,9 +310,9 @@ def main():
     print("This will pre-compute asteroid positions for efficient visualization.")
     print()
     print("Cache options:")
-    print("  [f] Full cache - all precision tiers (±6mo daily, ±5yr weekly, full monthly)")
+    print("  [f] Full cache - all precision tiers (±1yr daily, ±5yr weekly, full monthly)")
     print("      Best for production use. Takes 10-30 minutes.")
-    print("  [q] Quick cache - high precision only (±6 months, daily)")
+    print("  [q] Quick cache - high precision only (±1 year, daily)")
     print("      Good for testing. Takes 2-5 minutes.")
     print("  [n] No cache - compute positions on-the-fly")
     print("      Slowest but no setup time.")
@@ -336,7 +336,7 @@ def main():
             print(f"Reference date: {now.utc_datetime()}")
             print(f"Reference JD: {reference_jd:.2f}")
             if high_precision_only:
-                print("Mode: Quick (±6 months, daily positions only)")
+                print("Mode: Quick (±1 year, daily positions only)")
             else:
                 print("Mode: Full (all precision tiers)")
             print()
