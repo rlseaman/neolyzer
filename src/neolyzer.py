@@ -2725,19 +2725,6 @@ class SkyMapCanvas(FigureCanvas):
         self.stats_text.set_fontsize(9)  # Slightly larger for readability
         self.stats_text.set_family('monospace')  # Use monospace for alignment
 
-        # Update stats_text background based on date range (same as calendar_text)
-        if jd is not None:
-            QT_MIN_JD = 2361221  # ~1752-09-14
-            at_eph_limit = jd <= EPHEMERIS_MIN_JD + 1 or jd >= EPHEMERIS_MAX_JD - 1
-            pre_1752 = jd < QT_MIN_JD
-
-            if at_eph_limit:
-                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#FFE4B5', alpha=0.85))
-            elif pre_1752:
-                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#B0E0E6', alpha=0.85))
-            else:
-                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#e8eef5', alpha=0.85))
-
         # Update trails if enabled (use near-side objects only)
         if self.trailing_settings.get('enabled', False) and asteroids is not None:
             # Use near-side data only (don't trail objects behind sun)
@@ -8756,9 +8743,9 @@ class SettingsDialog(QDialog):
         self.kiosk_mode_check.stateChanged.connect(self.on_appearance_changed)
         advanced_layout.addWidget(self.kiosk_mode_check)
         
-        # [ and ] keys for time navigation
+        # Shift+[ and Shift+] keys for time navigation
         lr_row = QHBoxLayout()
-        lr_row.addWidget(QLabel("[ / ] keys:"))
+        lr_row.addWidget(QLabel("Shift+[/] keys:"))
         self.lr_increment_spin = QDoubleSpinBox()
         self.lr_increment_spin.setRange(0.001, 1000)
         self.lr_increment_spin.setValue(1.0)
@@ -8776,7 +8763,7 @@ class SettingsDialog(QDialog):
         advanced_layout.addLayout(lr_row)
         
         # Help text
-        help_label = QLabel("Press [ to go back, ] to go forward in time")
+        help_label = QLabel("Press Shift+[ to go back, Shift+] to go forward in time")
         help_label.setStyleSheet("color: gray; font-style: italic;")
         advanced_layout.addWidget(help_label)
         advanced_group.setLayout(advanced_layout)
@@ -10336,6 +10323,7 @@ class NEOVisualizer(QMainWindow):
         self.statusbar = QStatusBar()
         self.setStatusBar(self.statusbar)
         self.status_label = QLabel("Initializing...")
+        self._status_label_default_style = self.status_label.styleSheet()
         self.statusbar.addWidget(self.status_label, 1)  # Stretch factor 1
         
         # Search field (left side of permanent widgets)
@@ -10489,26 +10477,18 @@ class NEOVisualizer(QMainWindow):
     
     def setup_keyboard_shortcuts(self):
         """Set up keyboard shortcuts for time navigation.
-        
-        Uses [ and ] keys which work reliably across all platforms.
-        Ctrl+Arrow keys are often captured by OS for desktop/space navigation.
+
+        Uses Shift+[ and Shift+] to avoid conflicts with text input widgets.
         """
-        # Bracket keys - work universally
-        shortcut_back = QShortcut(QKeySequence("["), self)
+        # Shift+bracket keys - avoid conflicts with text input
+        shortcut_back = QShortcut(QKeySequence("Shift+["), self)
         shortcut_back.activated.connect(self.navigate_time_backward)
-        
-        shortcut_fwd = QShortcut(QKeySequence("]"), self)
+
+        shortcut_fwd = QShortcut(QKeySequence("Shift+]"), self)
         shortcut_fwd.activated.connect(self.navigate_time_forward)
-        
-        # Also try Ctrl+brackets for consistency
-        shortcut_ctrl_back = QShortcut(QKeySequence("Ctrl+["), self)
-        shortcut_ctrl_back.activated.connect(self.navigate_time_backward)
-        
-        shortcut_ctrl_fwd = QShortcut(QKeySequence("Ctrl+]"), self)
-        shortcut_ctrl_fwd.activated.connect(self.navigate_time_forward)
-        
+
         # Store shortcuts to prevent garbage collection
-        self._shortcuts = [shortcut_back, shortcut_fwd, shortcut_ctrl_back, shortcut_ctrl_fwd]
+        self._shortcuts = [shortcut_back, shortcut_fwd]
     
     def navigate_time_backward(self):
         """Navigate time backward by configured increment"""
@@ -10942,7 +10922,19 @@ class NEOVisualizer(QMainWindow):
                     self.status_label.setText(
                         f"{dt} | {n_shown}/{len(positions)} objects ({mag_min:.1f} < V < {mag_max:.1f})"
                     )
-            
+
+                # Highlight status label for pre-1752 dates or ephemeris limits
+                QT_MIN_JD = 2361221  # ~1752-09-14
+                at_eph_limit = jd <= EPHEMERIS_MIN_JD + 1 or jd >= EPHEMERIS_MAX_JD - 1
+                pre_1752 = jd < QT_MIN_JD
+
+                if at_eph_limit:
+                    self.status_label.setStyleSheet("QLabel { background-color: #FFE4B5; }")
+                elif pre_1752:
+                    self.status_label.setStyleSheet("QLabel { background-color: #B0E0E6; }")
+                else:
+                    self.status_label.setStyleSheet(self._status_label_default_style)
+
             # Update table if open
             self.update_table()
             
