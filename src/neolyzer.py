@@ -2596,6 +2596,22 @@ class SkyMapCanvas(FigureCanvas):
             if self.calendar_text:
                 self.calendar_text.set_text(calendar_str)
                 self.calendar_text.set_position((0.02, 0.98))
+
+                # Update background color based on date range status
+                current_jd = jd if jd is not None else t.tt
+                QT_MIN_JD = 2361221  # ~1752-09-14
+                at_eph_limit = current_jd <= EPHEMERIS_MIN_JD + 1 or current_jd >= EPHEMERIS_MAX_JD - 1
+                pre_1752 = current_jd < QT_MIN_JD
+
+                if at_eph_limit:
+                    # Orange for ephemeris boundary
+                    self.calendar_text.set_bbox(dict(boxstyle='round,pad=0.3', facecolor='#FFE4B5', edgecolor='#c0c8d0', alpha=0.9))
+                elif pre_1752:
+                    # Powder blue for pre-1752 dates (Qt widget can't display)
+                    self.calendar_text.set_bbox(dict(boxstyle='round,pad=0.3', facecolor='#B0E0E6', edgecolor='#c0c8d0', alpha=0.9))
+                else:
+                    # Default light gray-blue
+                    self.calendar_text.set_bbox(dict(boxstyle='round,pad=0.3', facecolor='#f0f4f8', edgecolor='#c0c8d0', alpha=0.9))
             
             # UTC date/time string
             date_str = dt.strftime('%Y-%m-%d %H:%M UTC')
