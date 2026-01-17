@@ -2184,6 +2184,11 @@ class SkyMapCanvas(FigureCanvas):
         else:
             keep_mask = (effective_mag >= mag_min) & (effective_mag < mag_max)
         visible = visible[keep_mask]
+
+        # Update hysteresis state immediately after magnitude filter
+        # (before other filters like projection that might exclude objects)
+        if self._hysteresis_enabled:
+            self._visible_objects = set(visible[:, 0].astype(int))
         ra = ra[keep_mask]
         dec = dec[keep_mask]
         display_mag = display_mag[keep_mask]  # Original mags for display
@@ -2359,10 +2364,6 @@ class SkyMapCanvas(FigureCanvas):
 
         # Store visible data for histogram equalization access
         self._last_visible_data = visible
-
-        # Update hysteresis visibility state (track which objects are currently visible)
-        if self._hysteresis_enabled:
-            self._visible_objects = set(visible[:, 0].astype(int))
 
         # Sizes based on selected property with bin-based mapping
         # size_min/size_max are pixel diameters, converted to area for matplotlib
