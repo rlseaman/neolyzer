@@ -2724,7 +2724,20 @@ class SkyMapCanvas(FigureCanvas):
         self.stats_text.set_text(stats)
         self.stats_text.set_fontsize(9)  # Slightly larger for readability
         self.stats_text.set_family('monospace')  # Use monospace for alignment
-        
+
+        # Update stats_text background based on date range (same as calendar_text)
+        if jd is not None:
+            QT_MIN_JD = 2361221  # ~1752-09-14
+            at_eph_limit = jd <= EPHEMERIS_MIN_JD + 1 or jd >= EPHEMERIS_MAX_JD - 1
+            pre_1752 = jd < QT_MIN_JD
+
+            if at_eph_limit:
+                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#FFE4B5', alpha=0.85))
+            elif pre_1752:
+                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#B0E0E6', alpha=0.85))
+            else:
+                self.stats_text.set_bbox(dict(boxstyle='round', facecolor='#e8eef5', alpha=0.85))
+
         # Update trails if enabled (use near-side objects only)
         if self.trailing_settings.get('enabled', False) and asteroids is not None:
             # Use near-side data only (don't trail objects behind sun)
@@ -8746,14 +8759,16 @@ class SettingsDialog(QDialog):
         # [ and ] keys for time navigation
         lr_row = QHBoxLayout()
         lr_row.addWidget(QLabel("[ / ] keys:"))
-        self.lr_increment_spin = QSpinBox()
-        self.lr_increment_spin.setRange(1, 100)
-        self.lr_increment_spin.setValue(1)
-        self.lr_increment_spin.setMaximumWidth(60)
+        self.lr_increment_spin = QDoubleSpinBox()
+        self.lr_increment_spin.setRange(0.001, 1000)
+        self.lr_increment_spin.setValue(1.0)
+        self.lr_increment_spin.setDecimals(3)
+        self.lr_increment_spin.setSingleStep(0.1)
+        self.lr_increment_spin.setMaximumWidth(70)
         lr_row.addWidget(self.lr_increment_spin)
-        
+
         self.lr_unit_combo = QComboBox()
-        self.lr_unit_combo.addItems(["hour", "solar day", "sidereal day", "lunation", "month", "year"])
+        self.lr_unit_combo.addItems(["minute", "hour", "solar day", "sidereal day", "lunation", "month", "year"])
         self.lr_unit_combo.setCurrentText("hour")
         self.lr_unit_combo.setMaximumWidth(100)
         lr_row.addWidget(self.lr_unit_combo)
@@ -10527,10 +10542,12 @@ class NEOVisualizer(QMainWindow):
         SIDEREAL_DAY = 0.99726957
         LUNATION = 29.530588853
         
-        increment = settings.get('lr_increment', 1)
+        increment = settings.get('lr_increment', 1.0)
         unit = settings.get('lr_unit', 'solar day')
-        
-        if unit == 'hour':
+
+        if unit == 'minute':
+            return increment / 1440.0  # 1440 minutes per day
+        elif unit == 'hour':
             return increment / 24.0
         elif unit == 'solar day':
             return increment
@@ -11166,7 +11183,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.site_blacklist_edit.clear()
                 
                 # Advanced Controls
-                self.settings_dialog.lr_increment_spin.setValue(1)
+                self.settings_dialog.lr_increment_spin.setValue(1.0)
                 self.settings_dialog.lr_unit_combo.setCurrentText("hour")
                 self.settings_dialog.ud_increment_spin.setValue(1)
                 self.settings_dialog.ud_unit_combo.setCurrentText("lunation")
