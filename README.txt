@@ -1,4 +1,4 @@
-NEOlyzer v3.03 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.04 - Near-Earth Object Visualization and Analysis
 =============================================================
 
 Interactive visualization tool for the NEO catalog supporting Planetary Defense
@@ -16,8 +16,8 @@ Fetch from GitHub:
     cd neolyzer
 
 Or download and extract release:
-    tar -xzf neolyzer-v3.03.tar.gz
-    cd neolyzer-v3.03
+    tar -xzf neolyzer-v3.04.tar.gz
+    cd neolyzer-v3.04
 
 Install and run:
     ./install.sh              # Creates venv, installs deps, runs setup

@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.03 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.04 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -9444,7 +9444,7 @@ class SettingsDialog(QDialog):
             all_points = existing_points + self._script_buffer
 
             script_data = {
-                'version': '3.03',
+                'version': '3.04',
                 'loop': loop_enabled,
                 'state': state,
                 'time_points': all_points
@@ -9763,7 +9763,7 @@ class NEOVisualizer(QMainWindow):
         # Auto-equalize on first data load for better default symbol sizes
         self._auto_equalize_pending = True
 
-        self.setWindowTitle("NEOlyzer v3.03")
+        self.setWindowTitle("NEOlyzer v3.04")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -10992,7 +10992,7 @@ class NEOVisualizer(QMainWindow):
         <li><b>Scripted playback:</b> Record and replay time sequences with full state</li>
         </ul>
 
-        <h3>New in v3.03</h3>
+        <h3>New in v3.04</h3>
         <ul>
         <li><b>Scripted Playback:</b> Record time sequences with complete state (Settings > Scripted Playback)</li>
         <li><b>Script dropdown:</b> Quick access to recordings in Animation panel</li>
@@ -11234,7 +11234,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.03',
+                'version': '3.04',
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
