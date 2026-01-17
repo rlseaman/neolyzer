@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.02 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.03 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -607,12 +607,6 @@ class SkyMapCanvas(FigureCanvas):
         # Labels based on coordinate system
         if self.coord_system == 'equatorial':
             xlabel, ylabel = 'Right Ascension (°)', 'Declination (°)'
-            # Add N/S/E/W labels for equatorial in rectangular
-            if self.projection == 'rectangular':
-                self.ax.text(0.5, 1.02, 'N', ha='center', va='bottom', transform=self.ax.transAxes, fontweight='bold')
-                self.ax.text(0.5, -0.02, 'S', ha='center', va='top', transform=self.ax.transAxes, fontweight='bold')
-                self.ax.text(-0.02, 0.5, 'E', ha='right', va='center', transform=self.ax.transAxes, fontweight='bold')
-                self.ax.text(1.02, 0.5, 'W', ha='left', va='center', transform=self.ax.transAxes, fontweight='bold')
         elif self.coord_system == 'ecliptic':
             xlabel, ylabel = 'Ecliptic Longitude (°)', 'Ecliptic Latitude (°)'
         elif self.coord_system == 'galactic':
@@ -680,6 +674,22 @@ class SkyMapCanvas(FigureCanvas):
             facecolors='none', edgecolors='red', linewidths=2.5,
             alpha=1.0, zorder=100
         )
+
+        # Compass direction labels inside plot area with translucent circular backgrounds
+        # Use consistent styling across all projections
+        compass_style = dict(
+            transform=self.ax.transAxes,
+            fontsize=10, fontweight='bold', family='sans-serif',
+            color='#333333',
+            bbox=dict(boxstyle='circle,pad=0.3', facecolor='white', edgecolor='#888888',
+                      alpha=0.75, linewidth=1),
+            zorder=50
+        )
+        # Position labels right at plot borders
+        self.compass_n = self.ax.text(0.5, 0.99, 'N', ha='center', va='top', **compass_style)
+        self.compass_s = self.ax.text(0.5, 0.01, 'S', ha='center', va='bottom', **compass_style)
+        self.compass_e = self.ax.text(0.005, 0.5, 'E', ha='left', va='center', **compass_style)
+        self.compass_w = self.ax.text(0.995, 0.5, 'W', ha='right', va='center', **compass_style)
 
         # Density map elements (created on demand)
         self.density_hexbin = None
@@ -2366,6 +2376,7 @@ class SkyMapCanvas(FigureCanvas):
             if equalization_bins is not None:
                 # Use percentile-based bin edges for equalization
                 # equalization_bins contains the bin edges computed from percentiles
+                n_bins = len(equalization_bins) - 1  # Override n_bins with equalization bin count
                 bin_indices = np.digitize(data_vals, equalization_bins) - 1
                 bin_indices = np.clip(bin_indices, 0, n_bins - 1)
             else:
@@ -4783,7 +4794,7 @@ class TimeControlPanel(QWidget):
     
 
 class ControlsPanel(QWidget):
-    """Controls panel with animation and action buttons"""
+    """Animation panel with playback controls and script selection"""
     
     def __init__(self, time_panel, parent=None):
         super().__init__(parent)
@@ -4796,8 +4807,8 @@ class ControlsPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)  # No margins for alignment
         layout.setSpacing(0)
         
-        # Controls group - contains animation and buttons
-        controls_group = QGroupBox("Controls")
+        # Animation group - contains playback controls
+        controls_group = QGroupBox("Animation")
         controls_layout = QVBoxLayout()
         controls_layout.setSpacing(2)
         
@@ -4887,51 +4898,6 @@ class ControlsPanel(QWidget):
         script_layout.addStretch()
         controls_layout.addLayout(script_layout)
 
-        # Action buttons on one line - Table and More only (Help/Reset/Exit moved to status bar)
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(5)
-        
-        # Table button with dropdown menu
-        self.table_btn = QPushButton("📋 Table")
-        self.table_btn.setMaximumWidth(80)
-        
-        table_menu = QMenu(self)
-        table_menu.addAction("📋 Show All Visible", self.show_table_all_visible)
-        table_menu.addSeparator()
-        table_menu.addAction("🔲 Select Rectangle...", self.start_rectangle_select)
-        table_menu.addAction("⬭ Select Ellipse...", self.start_ellipse_select)
-        table_menu.addSeparator()
-        table_menu.addAction("🔍 Search Catalog...", self.search_catalog_for_table)
-        table_menu.addSeparator()
-        table_menu.addAction("❌ Clear Selection", self.clear_selection)
-        
-        self.table_btn.setMenu(table_menu)
-        self.table_btn.setToolTip("Show table of NEOs (all visible or select region)")
-        buttons_layout.addWidget(self.table_btn)
-        
-        # Charts button with dropdown
-        charts_btn = QPushButton("📈 Charts")
-        charts_btn.setMaximumWidth(80)
-        
-        charts_menu = QMenu(self)
-        charts_menu.addAction("📏 Distance vs Time (selected object)...", self.show_distance_time_chart)
-        charts_menu.addAction("⚠️ MOID vs H (hazard space)", self.show_moid_h_chart)
-        charts_menu.addAction("📅 Discovery Timeline", self.show_discovery_timeline)
-        charts_menu.addSeparator()
-        charts_menu.addAction("🌍 Solar Elongation vs Distance", self.show_elongation_distance_chart)
-        charts_menu.addAction("🔄 a vs e (orbital element space)", self.show_a_e_chart)
-        charts_menu.addSeparator()
-        charts_menu.addAction("🌙 Lunar Phases (year view)", self.show_lunar_phases_chart)
-        charts_menu.addSeparator()
-        charts_menu.addAction("☀️ Heliocentric View (polar)", self.show_heliocentric_chart)
-        
-        charts_btn.setMenu(charts_menu)
-        charts_btn.setToolTip("Open analysis charts")
-        buttons_layout.addWidget(charts_btn)
-        
-        buttons_layout.addStretch()
-        controls_layout.addLayout(buttons_layout)
-        
         controls_group.setLayout(controls_layout)
         layout.addWidget(controls_group)
 
@@ -9362,7 +9328,7 @@ class SettingsDialog(QDialog):
             all_points = existing_points + self._script_buffer
 
             script_data = {
-                'version': '3.02',
+                'version': '3.03',
                 'loop': loop_enabled,
                 'state': state,
                 'time_points': all_points
@@ -9677,8 +9643,11 @@ class NEOVisualizer(QMainWindow):
         
         # Table dialog (non-modal, persists)
         self.table_dialog = None
-        
-        self.setWindowTitle("NEOlyzer v3.02")
+
+        # Auto-equalize on first data load for better default symbol sizes
+        self._auto_equalize_pending = True
+
+        self.setWindowTitle("NEOlyzer v3.03")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -10128,13 +10097,74 @@ class NEOVisualizer(QMainWindow):
             # Position to the right of main window
             main_geom = self.geometry()
             self.table_dialog.move(main_geom.right() + 10, main_geom.top())
-        
+
         if self.table_dialog.isVisible():
             self.table_dialog.hide()
         else:
             self.table_dialog.show()
             self.update_table()
-    
+
+    # Wrapper methods for statusbar buttons (delegate to controls_panel)
+    def show_table_all_visible(self):
+        """Show table with all currently visible NEOs"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_table_all_visible()
+
+    def start_rectangle_select(self):
+        """Start rectangle selection mode"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.start_rectangle_select()
+
+    def start_ellipse_select(self):
+        """Start ellipse selection mode"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.start_ellipse_select()
+
+    def search_catalog_for_table(self):
+        """Search catalog and show in table"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.search_catalog_for_table()
+
+    def clear_selection(self):
+        """Clear current selection"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.clear_selection()
+
+    def show_distance_time_chart(self):
+        """Show distance vs time chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_distance_time_chart()
+
+    def show_moid_h_chart(self):
+        """Show MOID vs H chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_moid_h_chart()
+
+    def show_discovery_timeline(self):
+        """Show discovery timeline chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_discovery_timeline()
+
+    def show_elongation_distance_chart(self):
+        """Show solar elongation vs distance chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_elongation_distance_chart()
+
+    def show_a_e_chart(self):
+        """Show a vs e orbital element chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_a_e_chart()
+
+    def show_lunar_phases_chart(self):
+        """Show lunar phases chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_lunar_phases_chart()
+
+    def show_heliocentric_chart(self):
+        """Show heliocentric view chart"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_heliocentric_chart()
+
     def update_table(self):
         """Update table dialog with current visible NEOs"""
         if self.table_dialog is None or not self.table_dialog.isVisible():
@@ -10217,7 +10247,41 @@ class NEOVisualizer(QMainWindow):
         statusbar_now_btn.setToolTip("Set to current date and time")
         statusbar_now_btn.clicked.connect(self.set_to_now_from_statusbar)
         self.statusbar.addPermanentWidget(statusbar_now_btn)
-        
+
+        # Table button with dropdown menu
+        self.statusbar_table_btn = QPushButton("📋 Table")
+        self.statusbar_table_btn.setMaximumWidth(70)
+        table_menu = QMenu(self.statusbar_table_btn)
+        table_menu.addAction("📋 Show All Visible", self.show_table_all_visible)
+        table_menu.addSeparator()
+        table_menu.addAction("🔲 Select Rectangle...", self.start_rectangle_select)
+        table_menu.addAction("⬭ Select Ellipse...", self.start_ellipse_select)
+        table_menu.addSeparator()
+        table_menu.addAction("🔍 Search Catalog...", self.search_catalog_for_table)
+        table_menu.addSeparator()
+        table_menu.addAction("❌ Clear Selection", self.clear_selection)
+        self.statusbar_table_btn.setMenu(table_menu)
+        self.statusbar_table_btn.setToolTip("Show table of NEOs (all visible or select region)")
+        self.statusbar.addPermanentWidget(self.statusbar_table_btn)
+
+        # Charts button with dropdown
+        self.statusbar_charts_btn = QPushButton("📈 Charts")
+        self.statusbar_charts_btn.setMaximumWidth(75)
+        charts_menu = QMenu(self.statusbar_charts_btn)
+        charts_menu.addAction("📏 Distance vs Time (selected object)...", self.show_distance_time_chart)
+        charts_menu.addAction("⚠️ MOID vs H (hazard space)", self.show_moid_h_chart)
+        charts_menu.addAction("📅 Discovery Timeline", self.show_discovery_timeline)
+        charts_menu.addSeparator()
+        charts_menu.addAction("🌍 Solar Elongation vs Distance", self.show_elongation_distance_chart)
+        charts_menu.addAction("🔄 a vs e (orbital element space)", self.show_a_e_chart)
+        charts_menu.addSeparator()
+        charts_menu.addAction("🌙 Lunar Phases (year view)", self.show_lunar_phases_chart)
+        charts_menu.addSeparator()
+        charts_menu.addAction("☀️ Heliocentric View (polar)", self.show_heliocentric_chart)
+        self.statusbar_charts_btn.setMenu(charts_menu)
+        self.statusbar_charts_btn.setToolTip("Open analysis charts")
+        self.statusbar.addPermanentWidget(self.statusbar_charts_btn)
+
         help_btn = QPushButton("❓ Help")
         help_btn.setMaximumWidth(60)
         help_btn.clicked.connect(self.show_help)
@@ -10403,11 +10467,52 @@ class NEOVisualizer(QMainWindow):
             logger.info(f"Loaded {len(self.asteroid_classes)} asteroids")
             self.status_label.setText(f"Ready: {stats['total']} asteroids")
             self.update_display()
-            
+
+            # Auto-equalize symbol sizes on first load for better defaults
+            if self._auto_equalize_pending:
+                self._auto_equalize_pending = False
+                # Delay slightly to ensure data is rendered
+                QTimer.singleShot(200, self._auto_equalize)
+
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
             logger.error(f"Init error: {e}", exc_info=True)
-    
+
+    def _auto_equalize(self):
+        """Auto-equalize symbol sizes after first data load."""
+        try:
+            if not hasattr(self, 'colorbar_panel') or not self.colorbar_panel:
+                return
+            # Only equalize if size_by is V magnitude (the default)
+            if self.colorbar_panel.size_combo.currentText() != 'V magnitude':
+                return
+            # Check for visible data
+            if not hasattr(self.canvas, '_last_visible_data') or self.canvas._last_visible_data is None:
+                return
+            visible = self.canvas._last_visible_data
+            if len(visible) < 10:
+                return
+            # Compute equalization bins from V magnitude data
+            data_vals = visible[:, 4]  # V magnitude
+            valid_mask = np.isfinite(data_vals)
+            data_vals = data_vals[valid_mask]
+            if len(data_vals) < 10:
+                return
+            # 12 bins for equal-count distribution
+            n_bins = 12
+            percentiles = np.linspace(0, 100, n_bins + 1)
+            bins = np.percentile(data_vals, percentiles)
+            # Store in colorbar panel
+            self.colorbar_panel._equalization_bins = bins
+            self.colorbar_panel._equalization_property = 'V magnitude'
+            self.colorbar_panel.equalize_btn.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+            self.colorbar_panel.equalize_btn.setText("Equalized")
+            self.colorbar_panel.equalize_label.setText(f"Equalized: {len(data_vals)} objects in {n_bins} bins")
+            logger.info("Auto-equalized symbol sizes for V magnitude")
+            self.update_display()
+        except Exception as e:
+            logger.warning(f"Auto-equalize failed: {e}")
+
     def update_projection(self):
         """Update projection, coordinate system, and colormap"""
         proj = self.proj_panel.get_projection()
@@ -10749,86 +10854,102 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 2.03</b> - Near-Earth Object sky position visualization and analysis tool</p>
-        
+        <p><b>Version 3.03</b> - Near-Earth Object sky position visualization and analysis tool</p>
+
         <h3>Key Features</h3>
         <ul>
-        <li><b>40,509 NEOs</b> with orbital elements and physical parameters</li>
+        <li><b>40,000+ NEOs</b> with orbital elements and physical parameters</li>
         <li><b>Real-time position calculation</b> using JPL ephemerides</li>
         <li><b>Multiple projections:</b> Hammer, Aitoff, Mollweide, Rectangular</li>
-        <li><b>Coordinate systems:</b> Equatorial, Ecliptic, Galactic, Opposition (ecliptic with opposition centered)</li>
+        <li><b>Coordinate systems:</b> Equatorial, Ecliptic, Galactic, Opposition</li>
         <li><b>NEO classification:</b> Atira, Aten, Apollo, Amor (near/far)</li>
         <li><b>Orbital element filters:</b> Period, Eccentricity, Inclination</li>
         <li><b>MOID filtering:</b> Show only PHAs or specific MOID ranges</li>
-        <li><b>Time controls:</b> Animate, jump by day/month/year</li>
-        <li><b>Hollow symbols:</b> Show NEOs behind the Sun</li>
+        <li><b>Time controls:</b> Animate, jump by day/month/year/lunation</li>
+        <li><b>Scripted playback:</b> Record and replay time sequences with full state</li>
         </ul>
-        
+
+        <h3>New in v3.03</h3>
+        <ul>
+        <li><b>Scripted Playback:</b> Record time sequences with complete state (Settings > Scripted Playback)</li>
+        <li><b>Script dropdown:</b> Quick access to recordings in Animation panel</li>
+        <li><b>Symbol size equalization:</b> Histogram-based sizing for better visualization</li>
+        <li><b>Bin-based sizing:</b> Symbol sizes mapped to discrete bins (e.g., 0.25 mag steps)</li>
+        <li><b>Discovery per lunation:</b> Filter to show only NEOs discovered in current lunation</li>
+        <li><b>Trailing:</b> Show motion trails during animation (Settings > Trailing)</li>
+        <li><b>Annual step mode:</b> Step through sidereal years for catalog growth visualization</li>
+        </ul>
+
         <h3>Map Elements</h3>
         <ul>
         <li><b>Filled circles:</b> NEOs on Earth's side of Sun</li>
         <li><b>Hollow circles:</b> NEOs behind Sun (optional)</li>
-        <li><b>Color:</b> Visual magnitude (brightness)</li>
+        <li><b>Color:</b> Visual magnitude (brightness) or other properties</li>
+        <li><b>Size:</b> Based on magnitude, distance, or other properties</li>
         <li><b>Yellow circle:</b> Sun position (red border)</li>
         <li><b>White reticle:</b> Solar opposition point</li>
-        <li><b>Yellow line:</b> Ecliptic plane</li>
-        <li><b>Cyan line:</b> Celestial equator (in ecliptic view)</li>
-        <li><b>Magenta line:</b> Galactic plane</li>
+        <li><b>Plane overlays:</b> Ecliptic, Equator, Galactic (configurable)</li>
         </ul>
-        
-        <h3>Caching Strategy</h3>
+
+        <h3>Animation Panel</h3>
         <ul>
-        <li><b>High precision (±6 months):</b> Daily positions</li>
-        <li><b>Medium precision (±5 years):</b> Weekly positions</li>
-        <li><b>Low precision (±50 years):</b> Monthly positions</li>
+        <li><b>Play/Pause:</b> Start/stop time animation</li>
+        <li><b>Rate:</b> Speed in hours/days/months per second</li>
+        <li><b>FPS:</b> Animation frame rate</li>
+        <li><b>Annual step:</b> Jump one sidereal year per step</li>
+        <li><b>Script:</b> Select and play recorded scripts</li>
         </ul>
-        
+
+        <h3>Symbol Size (Colorbar/Size panel)</h3>
+        <ul>
+        <li><b>Size by:</b> V magnitude, H magnitude, or geocentric distance</li>
+        <li><b>Min/Max:</b> Symbol diameter range in pixels</li>
+        <li><b>Data range:</b> Map data values to size range</li>
+        <li><b>Bin size:</b> Discrete steps (0.25 mag, 0.05 AU)</li>
+        <li><b>Equalize:</b> Redistribute sizes for uniform visual distribution</li>
+        <li><b>Invert:</b> Brighter/closer = larger (default for magnitudes)</li>
+        </ul>
+
         <h3>Filters & Controls</h3>
         <ul>
         <li><b>Magnitude Ranges:</b> Filter by visual (V) and absolute (H) magnitude</li>
-        <li><b>NEO/PHA Classes:</b> Select orbit types to display</li>
-        <li><b>Orbital Elements:</b> Filter by period, eccentricity, and inclination</li>
-        <li><b>MOID Filter:</b> Distance-based potentially hazardous asteroid selection</li>
-        <li><b>Map Projection:</b> Choose projection type and coordinate system</li>
-        <li><b>Date and Time:</b> Set specific dates or animate through time</li>
-        <li><b>Animation:</b> Control speed and time step for animation</li>
-        <li><b>Click on plot:</b> Toggle animation play/pause</li>
+        <li><b>Show all NEOs:</b> Override magnitude filters</li>
+        <li><b>Discoveries per lunation:</b> Show only current lunation discoveries</li>
+        <li><b>NEO/PHA Classes:</b> Select orbit types (click panel to cycle)</li>
+        <li><b>Orbital Elements:</b> Filter by period, eccentricity, inclination</li>
+        <li><b>MOID Filter:</b> Earth minimum orbit intersection distance</li>
+        <li><b>Hide before discovery:</b> Show NEOs only after discovery date</li>
         </ul>
-        
-        <h3>Technology Suite</h3>
+
+        <h3>Settings Dialog</h3>
         <ul>
-        <li><b>Operating Systems:</b> Cross-platform (Linux, macOS, Windows)</li>
-        <li><b>Programming Language:</b> Python 3.9+</li>
-        <li><b>GUI Framework:</b> PyQt6 for modern, native user interface</li>
-        <li><b>Visualization:</b> Matplotlib with custom projections and overlays</li>
-        <li><b>Database:</b> SQLite (lightweight) or PostgreSQL (full-scale) via SQLAlchemy ORM</li>
-        <li><b>Orbital Mechanics:</b> Skyfield library (Brandon Rhodes) for high-precision ephemerides</li>
-        <li><b>Ephemerides:</b> JPL DE421 planetary positions</li>
-        <li><b>Coordinate Transforms:</b> Astropy for equatorial/ecliptic/galactic conversions</li>
-        <li><b>Performance:</b> NumPy for vectorized calculations, multi-level caching system</li>
-        <li><b>Data Sources:</b> MPC NEA.txt, JPL Small-Body Database, automated updates</li>
+        <li><b>Planes & Poles:</b> Show/hide reference planes and poles</li>
+        <li><b>Sun & Moon:</b> Display options and lunar exclusion zone</li>
+        <li><b>Galactic Exclusion:</b> Magnitude penalty near galactic plane</li>
+        <li><b>Opposition Benefit:</b> Magnitude bonus near opposition</li>
+        <li><b>Trailing:</b> Show motion trails during animation</li>
+        <li><b>Horizon/Twilight:</b> Observer-specific twilight zones</li>
+        <li><b>Scripted Playback:</b> Record/play time sequences</li>
         </ul>
-        
+
         <h3>Tips</h3>
         <ul>
-        <li>Use <b>animation</b> to watch NEO motion over time</li>
         <li><b>Click on plot</b> to start/stop animation</li>
-        <li>Toggle <b>"Show behind sun"</b> to see which NEOs are behind the Sun</li>
-        <li>Enable <b>MOID filter</b> to focus on PHAs (0.000-0.050 AU)</li>
-        <li>Use <b>Galactic Exclusion</b> in Settings to apply a magnitude penalty to NEOs near the galactic plane</li>
-        <li>Use <b>Opposition Benefit</b> in Settings to brighten NEOs near the opposition point</li>
-        <li>Try different <b>projections</b> for different perspectives</li>
-        <li>The <b>stats box</b> shows current filter settings and counts</li>
-        <li>Click <b>More</b> or <b>Help</b> again to close the popup</li>
+        <li><b>Click on NEO</b> to see detailed information</li>
+        <li>Use <b>Table</b> menu to view NEO data in tabular form</li>
+        <li>Use <b>Charts</b> menu for analysis visualizations</li>
+        <li>Use <b>Equalize</b> for better symbol size distribution</li>
+        <li>Record <b>scripts</b> to save and replay interesting sequences</li>
+        <li>Use <b>Save/Reset</b> to preserve and restore settings</li>
         </ul>
-        
+
         <hr>
         <p><b>Contact:</b> Rob Seaman, Catalina Sky Survey, <a href="mailto:rseaman@arizona.edu">rseaman@arizona.edu</a></p>
-        
+
         <p style="font-size: small; color: #666;">
-        <i>This visualization tool was developed with Claude (Anthropic). 
-        Claude is an AI assistant created by Anthropic. Users own outputs 
-        generated through Claude. For more information, see Anthropic's 
+        <i>This visualization tool was developed with Claude (Anthropic).
+        Claude is an AI assistant created by Anthropic. Users own outputs
+        generated through Claude. For more information, see Anthropic's
         terms of service at anthropic.com.</i>
         </p>
         """
@@ -10990,7 +11111,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.02',
+                'version': '3.03',
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
