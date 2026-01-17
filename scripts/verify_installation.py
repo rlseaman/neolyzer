@@ -133,9 +133,10 @@ def check_cache():
 def check_ephemeris():
     """Check JPL ephemeris file"""
     try:
-        from skyfield.api import load
-        eph = load('de421.bsp')
-        print(f"  {check_mark(True)} JPL ephemeris (de421.bsp)")
+        from skyfield_loader import load_ephemeris, get_current_ephemeris
+        eph_name = get_current_ephemeris()
+        eph = load_ephemeris()
+        print(f"  {check_mark(True)} JPL ephemeris ({eph_name})")
         return True
     except Exception as e:
         print(f"  {check_mark(False)} JPL ephemeris: {e}")

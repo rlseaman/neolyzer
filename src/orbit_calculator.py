@@ -23,8 +23,8 @@ class OrbitCalculator:
     
     def __init__(self):
         """Initialize Skyfield timescale and ephemeris"""
-        # Load ephemeris using our SSL-fallback loader
-        self.eph = load_ephemeris('de421.bsp')
+        # Load ephemeris using our SSL-fallback loader (uses configured ephemeris)
+        self.eph = load_ephemeris()
         
         # Use our loader for timescale
         self.ts = skyfield_load.timescale()
@@ -248,8 +248,8 @@ class FastOrbitCalculator:
     """
     
     def __init__(self):
-        # Load ephemeris using our SSL-fallback loader
-        self.eph = load_ephemeris('de421.bsp')
+        # Load ephemeris using our SSL-fallback loader (uses configured ephemeris)
+        self.eph = load_ephemeris()
         
         # Use our loader for timescale
         self.ts = skyfield_load.timescale()

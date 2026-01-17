@@ -6,10 +6,11 @@ cache/
 data/
 diagnostics/
 recordings/
-de421.bsp
+*.bsp
 
 # Local config
 .neo_config
+.setup.lock
 
 # Claude Code internal
 .claude/

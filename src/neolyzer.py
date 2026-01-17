@@ -3,7 +3,7 @@ NEOlyzer v3.03 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
-- Smooth animation (on-the-fly calculation, no interpolation artifacts)
+- Smooth animation (cached positions with linear interpolation)
 - Negative rate support for backwards playback
 - Logging via command-line (--quiet, --verbose, --debug)
 - Dual magnitude limits (min and max for both V and H)
@@ -118,7 +118,7 @@ import matplotlib.pyplot as plt
 from orbit_calculator import FastOrbitCalculator
 from database import DatabaseManager
 from cache_manager import PositionCache
-from skyfield_loader import skyfield_load, ensure_ephemeris
+from skyfield_loader import skyfield_load, ensure_ephemeris, load_ephemeris
 from skyfield.api import utc
 
 logger = logging.getLogger(__name__)
@@ -140,11 +140,14 @@ def setup_logging(level):
 CLN_EPOCH_JD = 2444240.0076  # More precise Full Moon time
 SYNODIC_MONTH = 29.530588853  # Average lunation period in days
 
-# DE421 ephemeris range (approximate JD values)
-# 1899-07-29 = JD 2414986
-# 2053-10-09 = JD 2471184
-EPHEMERIS_MIN_JD = 2414986
-EPHEMERIS_MAX_JD = 2471184
+# Ephemeris range - loaded from configuration (supports DE421, DE440, DE441)
+try:
+    from ephemeris_config import get_ephemeris_bounds
+    EPHEMERIS_MIN_JD, EPHEMERIS_MAX_JD = get_ephemeris_bounds()
+except ImportError:
+    # Fallback to DE440 defaults
+    EPHEMERIS_MIN_JD = 2287184 + 10  # 1550 + buffer
+    EPHEMERIS_MAX_JD = 2688976 - 10  # 2650 - buffer
 
 
 def compute_moon_phase(jd):
@@ -165,7 +168,7 @@ def compute_moon_phase(jd):
     try:
         ts = skyfield_load.timescale()
         t = ts.tt_jd(jd)
-        eph = skyfield_load('de421.bsp')
+        eph = load_ephemeris()
         
         sun = eph['sun']
         moon = eph['moon']
@@ -367,7 +370,7 @@ def jd_to_cln(jd):
     - cln is the integer lunation number (changes exactly at each Full Moon)
     - days_offset is the decimal days since that Full Moon (0.0 to ~29.53)
     
-    Uses precise lunar phase calculations when possible (1899-2053),
+    Uses precise lunar phase calculations when within ephemeris range,
     falls back to average-based calculation for dates outside ephemeris range.
     """
     # Try precise calculation first
@@ -1158,8 +1161,8 @@ class SkyMapCanvas(FigureCanvas):
             try:
                 ts = skyfield_load.timescale()
                 t = ts.tt_jd(jd)
-                ensure_ephemeris('de421.bsp')
-                eph = skyfield_load('de421.bsp')
+                ensure_ephemeris()
+                eph = load_ephemeris()
                 earth = eph['earth']
                 sun = eph['sun']
                 astrometric = earth.at(t).observe(sun)
@@ -1513,8 +1516,8 @@ class SkyMapCanvas(FigureCanvas):
         try:
             ts = skyfield_load.timescale()
             t = ts.tt_jd(jd)
-            ensure_ephemeris('de421.bsp')
-            eph = skyfield_load('de421.bsp')
+            ensure_ephemeris()
+            eph = load_ephemeris()
             earth = eph['earth']
             sun = eph['sun']
             
@@ -3336,7 +3339,7 @@ class NEOInfoDialog(QDialog):
             ts = skyfield_load.timescale()
             t = ts.tt_jd(jd)
             
-            eph = skyfield_load('de421.bsp')
+            eph = load_ephemeris()
             earth = eph['earth']
             sun = eph['sun']
             
@@ -3403,9 +3406,9 @@ class NEOInfoDialog(QDialog):
         if self.calculator is None or self.mag_max is None:
             return "Unknown", "Unknown"
         
-        # Ephemeris range limits (de421.bsp: 1900-2050)
-        MIN_JD = 2415020.5
-        MAX_JD = 2469807.5
+        # Use configured ephemeris range limits
+        MIN_JD = EPHEMERIS_MIN_JD
+        MAX_JD = EPHEMERIS_MAX_JD
         COARSE_STEP = 30  # days
         
         ts = skyfield_load.timescale()
@@ -3604,7 +3607,7 @@ class NEOInfoDialog(QDialog):
                 date_str = t.utc_datetime().strftime('%Y-%m-%d %H:%M')
                 
                 # Get Sun position from Earth
-                eph = skyfield_load('de421.bsp')
+                eph = load_ephemeris()
                 earth = eph['earth']
                 sun = eph['sun']
                 
@@ -4647,6 +4650,7 @@ class TimeControlPanel(QWidget):
         self.datetime_edit.setDateTime(QDateTime.currentDateTimeUtc())
         self.datetime_edit.setDisplayFormat("yyyy-MM-dd HH:mm 'UTC'")
         self.datetime_edit.dateTimeChanged.connect(self.on_datetime_changed)
+        self._datetime_default_style = self.datetime_edit.styleSheet()
         dt_row.addWidget(self.datetime_edit)
         
         now_btn = QPushButton("Now")
@@ -4717,42 +4721,65 @@ class TimeControlPanel(QWidget):
     def on_datetime_changed(self, qdatetime):
         if self._updating_from_cln:
             return
-        
+
         dt = qdatetime.toPyDateTime()
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=utc)
-        
+
         ts = skyfield_load.timescale()
         t = ts.from_datetime(dt)
-        self.current_jd = t.tt
-        
+        new_jd = t.tt
+
+        # Check ephemeris bounds and clamp if needed
+        clamped, new_jd = self._clamp_to_ephemeris_range(new_jd)
+        if clamped:
+            # Update the widget to show the clamped date
+            self._updating_from_cln = True
+            t_clamped = ts.tt_jd(new_jd)
+            self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(t_clamped.utc_datetime()))
+            self._updating_from_cln = False
+
+        self.current_jd = new_jd
+
         # Update CLN spinboxes
         self._updating_from_datetime = True
         self._update_cln_from_jd(self.current_jd)
         self._updating_from_datetime = False
-        
+
+        # Update visual indicator for range limits
+        self._update_limit_indicator()
+
         self.time_changed.emit(self.current_jd)
     
     def on_cln_changed(self):
         """Handle CLN or days spinbox change"""
         if self._updating_from_datetime:
             return
-        
+
         cln = self.cln_spin.value()
         days_offset = self.cln_days_spin.value()
-        
-        # Convert CLN to JD
+
+        # Convert CLN to JD and check bounds
         new_jd = cln_to_jd(cln, days_offset)
+        clamped, new_jd = self._clamp_to_ephemeris_range(new_jd)
         self.current_jd = new_jd
-        
+
         # Update datetime edit without triggering on_datetime_changed
         self._updating_from_cln = True
         ts = skyfield_load.timescale()
         t = ts.tt_jd(new_jd)
         dt = t.utc_datetime()
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(dt))
+
+        # If clamped, also update CLN spinboxes to reflect actual position
+        if clamped:
+            self._update_cln_from_jd(new_jd)
+
         self._updating_from_cln = False
-        
+
+        # Update visual indicator for range limits
+        self._update_limit_indicator()
+
         self.time_changed.emit(self.current_jd)
     
     def _update_cln_from_jd(self, jd):
@@ -4768,6 +4795,68 @@ class TimeControlPanel(QWidget):
         except Exception as e:
             # If CLN calculation fails, just log and continue
             logger.debug(f"CLN calculation error: {e}")
+
+    def _clamp_to_ephemeris_range(self, jd):
+        """
+        Check if JD is within ephemeris range and clamp if needed.
+
+        Returns:
+            (was_clamped, clamped_jd)
+        """
+        if jd < EPHEMERIS_MIN_JD:
+            self._notify_range_limit("start", EPHEMERIS_MIN_JD)
+            return True, EPHEMERIS_MIN_JD
+        elif jd > EPHEMERIS_MAX_JD:
+            self._notify_range_limit("end", EPHEMERIS_MAX_JD)
+            return True, EPHEMERIS_MAX_JD
+        return False, jd
+
+    def _notify_range_limit(self, which_end, limit_jd):
+        """Notify user that ephemeris range limit was reached."""
+        try:
+            from ephemeris_config import get_configured_ephemeris, get_ephemeris_year_range
+            eph_name = get_configured_ephemeris().replace('.bsp', '').upper()
+            year_range = get_ephemeris_year_range()
+            msg = f"Date clamped to {eph_name} ephemeris {which_end} ({year_range[0] if which_end == 'start' else year_range[1]})"
+        except:
+            msg = f"Date clamped to ephemeris {which_end}"
+        # Find parent window and show in status bar
+        parent = self.parent()
+        while parent and not hasattr(parent, 'status_label'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'status_label'):
+            parent.status_label.setText(msg)
+            # Also log it
+            logger.info(msg)
+
+    def _update_limit_indicator(self):
+        """Update visual indicator if at ephemeris range limits or widget display limits."""
+        at_min = self.current_jd <= EPHEMERIS_MIN_JD + 1
+        at_max = self.current_jd >= EPHEMERIS_MAX_JD - 1
+
+        # Check if QDateTimeEdit can't represent the date (pre-1752)
+        # JD 2361221 is approximately 1752-09-14
+        QT_MIN_JD = 2361221
+        widget_cant_display = self.current_jd < QT_MIN_JD
+
+        if at_min or at_max:
+            # Orange tint for ephemeris boundary
+            self.datetime_edit.setStyleSheet("QDateTimeEdit { background-color: #FFE4B5; }")
+            if at_min:
+                self.datetime_edit.setToolTip("At ephemeris start boundary")
+            else:
+                self.datetime_edit.setToolTip("At ephemeris end boundary")
+        elif widget_cant_display:
+            # Light blue tint when widget can't display the actual date
+            self.datetime_edit.setStyleSheet("QDateTimeEdit { background-color: #B0E0E6; }")  # Powder blue
+            ts = skyfield_load.timescale()
+            t = ts.tt_jd(self.current_jd)
+            actual_date = t.utc_datetime().strftime('%Y-%m-%d')
+            self.datetime_edit.setToolTip(f"Actual date: {actual_date}\n(Widget cannot display pre-1752 dates)")
+        else:
+            # Reset to default
+            self.datetime_edit.setStyleSheet(self._datetime_default_style)
+            self.datetime_edit.setToolTip("")
     
     def set_to_now(self):
         self.datetime_edit.setDateTime(QDateTime.currentDateTimeUtc())
@@ -4780,9 +4869,18 @@ class TimeControlPanel(QWidget):
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(dt))
     
     def jump_days(self, days):
-        current = self.datetime_edit.dateTime().toPyDateTime()
-        new_dt = current + timedelta(days=days)
-        self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(new_dt))
+        # Calculate new JD and check bounds before updating widget
+        new_jd = self.current_jd + days
+        clamped, new_jd = self._clamp_to_ephemeris_range(new_jd)
+        self.current_jd = new_jd
+        ts = skyfield_load.timescale()
+        t = ts.tt_jd(new_jd)
+        self._updating_from_cln = True
+        self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(t.utc_datetime()))
+        self._update_cln_from_jd(new_jd)
+        self._updating_from_cln = False
+        self._update_limit_indicator()
+        self.time_changed.emit(self.current_jd)
 
         # Record time point if script recording is active
         parent = self.parent()
@@ -5841,8 +5939,8 @@ class ControlsPanel(QWidget):
         
         # Load ephemeris
         try:
-            ensure_ephemeris('de421.bsp')
-            eph = skyfield_load('de421.bsp')
+            ensure_ephemeris()
+            eph = load_ephemeris()
             ts = skyfield_load.timescale()
             earth = eph['earth']
             moon = eph['moon']
@@ -6302,7 +6400,7 @@ class HelicentricChartDialog(QDialog):
         try:
             ts = skyfield_load.timescale()
             t = ts.tt_jd(jd)
-            eph = skyfield_load('de421.bsp')
+            eph = load_ephemeris()
             earth = eph['earth']
             sun = eph['sun']
             

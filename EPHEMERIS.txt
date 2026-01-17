@@ -1,0 +1,188 @@
+EPHEMERIS AND CACHING IN NEOLYZER
+==================================
+
+This document describes how NEOlyzer uses JPL planetary ephemerides and
+pre-computed position caching to achieve smooth visualization of 40,000+ NEOs.
+
+
+JPL PLANETARY EPHEMERIDES
+=========================
+
+NEOlyzer uses JPL Development Ephemerides (DE) for precise positions of the
+Sun, Moon, and planets. These are SPICE binary kernel files (.bsp) downloaded
+from JPL and managed by the Skyfield library.
+
+Available ephemerides:
+
+    Name    Years              Size      Download   Notes
+    ----    -----              ----      --------   -----
+    DE421   1900-2050          17 MB     ~1 min     Compact, legacy (2008)
+    DE440   1550-2650          115 MB    ~5 min     Recommended default (2020)
+    DE441   -13200 to +17191   3.5 GB    ~60 min    Extended historical/future
+
+DE440 is the default choice:
+- Modern accuracy incorporating spacecraft tracking data through 2020
+- Improved lunar positions from Lunar Reconnaissance Orbiter data
+- Extended range covers historical observations and future predictions
+- Reasonable file size
+
+Ephemeris files are stored in: ~/.skyfield/
+Configuration is stored in: ~/.neolyzer/ephemeris.json
+
+To change ephemeris: Re-run ./run_setup.sh and select a different option.
+
+
+POSITION CACHING
+================
+
+NEOlyzer pre-computes asteroid positions for efficient visualization. Without
+caching, computing 40,000+ positions per frame would be too slow for smooth
+animation.
+
+Cache structure (stored in cache/positions.h5):
+
+    Tier      Resolution   Range from "now"   Purpose
+    ----      ----------   ----------------   -------
+    High      Daily        +/- 1 year         Smooth animation near present
+    Medium    Weekly       +/- 5 years        Recent past and near future
+    Low       Monthly      Full ephemeris     Historical and distant future
+
+Each cache entry stores: (asteroid_id, ra, dec, distance, v_magnitude)
+Format: HDF5 with gzip compression (~200-400 MB total)
+
+
+RUNTIME INTERPOLATION
+=====================
+
+During animation, NEOlyzer does NOT recompute positions from orbital elements.
+Instead, it retrieves cached data and interpolates between bracketing dates.
+
+The interpolation is purely LINEAR between TWO cached positions:
+
+    t = (requested_jd - jd_before) / (jd_after - jd_before)
+    position = pos_before * (1 - t) + pos_after * t
+
+This applies independently to RA, Dec, distance, and magnitude.
+
+For the high-precision tier (daily cache), interpolation spans up to 24 hours.
+For fast-moving NEOs near close approach (which can move several degrees per
+day), linear interpolation between daily positions introduces small errors
+compared to true curved Keplerian motion. For visualization purposes this is
+generally acceptable, but users should be aware that:
+
+- Positions between cache dates are approximated, not computed
+- Fast movers may show slight path curvature errors
+- Very close approaches (< 0.01 AU) may benefit from --no-cache mode
+
+The --no-cache command-line option bypasses caching entirely and computes
+positions from orbital elements in real-time (slower but exact).
+
+
+DATE ENTRY LIMITATIONS
+======================
+
+The date/time entry widget (QDateTimeEdit) has a Qt limitation: it cannot
+represent dates before September 14, 1752 (the day after Britain adopted
+the Gregorian calendar). This affects DE440 and DE441 which extend earlier.
+
+For dates before 1752:
+- Use the CLN (Catalina Lunation Number) spinbox instead
+- Use the jump buttons (Day/Mo/Yr) to navigate
+- The date will display correctly once set via CLN
+
+The application validates all date inputs against the configured ephemeris
+range and will clamp to the valid range with a status bar notification if
+you attempt to go outside the bounds.
+
+
+HOW POSITIONS ARE COMPUTED
+==========================
+
+NEOlyzer does NOT numerically integrate asteroid orbits. Instead, it uses
+analytical two-body Keplerian propagation:
+
+1. Start with osculating orbital elements from the Minor Planet Center:
+   - a (semi-major axis)
+   - e (eccentricity)
+   - i (inclination)
+   - node (longitude of ascending node)
+   - arg_peri (argument of perihelion)
+   - M (mean anomaly at epoch)
+
+2. Propagate mean anomaly forward analytically:
+   M(t) = M0 + n * (t - t0)
+   where n = mean motion = sqrt(GM/a^3)
+
+3. Solve Kepler's equation iteratively for eccentric anomaly E:
+   M = E - e * sin(E)
+
+4. Convert to heliocentric cartesian coordinates via standard orbital mechanics
+
+5. Transform to geocentric RA/Dec using Earth position from the JPL ephemeris
+
+The ephemeris is used ONLY for:
+- Earth's position (to compute geocentric coordinates)
+- Sun's position (for phase angle and magnitude calculations)
+- Moon's position (for lunar exclusion zones and phase display)
+
+The asteroid positions themselves are computed analytically from Keplerian
+elements - no numerical integration of perturbed orbits.
+
+
+CACHE BUILD TIMES
+=================
+
+Approximate build times (40,000 NEOs, Apple Silicon Mac):
+
+    Cache Option    Dates Computed    Time
+    ------------    --------------    ----
+    Quick           ~730 (daily)      4-8 minutes
+    Full (DE421)    ~900-1000         20-30 minutes
+    Full (DE440)    ~1200-1400        30-45 minutes
+
+The extended DE440 range adds ~10-15 minutes due to more monthly cache dates
+in the low-precision tier.
+
+
+STORAGE REQUIREMENTS
+====================
+
+Component              Location              Size
+---------              --------              ----
+Ephemeris file         ~/.skyfield/          17 MB - 3.5 GB
+Position cache         cache/positions.h5    200-400 MB
+SQLite database        data/neo_catalog.db   50-100 MB
+Discovery tracklets    data/                 ~5 MB
+
+Total: 300 MB - 4 GB depending on ephemeris choice
+
+
+UPDATING THE CATALOG
+====================
+
+The NEO catalog (NEA.txt from Minor Planet Center) changes:
+- Daily: New discoveries added
+- Monthly: Orbital elements refined throughout the file
+
+To update:
+    ./venv/bin/python scripts/update_catalog.py
+
+This downloads the latest NEA.txt and updates the database. The position
+cache may need rebuilding after significant catalog updates:
+    ./venv/bin/python scripts/build_cache.py
+
+
+ACCURACY CONSIDERATIONS
+=======================
+
+Two-body Keplerian propagation is approximate. Actual asteroid orbits are
+perturbed by Jupiter, other planets, and non-gravitational forces. For
+NEOlyzer's visualization purposes (showing sky positions to arcminute-level
+accuracy over months to years), Keplerian propagation is sufficient.
+
+For precise predictions (occultations, radar ranging, close approaches),
+use JPL Horizons or similar services that integrate perturbed orbits.
+
+The MPC updates orbital elements roughly monthly to account for new
+observations and orbit refinements, which helps maintain accuracy for
+objects with recent observations.

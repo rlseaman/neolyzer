@@ -110,7 +110,7 @@ def main():
         pass
     
     print("=" * 70)
-    print("NEO Visualizer - Initial Setup")
+    print("NEOlyzer - Initial Setup")
     print("=" * 70)
     print(f"  Platform:  {os_name}")
     print(f"  Arch:      {arch}")
@@ -118,17 +118,74 @@ def main():
     print(f"  Started:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
     print()
-    
+
+    # Step 0: Select JPL Ephemeris
+    print("Step 0: Select JPL Planetary Ephemeris")
+    print("-" * 70)
+    print()
+    print("The ephemeris provides precise positions for the Sun, Moon, and planets.")
+    print("Different versions offer different date ranges and file sizes.")
+    print()
+    print("Available ephemerides:")
+    print("-" * 70)
+    print(f"  {'Option':<8} {'Name':<8} {'Years':<18} {'Size':<10} {'Download':<10} Notes")
+    print("-" * 70)
+    print(f"  [1]      DE421    1900-2050          17 MB      ~1 min     Compact, legacy")
+    print(f"  [2]      DE440    1550-2650          115 MB     ~5 min     Recommended (default)")
+    print(f"  [3]      DE441    -13200 to +17191   3.5 GB     ~60 min    Extended range")
+    print("-" * 70)
+    print()
+    print("DE440 is recommended: modern accuracy, extended range, reasonable size.")
+    print()
+
+    response = input("Select ephemeris [1/2/3] (default: 2): ").strip()
+
+    ephemeris_map = {'1': 'de421.bsp', '2': 'de440.bsp', '3': 'de441.bsp', '': 'de440.bsp'}
+    selected_eph = ephemeris_map.get(response, 'de440.bsp')
+
+    try:
+        from ephemeris_config import set_configured_ephemeris, get_ephemeris_info
+        set_configured_ephemeris(selected_eph)
+        info = get_ephemeris_info(selected_eph)
+        print(f"✓ Selected: {info['name']} ({info['year_range'][0]}-{info['year_range'][1]})")
+        print()
+    except Exception as e:
+        print(f"⚠ Could not save ephemeris preference: {e}")
+        print("  Continuing with default (DE440)...")
+        print()
+
     # Step 1: Download MPC data
     print("Step 1: Downloading NEO orbital elements...")
     print("-" * 70)
-    
+
+    # Check for existing NEA.txt
+    nea_file = Path(__file__).parent.parent / 'data' / 'NEA.txt'
+    force_download = False
+    if nea_file.exists():
+        mtime = datetime.fromtimestamp(nea_file.stat().st_mtime)
+        age_days = (datetime.now() - mtime).days
+        size_mb = nea_file.stat().st_size / 1024 / 1024
+        print(f"Existing NEA.txt found:")
+        print(f"  Modified: {mtime.strftime('%Y-%m-%d %H:%M')} ({age_days} days ago)")
+        print(f"  Size: {size_mb:.1f} MB")
+        print()
+        print("The MPC catalog is updated daily (new discoveries) and monthly")
+        print("(orbital element refinements).")
+        print()
+        response = input("Re-download latest catalog? (y/n, default: n): ").lower().strip()
+        force_download = (response == 'y')
+        if force_download:
+            print("Will download fresh catalog from MPC...")
+        else:
+            print("Using existing catalog...")
+        print()
+
     try:
         asteroids = load_asteroids_from_mpc(
             neo_only=True,
-            force_download=False  # Use cached if available
+            force_download=force_download
         )
-        print(f"✓ Downloaded {len(asteroids)} NEO orbits")
+        print(f"✓ Loaded {len(asteroids)} NEO orbits")
         print()
     except Exception as e:
         print(f"✗ Error downloading data: {e}")
@@ -319,10 +376,11 @@ def main():
     print()
     print(f"Total elapsed time: {format_duration(elapsed)}")
     print()
-    print("You can now run the visualizer:")
-    print("  python src/visualizer.py")
+    print("You can now run NEOlyzer:")
+    print("  ./run_neolyzer.sh")
+    print("  # or: python src/neolyzer.py")
     print()
-    print("To update the catalog daily, run:")
+    print("To update the catalog, run:")
     print("  python scripts/update_catalog.py")
     print()
     

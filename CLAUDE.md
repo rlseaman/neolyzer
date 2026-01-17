@@ -14,7 +14,7 @@ NEOlyzer visualizes NEOs — asteroids and comets approaching within 1.3 AU of t
 - **Database:** SQLite via SQLAlchemy (single table currently; multi-table normalization planned)
 - **GUI:** PyQt6 (with PyQt5 fallback) + matplotlib (Qt5Agg backend) for visualization
 - **Caching:** HDF5 via h5py for pre-computed positions
-- **Astronomy:** Skyfield + JPL DE421 ephemeris (1899–2053 coverage)
+- **Astronomy:** Skyfield + configurable JPL ephemeris (DE440 default: 1550–2650)
 - **Platforms:** macOS (Intel/Apple Silicon), Linux (RHEL, Debian/Ubuntu, Raspberry Pi), Windows
 
 ## Project Structure
@@ -28,6 +28,7 @@ neolyzer/
 │   ├── cache_manager.py        # HDF5 position caching
 │   ├── mpc_loader.py           # MPC catalog data loading
 │   ├── designation_utils.py    # Asteroid designation parsing
+│   ├── ephemeris_config.py     # JPL ephemeris selection and metadata
 │   └── skyfield_loader.py      # Skyfield ephemeris management
 ├── scripts/                    # Setup and maintenance scripts
 │   ├── setup_database.py       # Initial setup (download data, build cache)
@@ -91,7 +92,7 @@ python diagnose_sbdb.py     # SBDB/JPL data diagnostics
 - Displays 40,000+ NEOs with smooth animation
 - Multiple map projections (Rectangular, Hammer, Aitoff, Mollweide)
 - Multiple coordinate systems (Equatorial, Ecliptic, Galactic, Opposition)
-- Time range: 1899–2053 (full JPL DE421 ephemeris coverage)
+- Time range: 1550–2650 with DE440 (configurable ephemeris selection)
 - HDF5 position cache with multiple precision tiers (daily/weekly/monthly)
 - Dual magnitude filtering (V and H magnitudes, min and max)
 - Animation controls with variable rate (hours/days/months per second)

@@ -46,7 +46,7 @@ class PositionCache:
         
         # Precision windows (days from reference)
         # Will be set dynamically based on ephemeris coverage
-        self.HIGH_PRECISION_DAYS = 183  # ±6 months (daily positions)
+        self.HIGH_PRECISION_DAYS = 365  # ±1 year (daily positions)
         self.MEDIUM_PRECISION_DAYS = 1826  # ±5 years (weekly positions)
         
         # Low precision range will be set dynamically in set_reference_date()
@@ -54,11 +54,15 @@ class PositionCache:
         self.LOW_PRECISION_DAYS_FORWARD = None
         self.LOW_PRECISION_DAYS_BACKWARD = None
         
-        # Ephemeris safe bounds (will be set from DE421)
-        # DE421 coverage: 1899-07-29 (JD 2414930) to 2053-10-09 (JD 2470815)
-        # But we'll detect these dynamically and add safety margins
-        self.EPHEMERIS_JD_MIN = 2414930 + 10  # Add 10-day buffer
-        self.EPHEMERIS_JD_MAX = 2470815 - 10  # Subtract 10-day buffer
+        # Ephemeris safe bounds - loaded from configuration
+        # Supports DE421, DE440, DE441 with different date ranges
+        try:
+            from ephemeris_config import get_ephemeris_bounds
+            self.EPHEMERIS_JD_MIN, self.EPHEMERIS_JD_MAX = get_ephemeris_bounds()
+        except ImportError:
+            # Fallback to DE440 defaults if config not available
+            self.EPHEMERIS_JD_MIN = 2287184 + 10  # 1550 + buffer
+            self.EPHEMERIS_JD_MAX = 2688976 - 10  # 2650 - buffer
         
         # Sampling intervals
         self.HIGH_INTERVAL = 1  # daily
