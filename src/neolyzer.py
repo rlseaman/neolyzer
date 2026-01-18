@@ -572,6 +572,15 @@ class SkyMapCanvas(FigureCanvas):
         self._hysteresis_enabled = False  # Only active during animation
         self._mag_hysteresis = 0.10  # Default hysteresis value (magnitudes)
 
+        # Initialize overlay settings with defaults (will be updated by settings dialog)
+        self.plane_settings = None
+        self.dec_limit_settings = {'enabled': False, 'north': 60.0, 'south': -25.0,
+                                   'color': '#88FFFF', 'show_bounds': True}
+        self.sunmoon_settings = None
+        self.galactic_settings = None
+        self.opposition_settings = None
+        self.horizon_settings = None
+
         # Store last visible data for histogram equalization
         self._last_visible_data = None
 
@@ -1288,11 +1297,16 @@ class SkyMapCanvas(FigureCanvas):
                         draw_plane_line(gal_l, gal_b, color)
                     except:
                         pass
-                elif self.coord_system == 'opposition':
-                    # Ecliptic plane in opposition coords - horizontal line at lat=0
-                    # but longitude is shifted by opposition point
-                    # Don't draw - it's the coordinate system baseline
-                    pass
+                elif self.coord_system in ['ecliptic', 'opposition']:
+                    # Ecliptic plane is horizontal line at lat=0 in ecliptic/opposition coords
+                    ecl_lon = np.linspace(0, 360, 360)
+                    ecl_lat = np.zeros(360)
+                    if self.coord_system == 'opposition':
+                        # Shift longitude so opposition is at center
+                        ecl_lon = ecl_lon - opp_offset
+                        ecl_lon = np.where(ecl_lon > 180, ecl_lon - 360, ecl_lon)
+                        ecl_lon = np.where(ecl_lon < -180, ecl_lon + 360, ecl_lon)
+                    draw_plane_line(ecl_lon, ecl_lat, color)
                 # Ecliptic poles in equatorial: RA=270°, Dec=+66.56° (NEP) and RA=90°, Dec=-66.56° (SEP)
                 if plane_settings['ecliptic']['pole']:
                     nep_ra, nep_dec = 270.0, 66.56
@@ -1318,7 +1332,12 @@ class SkyMapCanvas(FigureCanvas):
         if plane_settings['equator']['enabled']:
             try:
                 color = plane_settings['equator']['color']
-                if self.coord_system == 'ecliptic':
+                if self.coord_system == 'equatorial':
+                    # Equator is horizontal line at dec=0 in equatorial coords
+                    eq_ra = np.linspace(0, 360, 360)
+                    eq_dec = np.zeros(360)
+                    draw_plane_line(eq_ra, eq_dec, color)
+                elif self.coord_system == 'ecliptic':
                     eq_ra = np.linspace(0, 360, 360)
                     eq_dec = np.zeros(360)
                     ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(eq_ra, eq_dec)
@@ -1399,8 +1418,9 @@ class SkyMapCanvas(FigureCanvas):
                         draw_plane_line(gal_lon, gal_lat, color)
                     except:
                         pass
-                else:  # galactic coordinates - don't draw plane on itself
-                    pass
+                elif self.coord_system == 'galactic':
+                    # Galactic plane is horizontal line at b=0 in galactic coords
+                    draw_plane_line(gal_l, gal_b, color)
                 
                 # Galactic poles: NGP at RA=192.85°, Dec=+27.13° and SGP at RA=12.85°, Dec=-27.13°
                 if plane_settings['galaxy']['pole']:
@@ -1626,21 +1646,58 @@ class SkyMapCanvas(FigureCanvas):
                     solar_color = sunmoon_settings.get('solar_color', '#FFD700')
 
                     if self.projection in ['hammer', 'aitoff', 'mollweide']:
-                        # Draw dashed circle in radians
-                        circle_theta = np.linspace(0, 2*np.pi, 72)
+                        # Draw dashed circle in radians, handling wrap-around at ±π
+                        circle_theta = np.linspace(0, 2*np.pi, 144)
                         radius_rad = np.radians(solar_radius)
                         cx = lon_sun_rad + radius_rad * np.cos(circle_theta)
                         cy = lat_sun_rad + radius_rad * np.sin(circle_theta)
-                        solar_circle = self.ax.plot(cx, cy, '--', color=solar_color,
-                                                   linewidth=1.5, alpha=0.7, zorder=16)[0]
+
+                        # Handle wrap-around: split into segments that don't cross ±π
+                        # Wrap longitudes to [-π, π] range
+                        cx_wrapped = np.where(cx < -np.pi, cx + 2*np.pi, cx)
+                        cx_wrapped = np.where(cx_wrapped > np.pi, cx_wrapped - 2*np.pi, cx_wrapped)
+
+                        # Find discontinuities (large jumps indicate wrap-around)
+                        jumps = np.abs(np.diff(cx_wrapped)) > np.pi
+                        if np.any(jumps):
+                            # Split at discontinuities and draw separate segments
+                            jump_indices = np.where(jumps)[0] + 1
+                            segments_x = np.split(cx_wrapped, jump_indices)
+                            segments_y = np.split(cy, jump_indices)
+                            for seg_x, seg_y in zip(segments_x, segments_y):
+                                if len(seg_x) > 1:
+                                    line = self.ax.plot(seg_x, seg_y, '--', color=solar_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
+                                    self.overlay_artists.append(line)
+                        else:
+                            solar_circle = self.ax.plot(cx_wrapped, cy, '--', color=solar_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
+                            self.overlay_artists.append(solar_circle)
                     else:
-                        # Rectangular - use degrees
-                        circle_theta = np.linspace(0, 2*np.pi, 72)
+                        # Rectangular - use degrees, handle wrap-around at ±180
+                        circle_theta = np.linspace(0, 2*np.pi, 144)
                         cx = lon_sun_rad + solar_radius * np.cos(circle_theta)
                         cy = lat_sun_rad + solar_radius * np.sin(circle_theta)
-                        solar_circle = self.ax.plot(cx, cy, '--', color=solar_color,
-                                                   linewidth=1.5, alpha=0.7, zorder=16)[0]
-                    self.overlay_artists.append(solar_circle)
+
+                        # Wrap longitudes to [-180, 180] range
+                        cx_wrapped = np.where(cx < -180, cx + 360, cx)
+                        cx_wrapped = np.where(cx_wrapped > 180, cx_wrapped - 360, cx_wrapped)
+
+                        # Find discontinuities
+                        jumps = np.abs(np.diff(cx_wrapped)) > 180
+                        if np.any(jumps):
+                            jump_indices = np.where(jumps)[0] + 1
+                            segments_x = np.split(cx_wrapped, jump_indices)
+                            segments_y = np.split(cy, jump_indices)
+                            for seg_x, seg_y in zip(segments_x, segments_y):
+                                if len(seg_x) > 1:
+                                    line = self.ax.plot(seg_x, seg_y, '--', color=solar_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
+                                    self.overlay_artists.append(line)
+                        else:
+                            solar_circle = self.ax.plot(cx_wrapped, cy, '--', color=solar_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
+                            self.overlay_artists.append(solar_circle)
                 except Exception as e:
                     logger.debug(f"Could not draw solar exclusion circle: {e}")
 
@@ -1820,7 +1877,120 @@ class SkyMapCanvas(FigureCanvas):
                     self._draw_horizon_boundaries(jd, horizon_settings)
                 except Exception as e:
                     logger.debug(f"Could not draw horizon boundaries: {e}")
-            
+
+            # === DECLINATION LIMITS ===
+            dec_limit_settings = getattr(self, 'dec_limit_settings', None)
+            if dec_limit_settings and dec_limit_settings.get('enabled', False) and dec_limit_settings.get('show_bounds', True):
+                try:
+                    dec_north = dec_limit_settings.get('north', 60.0)
+                    dec_south = dec_limit_settings.get('south', -25.0)
+                    dec_color = dec_limit_settings.get('color', '#88FFFF')
+
+                    # Draw horizontal lines at declination limits (in equatorial coordinates)
+                    # For other coordinate systems, we need to transform the lines
+                    if self.coord_system == 'equatorial':
+                        # Simple case: declination lines are horizontal
+                        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                            lon_range = np.linspace(-np.pi, np.pi, 180)
+                            # Northern limit (skip if at +90)
+                            if dec_north < 90.0:
+                                lat_north = np.radians(dec_north)
+                                line_n = self.ax.plot(lon_range, np.full_like(lon_range, lat_north),
+                                                     '--', color=dec_color, linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                self.overlay_artists.append(line_n)
+                            # Southern limit (skip if at -90)
+                            if dec_south > -90.0:
+                                lat_south = np.radians(dec_south)
+                                line_s = self.ax.plot(lon_range, np.full_like(lon_range, lat_south),
+                                                     '--', color=dec_color, linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                self.overlay_artists.append(line_s)
+                        else:
+                            # Rectangular projection
+                            lon_range = np.linspace(-180, 180, 180)
+                            if dec_north < 90.0:
+                                line_n = self.ax.plot(lon_range, np.full_like(lon_range, dec_north),
+                                                     '--', color=dec_color, linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                self.overlay_artists.append(line_n)
+                            if dec_south > -90.0:
+                                line_s = self.ax.plot(lon_range, np.full_like(lon_range, dec_south),
+                                                     '--', color=dec_color, linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                self.overlay_artists.append(line_s)
+                    else:
+                        # For non-equatorial coordinate systems, transform the constant-declination lines
+                        ra_range = np.linspace(0, 360, 180)
+                        for dec_val, skip_at in [(dec_north, 90.0), (dec_south, -90.0)]:
+                            if abs(dec_val) >= abs(skip_at):
+                                continue
+                            # Transform each point on the constant-dec line
+                            if self.coord_system == 'ecliptic':
+                                lons, lats = [], []
+                                for ra in ra_range:
+                                    lon, lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec_val)
+                                    lons.append(lon)
+                                    lats.append(lat)
+                            elif self.coord_system == 'galactic':
+                                lons, lats = [], []
+                                for ra in ra_range:
+                                    lon, lat = CoordinateTransformer.equatorial_to_galactic(ra, dec_val)
+                                    lons.append(lon)
+                                    lats.append(lat)
+                            elif self.coord_system == 'opposition':
+                                lons, lats = [], []
+                                for ra in ra_range:
+                                    ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec_val)
+                                    lon = ecl_lon - self.sun_ecl_lon - 180
+                                    if lon < -180:
+                                        lon += 360
+                                    if lon > 180:
+                                        lon -= 360
+                                    lons.append(lon)
+                                    lats.append(ecl_lat)
+                            else:
+                                continue
+
+                            lons = np.array(lons)
+                            lats = np.array(lats)
+
+                            if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                                # Convert to radians and handle wrap-around
+                                lons_plot = np.where(lons > 180, lons - 360, lons)
+                                lons_rad = np.radians(-lons_plot)
+                                lats_rad = np.radians(lats)
+
+                                # Split at discontinuities
+                                jumps = np.abs(np.diff(lons_rad)) > np.pi
+                                if np.any(jumps):
+                                    jump_indices = np.where(jumps)[0] + 1
+                                    segments_x = np.split(lons_rad, jump_indices)
+                                    segments_y = np.split(lats_rad, jump_indices)
+                                    for seg_x, seg_y in zip(segments_x, segments_y):
+                                        if len(seg_x) > 1:
+                                            line = self.ax.plot(seg_x, seg_y, '--', color=dec_color,
+                                                               linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                            self.overlay_artists.append(line)
+                                else:
+                                    line = self.ax.plot(lons_rad, lats_rad, '--', color=dec_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                    self.overlay_artists.append(line)
+                            else:
+                                # Rectangular - handle wrap-around
+                                jumps = np.abs(np.diff(lons)) > 180
+                                if np.any(jumps):
+                                    jump_indices = np.where(jumps)[0] + 1
+                                    segments_x = np.split(lons, jump_indices)
+                                    segments_y = np.split(lats, jump_indices)
+                                    for seg_x, seg_y in zip(segments_x, segments_y):
+                                        if len(seg_x) > 1:
+                                            line = self.ax.plot(seg_x, seg_y, '--', color=dec_color,
+                                                               linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                            self.overlay_artists.append(line)
+                                else:
+                                    line = self.ax.plot(lons, lats, '--', color=dec_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=5)[0]
+                                    self.overlay_artists.append(line)
+                except Exception as e:
+                    logger.debug(f"Could not draw declination limits: {e}")
+
             # Opposition marker: circular reticle with crossed lines
             # Use scatter marker for circle to avoid distortion in Mollweide
             opp_circle = self.ax.scatter([lon_opp_rad], [lat_opp_rad], marker='o', s=250,
@@ -1865,8 +2035,8 @@ class SkyMapCanvas(FigureCanvas):
         
         observer_lat = horizon_settings.get('observer_lat', 32.2226)  # Tucson default
         observer_lon = horizon_settings.get('observer_lon', -110.9747)
-        line_style = horizon_settings.get('line_style', 'solid')
-        line_weight = horizon_settings.get('line_weight', 1.5)
+        line_style = horizon_settings.get('line_style', 'dashed')
+        line_weight = horizon_settings.get('line_weight', 1.0)
         
         # Convert line style to matplotlib format
         linestyle_map = {'solid': '-', 'dashed': '--', 'dotted': ':'}
@@ -2206,6 +2376,26 @@ class SkyMapCanvas(FigureCanvas):
                         self.trail_history.clear()
                     self.draw()
                     return
+
+        # Filter by declination limits
+        dec_limit_settings = getattr(self, 'dec_limit_settings', None)
+        if dec_limit_settings and dec_limit_settings.get('enabled', False):
+            dec_north = dec_limit_settings.get('north', 90.0)
+            dec_south = dec_limit_settings.get('south', -90.0)
+
+            # positions[:, 2] is declination in degrees
+            dec = positions[:, 2]
+            dec_mask = (dec <= dec_north) & (dec >= dec_south)
+            positions = positions[dec_mask]
+            if len(positions) == 0:
+                self.scatter.set_offsets(np.empty((0, 2)))
+                self.scatter.set_array(np.array([]))
+                self.stats_text.set_text(f'No objects in declination range {dec_south:.0f}° to {dec_north:.0f}°')
+                if self.trailing_settings.get('enabled', False):
+                    self._clear_trails()
+                    self.trail_history.clear()
+                self.draw()
+                return
 
         # Filter by magnitude (both min and max)
         # Note: We expand mag_max by opposition benefit to allow objects that could become
@@ -8500,11 +8690,76 @@ class SettingsDialog(QDialog):
                 'color_edit': color_edit,
                 'pole_cb': pole_cb
             }
-        
+
+        # Declination limits section
+        dec_sep = QFrame()
+        if PYQT_VERSION == 6:
+            dec_sep.setFrameShape(QFrame.Shape.HLine)
+        else:
+            dec_sep.setFrameShape(QFrame.HLine)
+        dec_sep.setStyleSheet("color: #ccc;")
+        planes_layout.addWidget(dec_sep)
+
+        # Enable declination limits checkbox
+        self.dec_limits_check = QCheckBox("Enable declination limits")
+        self.dec_limits_check.setChecked(False)
+        self.dec_limits_check.setToolTip("Filter out NEOs outside the specified declination range")
+        self.dec_limits_check.stateChanged.connect(self.on_plane_changed)
+        planes_layout.addWidget(self.dec_limits_check)
+
+        # Northern limit row (indented)
+        north_row = QHBoxLayout()
+        north_row.addSpacing(20)
+        north_row.addWidget(QLabel("Northern limit:"))
+        self.dec_north_spin = QDoubleSpinBox()
+        self.dec_north_spin.setRange(-90.0, 90.0)
+        self.dec_north_spin.setValue(60.0)
+        self.dec_north_spin.setSingleStep(5.0)
+        self.dec_north_spin.setSuffix("°")
+        self.dec_north_spin.setToolTip("Filter out NEOs north of this declination")
+        self.dec_north_spin.valueChanged.connect(self._validate_dec_limits)
+        self.dec_north_spin.valueChanged.connect(self.on_plane_changed)
+        north_row.addWidget(self.dec_north_spin)
+        north_row.addStretch()
+        planes_layout.addLayout(north_row)
+
+        # Southern limit row (indented)
+        south_row = QHBoxLayout()
+        south_row.addSpacing(20)
+        south_row.addWidget(QLabel("Southern limit:"))
+        self.dec_south_spin = QDoubleSpinBox()
+        self.dec_south_spin.setRange(-90.0, 90.0)
+        self.dec_south_spin.setValue(-25.0)
+        self.dec_south_spin.setSingleStep(5.0)
+        self.dec_south_spin.setSuffix("°")
+        self.dec_south_spin.setToolTip("Filter out NEOs south of this declination")
+        self.dec_south_spin.valueChanged.connect(self._validate_dec_limits)
+        self.dec_south_spin.valueChanged.connect(self.on_plane_changed)
+        south_row.addWidget(self.dec_south_spin)
+        south_row.addStretch()
+        planes_layout.addLayout(south_row)
+
+        # Color and show boundaries row (indented)
+        dec_opts_row = QHBoxLayout()
+        dec_opts_row.addSpacing(20)
+        dec_opts_row.addWidget(QLabel("Color:"))
+        self.dec_color_edit = QLineEdit("#88FFFF")  # Lighter cyan (lighter than equator)
+        self.dec_color_edit.setMaximumWidth(70)
+        self.dec_color_edit.setToolTip("Color for declination limit lines (hex or name)")
+        self.dec_color_edit.editingFinished.connect(self.on_plane_changed)
+        dec_opts_row.addWidget(self.dec_color_edit)
+        self.dec_show_bounds = QCheckBox("Show boundaries")
+        self.dec_show_bounds.setChecked(True)
+        self.dec_show_bounds.setToolTip("Draw lines showing declination limits")
+        self.dec_show_bounds.stateChanged.connect(self.on_plane_changed)
+        dec_opts_row.addWidget(self.dec_show_bounds)
+        dec_opts_row.addStretch()
+        planes_layout.addLayout(dec_opts_row)
+
         planes_group.setLayout(planes_layout)
         self._layout.addWidget(planes_group)
         self.collapsible_sections.append(planes_group)
-        
+
         # Set initial defaults based on coordinate system
         self.update_plane_defaults()
         
@@ -9768,6 +10023,10 @@ class SettingsDialog(QDialog):
             # Sun and Moon
             state['sunmoon'] = {
                 'show_sun': self.show_sun_check.isChecked(),
+                'solar_elongation_enabled': self.solar_elongation_check.isChecked(),
+                'solar_radius': self.solar_radius_spin.value(),
+                'solar_color': self.solar_color_edit.text(),
+                'solar_show_bounds': self.solar_show_bounds.isChecked(),
                 'show_moon': self.show_moon_check.isChecked(),
                 'show_phases': self.show_moon_phases_check.isChecked(),
                 'lunar_exclusion_enabled': self.lunar_exclusion_check.isChecked(),
@@ -9775,6 +10034,15 @@ class SettingsDialog(QDialog):
                 'lunar_penalty': self.lunar_penalty_spin.value(),
                 'lunar_color': self.lunar_color_edit.text(),
                 'lunar_show_bounds': self.lunar_show_bounds.isChecked()
+            }
+
+            # Declination Limits
+            state['dec_limits'] = {
+                'enabled': self.dec_limits_check.isChecked(),
+                'north': self.dec_north_spin.value(),
+                'south': self.dec_south_spin.value(),
+                'color': self.dec_color_edit.text(),
+                'show_bounds': self.dec_show_bounds.isChecked()
             }
 
             # Galactic Exclusion
@@ -9793,6 +10061,57 @@ class SettingsDialog(QDialog):
                 'benefit': self.opposition_benefit_spin.value(),
                 'color': self.opposition_color_edit.text(),
                 'show_bounds': self.opposition_show_bounds.isChecked()
+            }
+
+            # Discovery Circumstances
+            state['discovery'] = {
+                'hide_missing': self.hide_missing_discovery_check.isChecked()
+            }
+
+            # Miscellaneous Filters
+            state['misc_filter'] = {
+                'hide_numbered': self.hide_numbered_check.isChecked(),
+                'geo_near_enabled': self.geo_near_check.isChecked(),
+                'geo_near_dist': self.geo_near_spin.value(),
+                'geo_far_enabled': self.geo_far_check.isChecked(),
+                'geo_far_dist': self.geo_far_spin.value(),
+                'helio_near_enabled': self.helio_near_check.isChecked(),
+                'helio_near_dist': self.helio_near_spin.value(),
+                'helio_far_enabled': self.helio_far_check.isChecked(),
+                'helio_far_dist': self.helio_far_spin.value()
+            }
+
+            # Site Filtering
+            state['site_filter'] = {
+                'whitelist_enabled': self.site_whitelist_check.isChecked(),
+                'whitelist': self.site_whitelist_edit.text(),
+                'blacklist_enabled': self.site_blacklist_check.isChecked(),
+                'blacklist': self.site_blacklist_edit.text()
+            }
+
+            # Advanced Controls
+            state['advanced'] = {
+                'lr_increment': self.lr_increment_spin.value(),
+                'lr_unit': self.lr_unit_combo.currentText(),
+                'mag_hysteresis': self.mag_hysteresis_spin.value()
+            }
+
+            # Horizon/Twilight
+            state['horizon'] = {
+                'enabled': self.horizon_enable_check.isChecked(),
+                'observer_lat': self.observer_lat_spin.value(),
+                'observer_lon': self.observer_lon_spin.value(),
+                'timezone': self.timezone_combo.currentText(),
+                'show_horizon': self.show_horizon_check.isChecked(),
+                'horizon_color': self.horizon_color_edit.text(),
+                'show_civil': self.show_civil_check.isChecked(),
+                'civil_color': self.civil_color_edit.text(),
+                'show_nautical': self.show_nautical_check.isChecked(),
+                'nautical_color': self.nautical_color_edit.text(),
+                'show_astro': self.show_astro_check.isChecked(),
+                'astro_color': self.astro_color_edit.text(),
+                'line_style': self.horizon_style_combo.currentText(),
+                'line_weight': self.horizon_weight_spin.value()
             }
 
         try:
@@ -10008,6 +10327,10 @@ class SettingsDialog(QDialog):
             if 'sunmoon' in state:
                 s = state['sunmoon']
                 self.show_sun_check.setChecked(s.get('show_sun', True))
+                self.solar_elongation_check.setChecked(s.get('solar_elongation_enabled', False))
+                self.solar_radius_spin.setValue(s.get('solar_radius', 45.0))
+                self.solar_color_edit.setText(s.get('solar_color', '#FFD700'))
+                self.solar_show_bounds.setChecked(s.get('solar_show_bounds', True))
                 self.show_moon_check.setChecked(s.get('show_moon', True))
                 self.show_moon_phases_check.setChecked(s.get('show_phases', False))
                 self.lunar_exclusion_check.setChecked(s.get('lunar_exclusion_enabled', False))
@@ -10015,6 +10338,15 @@ class SettingsDialog(QDialog):
                 self.lunar_penalty_spin.setValue(s.get('lunar_penalty', 3.0))
                 self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                 self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
+
+            # Declination Limits
+            if 'dec_limits' in state:
+                dl = state['dec_limits']
+                self.dec_limits_check.setChecked(dl.get('enabled', False))
+                self.dec_north_spin.setValue(dl.get('north', 60.0))
+                self.dec_south_spin.setValue(dl.get('south', -25.0))
+                self.dec_color_edit.setText(dl.get('color', '#88FFFF'))
+                self.dec_show_bounds.setChecked(dl.get('show_bounds', True))
 
             # Galactic Exclusion
             if 'galactic' in state:
@@ -10033,6 +10365,57 @@ class SettingsDialog(QDialog):
                 self.opposition_benefit_spin.setValue(o.get('benefit', 2.0))
                 self.opposition_color_edit.setText(o.get('color', '#90EE90'))
                 self.opposition_show_bounds.setChecked(o.get('show_bounds', True))
+
+            # Discovery Circumstances
+            if 'discovery' in state:
+                d = state['discovery']
+                self.hide_missing_discovery_check.setChecked(d.get('hide_missing', False))
+
+            # Miscellaneous Filters
+            if 'misc_filter' in state:
+                mf = state['misc_filter']
+                self.hide_numbered_check.setChecked(mf.get('hide_numbered', False))
+                self.geo_near_check.setChecked(mf.get('geo_near_enabled', False))
+                self.geo_near_spin.setValue(mf.get('geo_near_dist', 0.0))
+                self.geo_far_check.setChecked(mf.get('geo_far_enabled', False))
+                self.geo_far_spin.setValue(mf.get('geo_far_dist', 5.0))
+                self.helio_near_check.setChecked(mf.get('helio_near_enabled', False))
+                self.helio_near_spin.setValue(mf.get('helio_near_dist', 0.0))
+                self.helio_far_check.setChecked(mf.get('helio_far_enabled', False))
+                self.helio_far_spin.setValue(mf.get('helio_far_dist', 5.0))
+
+            # Site Filtering
+            if 'site_filter' in state:
+                sf = state['site_filter']
+                self.site_whitelist_check.setChecked(sf.get('whitelist_enabled', False))
+                self.site_whitelist_edit.setText(sf.get('whitelist', ''))
+                self.site_blacklist_check.setChecked(sf.get('blacklist_enabled', False))
+                self.site_blacklist_edit.setText(sf.get('blacklist', ''))
+
+            # Advanced Controls
+            if 'advanced' in state:
+                a = state['advanced']
+                self.lr_increment_spin.setValue(a.get('lr_increment', 1.0))
+                self.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
+                self.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
+
+            # Horizon/Twilight (fallback defaults match factory defaults)
+            if 'horizon' in state:
+                h = state['horizon']
+                self.horizon_enable_check.setChecked(h.get('enabled', False))
+                self.observer_lat_spin.setValue(h.get('observer_lat', 32.2226))
+                self.observer_lon_spin.setValue(h.get('observer_lon', -110.9747))
+                self.timezone_combo.setCurrentText(h.get('timezone', 'UTC-7 (MST)'))
+                self.show_horizon_check.setChecked(h.get('show_horizon', True))
+                self.horizon_color_edit.setText(h.get('horizon_color', '#FF6600'))
+                self.show_civil_check.setChecked(h.get('show_civil', True))
+                self.civil_color_edit.setText(h.get('civil_color', '#FF9933'))
+                self.show_nautical_check.setChecked(h.get('show_nautical', True))
+                self.nautical_color_edit.setText(h.get('nautical_color', '#CC66FF'))
+                self.show_astro_check.setChecked(h.get('show_astro', True))
+                self.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
+                self.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
+                self.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
 
             # Update control states and display
             self._initialize_control_states()
@@ -10074,6 +10457,28 @@ class SettingsDialog(QDialog):
                 self.script_status_label.setText(f"Deleted: {filename}")
             except Exception as e:
                 self.script_status_label.setText(f"Error deleting: {e}")
+
+    def _validate_dec_limits(self):
+        """Ensure northern limit is greater than southern limit"""
+        north = self.dec_north_spin.value()
+        south = self.dec_south_spin.value()
+        if north <= south:
+            # Adjust the one that was just changed
+            if self.sender() == self.dec_north_spin:
+                self.dec_north_spin.setValue(south + 5.0)
+            else:
+                self.dec_south_spin.setValue(north - 5.0)
+        self.on_plane_changed()
+
+    def get_dec_limit_settings(self):
+        """Return current declination limit settings"""
+        return {
+            'enabled': self.dec_limits_check.isChecked(),
+            'north': self.dec_north_spin.value(),
+            'south': self.dec_south_spin.value(),
+            'color': self.dec_color_edit.text(),
+            'show_bounds': self.dec_show_bounds.isChecked()
+        }
 
     def on_plane_changed(self):
         """Emit signal when any plane setting changes"""
@@ -10322,14 +10727,19 @@ class NEOVisualizer(QMainWindow):
     
     def on_planes_changed(self):
         """Handle changes to plane/pole settings"""
-        if self.settings_dialog and hasattr(self.settings_dialog, 'get_plane_settings'):
-            settings = self.settings_dialog.get_plane_settings()
-            self.canvas.plane_settings = settings
-            # Force redraw of overlays
+        if self.settings_dialog:
+            # Update plane settings
+            if hasattr(self.settings_dialog, 'get_plane_settings'):
+                settings = self.settings_dialog.get_plane_settings()
+                self.canvas.plane_settings = settings
+            # Update declination limit settings
+            if hasattr(self.settings_dialog, 'get_dec_limit_settings'):
+                dec_settings = self.settings_dialog.get_dec_limit_settings()
+                self.canvas.dec_limit_settings = dec_settings
+            # Force redraw of overlays and re-filter NEOs (declination limits affect filtering)
             self.canvas.last_overlay_jd = None
-            if hasattr(self.time_panel, 'current_jd') and self.time_panel.current_jd:
-                self.canvas.draw_celestial_overlays(self.time_panel.current_jd)
-                self.canvas.draw()
+            self.canvas.last_jd = None  # Force update_plot to redraw
+            self.update_display()  # Full update to apply declination filtering
     
     def on_galactic_changed(self):
         """Handle changes to galactic exclusion settings"""
@@ -11107,17 +11517,27 @@ class NEOVisualizer(QMainWindow):
             
             # Store sunmoon settings on canvas for draw_celestial_overlays
             self.canvas.sunmoon_settings = sunmoon_settings
-            
+
+            # Get declination limit settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_dec_limit_settings'):
+                dec_limit_settings = self.settings_dialog.get_dec_limit_settings()
+            else:
+                dec_limit_settings = {'enabled': False, 'north': 60.0, 'south': -25.0,
+                                     'color': '#88FFFF', 'show_bounds': True}
+
+            # Store dec limit settings on canvas for draw_celestial_overlays and filtering
+            self.canvas.dec_limit_settings = dec_limit_settings
+
             # Get horizon/twilight display settings
             if self.settings_dialog and hasattr(self.settings_dialog, 'get_horizon_settings'):
                 horizon_settings = self.settings_dialog.get_horizon_settings()
             else:
                 horizon_settings = {'enabled': False, 'observer_lat': 32.2226, 'observer_lon': -110.9747,
                                    'show_horizon': True, 'horizon_color': '#FF6600',
-                                   'show_civil': False, 'civil_color': '#FF9933',
-                                   'show_nautical': False, 'nautical_color': '#CC66FF',
+                                   'show_civil': True, 'civil_color': '#FF9933',
+                                   'show_nautical': True, 'nautical_color': '#CC66FF',
                                    'show_astro': True, 'astro_color': '#6666FF',
-                                   'line_style': 'solid', 'line_weight': 1.5}
+                                   'line_style': 'dashed', 'line_weight': 1.0}
             
             # Store horizon settings on canvas for draw_celestial_overlays
             self.canvas.horizon_settings = horizon_settings
@@ -11509,10 +11929,17 @@ class NEOVisualizer(QMainWindow):
                 
                 # Planes and Poles - reset to defaults based on coord system
                 for plane_name, controls in self.settings_dialog.plane_controls.items():
-                    controls['plane_cb'].setChecked(False)
-                    controls['pole_cb'].setChecked(False)
                     controls['color_edit'].setText(self.settings_dialog.DEFAULT_COLORS[plane_name])
-                
+                # Set plane visibility based on coordinate system (matches startup behavior)
+                self.settings_dialog.update_plane_defaults()
+
+                # Declination Limits
+                self.settings_dialog.dec_limits_check.setChecked(False)
+                self.settings_dialog.dec_north_spin.setValue(60.0)
+                self.settings_dialog.dec_south_spin.setValue(-25.0)
+                self.settings_dialog.dec_color_edit.setText("#88FFFF")
+                self.settings_dialog.dec_show_bounds.setChecked(True)
+
                 # Sun and Moon
                 self.settings_dialog.show_sun_check.setChecked(True)
                 self.settings_dialog.solar_elongation_check.setChecked(False)
@@ -11576,7 +12003,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.fast_animation_check.setChecked(False)
                 self.settings_dialog.decimate_spin.setValue(4)
 
-                # Horizon/Twilight
+                # Horizon/Twilight (match initial creation values)
                 self.settings_dialog.horizon_enable_check.setChecked(False)
                 self.settings_dialog.observer_lat_spin.setValue(32.2226)  # Tucson
                 self.settings_dialog.observer_lon_spin.setValue(-110.9747)
@@ -11584,14 +12011,14 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.timezone_combo.setCurrentText("UTC-7 (MST)")
                 self.settings_dialog.show_horizon_check.setChecked(True)
                 self.settings_dialog.horizon_color_edit.setText("#FF6600")
-                self.settings_dialog.show_civil_check.setChecked(False)
+                self.settings_dialog.show_civil_check.setChecked(True)
                 self.settings_dialog.civil_color_edit.setText("#FF9933")
-                self.settings_dialog.show_nautical_check.setChecked(False)
+                self.settings_dialog.show_nautical_check.setChecked(True)
                 self.settings_dialog.nautical_color_edit.setText("#CC66FF")
                 self.settings_dialog.show_astro_check.setChecked(True)
                 self.settings_dialog.astro_color_edit.setText("#6666FF")
-                self.settings_dialog.horizon_style_combo.setCurrentText("solid")
-                self.settings_dialog.horizon_weight_spin.setValue(1.5)
+                self.settings_dialog.horizon_style_combo.setCurrentText("dashed")
+                self.settings_dialog.horizon_weight_spin.setValue(1.0)
                 
                 # Clear any existing trails
                 self.clear_trails()
@@ -11688,7 +12115,16 @@ class NEOVisualizer(QMainWindow):
                         'color': controls['color_edit'].text(),
                         'pole': controls['pole_cb'].isChecked()
                     }
-                
+
+                # Declination Limits
+                settings['dec_limits'] = {
+                    'enabled': self.settings_dialog.dec_limits_check.isChecked(),
+                    'north': self.settings_dialog.dec_north_spin.value(),
+                    'south': self.settings_dialog.dec_south_spin.value(),
+                    'color': self.settings_dialog.dec_color_edit.text(),
+                    'show_bounds': self.settings_dialog.dec_show_bounds.isChecked()
+                }
+
                 # Sun and Moon - all parameters
                 settings['sunmoon'] = {
                     'show_sun': self.settings_dialog.show_sun_check.isChecked(),
@@ -11910,7 +12346,16 @@ class NEOVisualizer(QMainWindow):
                             controls['plane_cb'].setChecked(plane_settings.get('enabled', False))
                             controls['color_edit'].setText(plane_settings.get('color', self.settings_dialog.DEFAULT_COLORS.get(plane_name, '#FFFFFF')))
                             controls['pole_cb'].setChecked(plane_settings.get('pole', False))
-                
+
+                # Declination Limits
+                if 'dec_limits' in settings:
+                    dl = settings['dec_limits']
+                    self.settings_dialog.dec_limits_check.setChecked(dl.get('enabled', False))
+                    self.settings_dialog.dec_north_spin.setValue(dl.get('north', 60.0))
+                    self.settings_dialog.dec_south_spin.setValue(dl.get('south', -25.0))
+                    self.settings_dialog.dec_color_edit.setText(dl.get('color', '#88FFFF'))
+                    self.settings_dialog.dec_show_bounds.setChecked(dl.get('show_bounds', True))
+
                 # Sun and Moon - all parameters
                 if 'sunmoon' in settings:
                     s = settings['sunmoon']
@@ -11992,7 +12437,7 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.fast_animation_check.setChecked(fa.get('enabled', False))
                     self.settings_dialog.decimate_spin.setValue(fa.get('decimation', 4))
 
-                # Horizon/Twilight
+                # Horizon/Twilight (fallback defaults match factory defaults)
                 if 'horizon' in settings:
                     h = settings['horizon']
                     self.settings_dialog.horizon_enable_check.setChecked(h.get('enabled', False))
@@ -12001,14 +12446,14 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.timezone_combo.setCurrentText(h.get('timezone', 'UTC-7 (MST)'))
                     self.settings_dialog.show_horizon_check.setChecked(h.get('show_horizon', True))
                     self.settings_dialog.horizon_color_edit.setText(h.get('horizon_color', '#FF6600'))
-                    self.settings_dialog.show_civil_check.setChecked(h.get('show_civil', False))
+                    self.settings_dialog.show_civil_check.setChecked(h.get('show_civil', True))
                     self.settings_dialog.civil_color_edit.setText(h.get('civil_color', '#FF9933'))
-                    self.settings_dialog.show_nautical_check.setChecked(h.get('show_nautical', False))
+                    self.settings_dialog.show_nautical_check.setChecked(h.get('show_nautical', True))
                     self.settings_dialog.nautical_color_edit.setText(h.get('nautical_color', '#CC66FF'))
                     self.settings_dialog.show_astro_check.setChecked(h.get('show_astro', True))
                     self.settings_dialog.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
-                    self.settings_dialog.horizon_style_combo.setCurrentText(h.get('line_style', 'solid'))
-                    self.settings_dialog.horizon_weight_spin.setValue(h.get('line_weight', 1.5))
+                    self.settings_dialog.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
+                    self.settings_dialog.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
                 
                 # Update control states
                 self.settings_dialog._initialize_control_states()
