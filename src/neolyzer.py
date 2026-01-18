@@ -762,7 +762,14 @@ class SkyMapCanvas(FigureCanvas):
         # Set figure background to slight neutral tint (plot remains white)
         self.fig.patch.set_facecolor('#f5f5f5')  # Very light gray
         self.ax.set_facecolor('white')  # Keep plot white
-        
+
+        # Apply cardinal markers visibility from current settings
+        show_cardinal = getattr(self, 'plane_settings', {}).get('show_cardinal_markers', True)
+        self.compass_n.set_visible(show_cardinal)
+        self.compass_s.set_visible(show_cardinal)
+        self.compass_e.set_visible(show_cardinal)
+        self.compass_w.set_visible(show_cardinal)
+
         # Don't use tight_layout - manual margins for maximum plot area
         self.draw()
 
