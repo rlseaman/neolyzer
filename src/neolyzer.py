@@ -1877,9 +1877,9 @@ class SkyMapCanvas(FigureCanvas):
                     planets_color = sunmoon_settings.get('planets_color', '#4A5568')
                     # Planet definitions: name, ephemeris key, symbol
                     planet_defs = [
-                        ('Mercury', 'mercury', '☿'),
-                        ('Venus', 'venus', '♀'),
-                        ('Mars', 'mars', '♂'),
+                        ('Mercury', 'mercury barycenter', '☿'),
+                        ('Venus', 'venus barycenter', '♀'),
+                        ('Mars', 'mars barycenter', '♂'),
                         ('Jupiter', 'jupiter barycenter', '♃'),
                         ('Saturn', 'saturn barycenter', '♄'),
                         ('Uranus', 'uranus barycenter', '♅'),
