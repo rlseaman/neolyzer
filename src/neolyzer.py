@@ -533,7 +533,8 @@ class SkyMapCanvas(FigureCanvas):
         self.cmap = 'viridis_r'  # Default colormap
         self.h_resolution = 30  # Horizontal grid spacing in degrees
         self.v_resolution = 15  # Vertical grid spacing in degrees
-        
+        self.show_grid = True   # Grid visibility
+
         # Plot elements
         self.ax = None
         self.scatter = None
@@ -650,7 +651,10 @@ class SkyMapCanvas(FigureCanvas):
             self.ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
             self.ax.tick_params(labelsize=8)  # Smaller tick labels
         
-        self.ax.grid(True, alpha=0.3, linestyle='--')
+        if self.show_grid:
+            self.ax.grid(True, alpha=0.3, linestyle='--')
+        else:
+            self.ax.grid(False)
         
         # Set grid spacing based on resolution settings
         if self.projection == 'rectangular':
@@ -816,7 +820,12 @@ class SkyMapCanvas(FigureCanvas):
         self.h_resolution = h_res
         self.v_resolution = v_res
         self.setup_plot()
-    
+
+    def set_grid_visible(self, visible):
+        """Set grid visibility"""
+        self.show_grid = visible
+        self.setup_plot()
+
     def set_display_mode(self, mode):
         """Set display mode: 'points', 'density', 'contours', or 'points+contours'"""
         self.display_mode = mode
@@ -7946,7 +7955,11 @@ class ProjectionPanel(QWidget):
         
         # Grid spacing options (horizontal and vertical in degrees)
         res_row = QHBoxLayout()
-        res_row.addWidget(QLabel("Grid:"))
+        self.show_grid_check = QCheckBox("Grid:")
+        self.show_grid_check.setChecked(True)
+        self.show_grid_check.setToolTip("Show/hide coordinate grid lines")
+        self.show_grid_check.stateChanged.connect(self.on_grid_visibility_changed)
+        res_row.addWidget(self.show_grid_check)
         res_row.addWidget(QLabel("H:"))
         self.h_resolution = QDoubleSpinBox()
         self.h_resolution.setRange(1, 90)
@@ -8070,7 +8083,11 @@ class ProjectionPanel(QWidget):
     def get_resolution(self):
         """Return horizontal and vertical resolution in degrees"""
         return int(self.h_resolution.value()), int(self.v_resolution.value())
-    
+
+    def get_grid_visible(self):
+        """Return whether grid should be visible"""
+        return self.show_grid_check.isChecked()
+
     def get_display_mode(self):
         """Return display mode: 'points', 'density', 'contours', or 'points+contours'"""
         mode = self.display_mode.currentText().lower()
@@ -8210,6 +8227,7 @@ class ProjectionPanel(QWidget):
         """Reset to default values"""
         self.proj_combo.setCurrentText('Hammer')
         self.coord_combo.setCurrentText('Equatorial')
+        self.show_grid_check.setChecked(True)
         self.h_resolution.setValue(30)
         self.v_resolution.setValue(15)
         self.display_mode.setCurrentText('Points')
@@ -8250,6 +8268,10 @@ class ProjectionPanel(QWidget):
             self.proj_combo.setCurrentText('Hammer')
     
     def on_settings_changed(self):
+        self.settings_changed.emit()
+
+    def on_grid_visibility_changed(self):
+        """Handle grid visibility checkbox change"""
         self.settings_changed.emit()
 
 
@@ -10437,7 +10459,8 @@ class SettingsDialog(QDialog):
             if hasattr(parent, 'proj_panel'):
                 state['projection'] = {
                     'type': parent.proj_panel.proj_combo.currentText(),
-                    'coord_system': parent.proj_panel.coord_combo.currentText()
+                    'coord_system': parent.proj_panel.coord_combo.currentText(),
+                    'show_grid': parent.proj_panel.show_grid_check.isChecked()
                 }
 
             # Colorbar and symbol size
@@ -10756,6 +10779,7 @@ class SettingsDialog(QDialog):
                 p = state['projection']
                 parent.proj_panel.proj_combo.setCurrentText(p.get('type', 'Aitoff'))
                 parent.proj_panel.coord_combo.setCurrentText(p.get('coord_system', 'Equatorial'))
+                parent.proj_panel.show_grid_check.setChecked(p.get('show_grid', True))
 
             # Colorbar and symbol size
             if 'colorbar' in state and hasattr(parent, 'colorbar_panel'):
@@ -11928,11 +11952,13 @@ class NEOVisualizer(QMainWindow):
         cmap = self.colorbar_panel.get_colormap()
         h_res, v_res = self.proj_panel.get_resolution()
         display_mode = self.proj_panel.get_display_mode()
-        
+        show_grid = self.proj_panel.get_grid_visible()
+
         self.canvas.set_projection(proj)
         self.canvas.set_coordinate_system(coord)
         self.canvas.set_colormap(cmap)
         self.canvas.set_resolution(h_res, v_res)
+        self.canvas.set_grid_visible(show_grid)
         self.canvas.set_display_mode(display_mode)
         
         # Force overlay redraw on projection/coordinate change
@@ -12641,7 +12667,8 @@ class NEOVisualizer(QMainWindow):
                 },
                 'projection': {
                     'type': self.proj_panel.proj_combo.currentText(),
-                    'coord_system': self.proj_panel.coord_combo.currentText()
+                    'coord_system': self.proj_panel.coord_combo.currentText(),
+                    'show_grid': self.proj_panel.show_grid_check.isChecked()
                 },
                 'colorbar': {
                     'color_by': self.colorbar_panel.color_by_combo.currentText(),
@@ -12871,7 +12898,8 @@ class NEOVisualizer(QMainWindow):
                 p = settings['projection']
                 self.proj_panel.proj_combo.setCurrentText(p.get('type', 'Aitoff'))
                 self.proj_panel.coord_combo.setCurrentText(p.get('coord_system', 'Equatorial'))
-            
+                self.proj_panel.show_grid_check.setChecked(p.get('show_grid', True))
+
             # Colorbar
             if 'colorbar' in settings:
                 c = settings['colorbar']
