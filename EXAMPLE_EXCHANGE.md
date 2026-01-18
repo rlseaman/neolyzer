@@ -83,3 +83,93 @@ Commit: `7de4f82` - "Enhanced planet rendering with per-planet colors and z-orde
 5. **Implementation follows the agreed approach** - No surprises; the code matches what was discussed.
 
 This pattern keeps the human in control of design decisions while leveraging the AI's ability to quickly analyze tradeoffs and implementation details.
+
+---
+
+## Exchange 2: Projection Distortion and UI Polish
+
+### Human Prompt
+
+> In the Hammer, Aitoff, and Mollweide projections, the planets get 'squishy' and don't remain round as they traverse the map. This is unphysical. Can they be (simply) made to stay round? Also, the settings popup now has a lot of color entry boxes. Can they be themselves colored to match the hex code. For dark colors, invert the text color to make the hex code readable. After making these changes, save this prompt and your response to the EXAMPLE_EXCHANGE.md document.
+
+### AI Analysis
+
+**Problem 1: Squishy Planets**
+
+The issue is that matplotlib `Circle` patches are defined in data coordinates and get transformed by the map projection. In curved projections (Hammer, Aitoff, Mollweide), this distorts circles into ellipses that stretch near the edges.
+
+**Solution:** Use `ax.scatter()` instead of `Circle` patches. Scatter markers are defined in display coordinates and remain round regardless of projection. This is a simple fix - replace the Circle drawing code with a scatter call using marker='o'.
+
+**Problem 2: Colored Entry Boxes**
+
+Currently hex color codes are displayed as plain text. With many color fields (per-planet colors, plane colors, horizon colors, etc.), this makes it hard to see what color each field represents.
+
+**Solution:** Add a helper method that:
+1. Parses the hex color from the QLineEdit text
+2. Sets the background color to match
+3. Computes luminance using the standard formula: `(0.299*R + 0.587*G + 0.114*B)/255`
+4. Sets text color to white for dark backgrounds (luminance < 0.5), black for light backgrounds
+
+Connect this to all color entry fields via `textChanged` signal so it updates live as the user types.
+
+**Implementation complexity:** Both are straightforward. The scatter fix is a few lines; the color styling requires adding a helper method and connecting it to ~15 color entry fields.
+
+### Outcome
+
+Both features implemented:
+- Planets now use `ax.scatter()` with marker='o' - stays round in all projections
+- All color entry boxes show their color as background with appropriate text contrast
+- Color styling updates live as user types valid hex codes
+
+### Notes on This Exchange
+
+1. **User identified a visual bug and proposed a direction** - "unphysical" clearly communicates the problem isn't just aesthetic
+2. **AI confirmed the fix is simple** - Scatter vs Circle is a well-known matplotlib technique
+3. **UI polish bundled with bug fix** - Efficient use of a development session to address multiple small improvements
+4. **Documentation requested inline** - User asked for the exchange to be captured, reinforcing the project's documentation practices
+
+---
+
+## Exchange 3: Marker Visibility Controls
+
+### Human Prompt
+
+> Neptune keeps hiding under the cardinal direction markers. Under "Planes and Poles", add two checkboxes after the Galaxy line and above the declination limit checkbox separated by a horizontal line from each. The top checkbox will enable opposition reticle (default enabled) and the lower of the two checkboxes will enable the cardinal direction markers (default enabled). Add this exchange to EXAMPLE_EXCHANGE. commit and push
+
+### AI Analysis
+
+**Problem:** Neptune (and other planets near the edges) gets obscured by the N/S/E/W cardinal markers and the opposition reticle, making it difficult to see. These overlay elements have fixed positions that can conflict with planet positions at certain times.
+
+**Solution:** Add user controls to toggle these overlay elements:
+1. "Show opposition reticle" checkbox - controls the white/red crosshair at the solar opposition point
+2. "Show cardinal markers (N S E W)" checkbox - controls the directional labels at plot borders
+
+**Implementation approach:**
+- Add checkboxes in the Planes and Poles section after the plane controls (Equator, Ecliptic, Galaxy)
+- Separate from the declination limits section with a horizontal line
+- Both default to enabled (preserving current behavior)
+- Connect to the existing on_plane_changed signal chain
+- Store visibility state in plane_settings dict
+- Apply visibility changes immediately via set_visible() for compass markers
+- Check setting in drawing code for opposition reticle
+
+**Persistence:** Settings saved/restored in:
+- save_settings / restore_settings (JSON settings file)
+- Factory reset (reset_all)
+- Script recording/playback
+
+### Outcome
+
+Implemented as proposed:
+- Two new checkboxes under "Planes and Poles" with horizontal separator
+- Opposition reticle drawing now checks `show_opposition_reticle` setting
+- Cardinal markers (N/S/E/W) visibility toggled via `set_visible()`
+- Full persistence in settings, factory reset, and script playback
+- Both default to enabled
+
+### Notes on This Exchange
+
+1. **User identified the root cause and proposed the solution** - Clear request with specific UI placement
+2. **Minimal implementation** - No new complex features, just visibility toggles on existing elements
+3. **Preserves defaults** - Both enabled by default maintains backward compatibility
+4. **Complete persistence** - Settings survive restarts, resets, and script playback

@@ -1875,7 +1875,6 @@ class SkyMapCanvas(FigureCanvas):
             # === PLANETS ===
             if sunmoon_settings.get('show_planets', False):
                 try:
-                    from matplotlib.patches import Circle
                     # Get display settings
                     show_borders = sunmoon_settings.get('planet_borders', True)
                     opacity = sunmoon_settings.get('planet_opacity', 100) / 100.0
@@ -1956,23 +1955,22 @@ class SkyMapCanvas(FigureCanvas):
                                 lon_plot = lon_p if lon_p <= 180 else lon_p - 360
                                 lon_rad = np.radians(-lon_plot)
                                 lat_rad = np.radians(lat_p)
-                                circle_radius = 0.035  # Similar to Sun/Moon size
+                                marker_size = 220  # scatter marker size (points^2)
                                 fontsize = 11
                             else:
                                 lon_rad = lon_p
                                 lat_rad = lat_p
-                                circle_radius = 1.5  # Degrees
+                                marker_size = 220
                                 fontsize = 10
 
-                            # Draw circle background
-                            edge_color = 'black' if show_borders else 'none'
+                            # Draw circle using scatter (stays round in all projections)
+                            edge_color = 'black' if show_borders else color
                             edge_width = 1.0 if show_borders else 0
-                            circle = Circle((lon_rad, lat_rad), circle_radius,
-                                          facecolor=color, edgecolor=edge_color,
-                                          linewidth=edge_width, alpha=opacity,
-                                          zorder=base_zorder, transform=self.ax.transData)
-                            self.ax.add_patch(circle)
-                            self.overlay_artists.append(circle)
+                            marker = self.ax.scatter([lon_rad], [lat_rad], marker='o', s=marker_size,
+                                                    facecolors=color, edgecolors=edge_color,
+                                                    linewidths=edge_width, alpha=opacity,
+                                                    zorder=base_zorder)
+                            self.overlay_artists.append(marker)
 
                             # Draw planet symbol (slightly higher zorder to be on top of circle)
                             # Use dark color for light backgrounds, light for dark
@@ -2118,29 +2116,31 @@ class SkyMapCanvas(FigureCanvas):
                 except Exception as e:
                     logger.debug(f"Could not draw declination limits: {e}")
 
-            # Opposition marker: circular reticle with crossed lines
-            # Use scatter marker for circle to avoid distortion in Mollweide
-            opp_circle = self.ax.scatter([lon_opp_rad], [lat_opp_rad], marker='o', s=250,
-                                        facecolors='white', edgecolors='red', linewidths=1.5,
-                                        alpha=0.7, zorder=20)
-            self.overlay_artists.append(opp_circle)
-            
-            # Draw crossed red lines (1.5 weight)
-            if self.projection in ['hammer', 'aitoff', 'mollweide']:
-                line_len = 0.05  # Reduced from 0.06
-            else:
-                line_len = 2.0  # Reduced from 2.5
-            
-            # Horizontal line (1.5 weight)
-            h_line = self.ax.plot([lon_opp_rad - line_len, lon_opp_rad + line_len],
-                                 [lat_opp_rad, lat_opp_rad], 
-                                 'r-', linewidth=1.5, zorder=21)[0]
-            # Vertical line (1.5 weight)
-            v_line = self.ax.plot([lon_opp_rad, lon_opp_rad],
-                                 [lat_opp_rad - line_len, lat_opp_rad + line_len],
-                                 'r-', linewidth=1.5, zorder=21)[0]
-            
-            self.overlay_artists.extend([h_line, v_line])
+            # Opposition marker: circular reticle with crossed lines (if enabled)
+            show_opposition_reticle = getattr(self, 'plane_settings', {}).get('show_opposition_reticle', True)
+            if show_opposition_reticle:
+                # Use scatter marker for circle to avoid distortion in Mollweide
+                opp_circle = self.ax.scatter([lon_opp_rad], [lat_opp_rad], marker='o', s=250,
+                                            facecolors='white', edgecolors='red', linewidths=1.5,
+                                            alpha=0.7, zorder=20)
+                self.overlay_artists.append(opp_circle)
+
+                # Draw crossed red lines (1.5 weight)
+                if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                    line_len = 0.05  # Reduced from 0.06
+                else:
+                    line_len = 2.0  # Reduced from 2.5
+
+                # Horizontal line (1.5 weight)
+                h_line = self.ax.plot([lon_opp_rad - line_len, lon_opp_rad + line_len],
+                                     [lat_opp_rad, lat_opp_rad],
+                                     'r-', linewidth=1.5, zorder=21)[0]
+                # Vertical line (1.5 weight)
+                v_line = self.ax.plot([lon_opp_rad, lon_opp_rad],
+                                     [lat_opp_rad - line_len, lat_opp_rad + line_len],
+                                     'r-', linewidth=1.5, zorder=21)[0]
+
+                self.overlay_artists.extend([h_line, v_line])
             logger.debug(f"Drew Sun at ({lon_sun:.1f}, {lat_sun:.1f}) and opposition")
             
         except Exception as e:
@@ -8795,7 +8795,9 @@ class SettingsDialog(QDialog):
             color_edit.setMaximumWidth(70)
             color_edit.setToolTip("Color (name or hex, e.g., 'yellow' or '#FFFF00'). Press Enter to apply.")
             color_edit.editingFinished.connect(self.on_plane_changed)
+            color_edit.textChanged.connect(lambda text, w=color_edit: self._update_color_edit_style(w))
             row.addWidget(color_edit)
+            self._update_color_edit_style(color_edit)
             
             # Reset button
             reset_btn = QPushButton("reset")
@@ -8817,6 +8819,29 @@ class SettingsDialog(QDialog):
                 'color_edit': color_edit,
                 'pole_cb': pole_cb
             }
+
+        # Marker controls section
+        marker_sep = QFrame()
+        if PYQT_VERSION == 6:
+            marker_sep.setFrameShape(QFrame.Shape.HLine)
+        else:
+            marker_sep.setFrameShape(QFrame.HLine)
+        marker_sep.setStyleSheet("color: #ccc;")
+        planes_layout.addWidget(marker_sep)
+
+        # Opposition reticle checkbox
+        self.show_opposition_reticle = QCheckBox("Show opposition reticle")
+        self.show_opposition_reticle.setChecked(True)
+        self.show_opposition_reticle.setToolTip("Show the white/red reticle marking the solar opposition point")
+        self.show_opposition_reticle.stateChanged.connect(self.on_plane_changed)
+        planes_layout.addWidget(self.show_opposition_reticle)
+
+        # Cardinal direction markers checkbox
+        self.show_cardinal_markers = QCheckBox("Show cardinal markers (N S E W)")
+        self.show_cardinal_markers.setChecked(True)
+        self.show_cardinal_markers.setToolTip("Show the N, S, E, W direction markers at plot borders")
+        self.show_cardinal_markers.stateChanged.connect(self.on_plane_changed)
+        planes_layout.addWidget(self.show_cardinal_markers)
 
         # Declination limits section
         dec_sep = QFrame()
@@ -8874,7 +8899,9 @@ class SettingsDialog(QDialog):
         self.dec_color_edit.setMaximumWidth(70)
         self.dec_color_edit.setToolTip("Color for declination limit lines (hex or name)")
         self.dec_color_edit.editingFinished.connect(self.on_plane_changed)
+        self.dec_color_edit.textChanged.connect(lambda text, w=self.dec_color_edit: self._update_color_edit_style(w))
         dec_opts_row.addWidget(self.dec_color_edit)
+        self._update_color_edit_style(self.dec_color_edit)
         self.dec_show_bounds = QCheckBox("Show boundaries")
         self.dec_show_bounds.setChecked(True)
         self.dec_show_bounds.setToolTip("Draw lines showing declination limits")
@@ -8933,7 +8960,9 @@ class SettingsDialog(QDialog):
         self.solar_color_edit.setMaximumWidth(70)
         self.solar_color_edit.setToolTip("Color for solar exclusion circle (hex or name)")
         self.solar_color_edit.editingFinished.connect(self.on_sunmoon_changed)
+        self.solar_color_edit.textChanged.connect(lambda text, w=self.solar_color_edit: self._update_color_edit_style(w))
         solar_radius_row.addWidget(self.solar_color_edit)
+        self._update_color_edit_style(self.solar_color_edit)
         self.solar_show_bounds = QCheckBox("Show boundary")
         self.solar_show_bounds.setChecked(True)
         self.solar_show_bounds.setToolTip("Draw dashed circle showing solar exclusion zone")
@@ -8980,7 +9009,9 @@ class SettingsDialog(QDialog):
         self.lunar_color_edit.setMaximumWidth(70)
         self.lunar_color_edit.setToolTip("Color for lunar exclusion circle (hex or name)")
         self.lunar_color_edit.editingFinished.connect(self.on_sunmoon_changed)
+        self.lunar_color_edit.textChanged.connect(lambda text, w=self.lunar_color_edit: self._update_color_edit_style(w))
         lunar_radius_row.addWidget(self.lunar_color_edit)
+        self._update_color_edit_style(self.lunar_color_edit)
         self.lunar_show_bounds = QCheckBox("Show boundary")
         self.lunar_show_bounds.setChecked(True)
         self.lunar_show_bounds.setToolTip("Draw dashed circle showing exclusion zone")
@@ -9078,8 +9109,11 @@ class SettingsDialog(QDialog):
                 color_edit.setMaximumWidth(65)
                 color_edit.setToolTip(f"{planet} color (hex)")
                 color_edit.editingFinished.connect(self.on_sunmoon_changed)
+                color_edit.textChanged.connect(lambda text, w=color_edit: self._update_color_edit_style(w))
                 self.planet_colors[planet] = color_edit
                 color_row.addWidget(color_edit)
+                # Apply initial styling
+                self._update_color_edit_style(color_edit)
             color_row.addStretch()
             sunmoon_layout.addLayout(color_row)
 
@@ -9181,7 +9215,9 @@ class SettingsDialog(QDialog):
         self.horizon_color_edit.setMaximumWidth(70)
         self.horizon_color_edit.setToolTip("Horizon line color")
         self.horizon_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.horizon_color_edit.textChanged.connect(lambda text, w=self.horizon_color_edit: self._update_color_edit_style(w))
         horizon_row.addWidget(self.horizon_color_edit)
+        self._update_color_edit_style(self.horizon_color_edit)
         horizon_row.addStretch()
         horizon_layout.addLayout(horizon_row)
         
@@ -9196,7 +9232,9 @@ class SettingsDialog(QDialog):
         self.civil_color_edit.setMaximumWidth(70)
         self.civil_color_edit.setToolTip("Civil twilight line color")
         self.civil_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.civil_color_edit.textChanged.connect(lambda text, w=self.civil_color_edit: self._update_color_edit_style(w))
         civil_row.addWidget(self.civil_color_edit)
+        self._update_color_edit_style(self.civil_color_edit)
         civil_row.addStretch()
         horizon_layout.addLayout(civil_row)
         
@@ -9211,7 +9249,9 @@ class SettingsDialog(QDialog):
         self.nautical_color_edit.setMaximumWidth(70)
         self.nautical_color_edit.setToolTip("Nautical twilight line color")
         self.nautical_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.nautical_color_edit.textChanged.connect(lambda text, w=self.nautical_color_edit: self._update_color_edit_style(w))
         nautical_row.addWidget(self.nautical_color_edit)
+        self._update_color_edit_style(self.nautical_color_edit)
         nautical_row.addStretch()
         horizon_layout.addLayout(nautical_row)
         
@@ -9226,7 +9266,9 @@ class SettingsDialog(QDialog):
         self.astro_color_edit.setMaximumWidth(70)
         self.astro_color_edit.setToolTip("Astronomical twilight line color")
         self.astro_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.astro_color_edit.textChanged.connect(lambda text, w=self.astro_color_edit: self._update_color_edit_style(w))
         astro_row.addWidget(self.astro_color_edit)
+        self._update_color_edit_style(self.astro_color_edit)
         astro_row.addStretch()
         horizon_layout.addLayout(astro_row)
         
@@ -9282,7 +9324,9 @@ class SettingsDialog(QDialog):
         self.galactic_color_edit.setMaximumWidth(70)
         self.galactic_color_edit.setToolTip("Color for galactic band boundary lines (hex or name)")
         self.galactic_color_edit.editingFinished.connect(self.on_galactic_changed)
+        self.galactic_color_edit.textChanged.connect(lambda text, w=self.galactic_color_edit: self._update_color_edit_style(w))
         offset_row.addWidget(self.galactic_color_edit)
+        self._update_color_edit_style(self.galactic_color_edit)
         self.galactic_show_bounds = QCheckBox("Show boundaries")
         self.galactic_show_bounds.setChecked(True)
         self.galactic_show_bounds.setToolTip("Draw lines at the band edges")
@@ -9337,7 +9381,9 @@ class SettingsDialog(QDialog):
         self.opposition_color_edit.setMaximumWidth(70)
         self.opposition_color_edit.setToolTip("Color for opposition circle (hex or name)")
         self.opposition_color_edit.editingFinished.connect(self.on_opposition_changed)
+        self.opposition_color_edit.textChanged.connect(lambda text, w=self.opposition_color_edit: self._update_color_edit_style(w))
         radius_row.addWidget(self.opposition_color_edit)
+        self._update_color_edit_style(self.opposition_color_edit)
         self.opposition_show_bounds = QCheckBox("Show boundaries")
         self.opposition_show_bounds.setChecked(True)
         self.opposition_show_bounds.setToolTip("Draw circle at the benefit radius")
@@ -9489,7 +9535,9 @@ class SettingsDialog(QDialog):
         self.trail_color = QLineEdit("#00AA00")
         self.trail_color.setMaximumWidth(70)
         self.trail_color.setToolTip("Trail line color (green default)")
+        self.trail_color.textChanged.connect(lambda text, w=self.trail_color: self._update_color_edit_style(w))
         color_row.addWidget(self.trail_color)
+        self._update_color_edit_style(self.trail_color)
         color_row.addStretch()
         advanced_layout.addLayout(color_row)
 
@@ -9726,7 +9774,25 @@ class SettingsDialog(QDialog):
         self.planet_opacity_spin.setEnabled(planets_enabled)
         for color_edit in self.planet_colors.values():
             color_edit.setEnabled(planets_enabled)
-    
+
+    def _update_color_edit_style(self, line_edit):
+        """Update a color entry QLineEdit to show its color as background"""
+        try:
+            color = line_edit.text().strip()
+            if color.startswith('#') and len(color) == 7:
+                # Parse color and compute luminance
+                r = int(color[1:3], 16)
+                g = int(color[3:5], 16)
+                b = int(color[5:7], 16)
+                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                text_color = '#000000' if luminance > 0.5 else '#FFFFFF'
+                line_edit.setStyleSheet(f"background-color: {color}; color: {text_color};")
+            else:
+                # Invalid color - reset to default style
+                line_edit.setStyleSheet("")
+        except:
+            line_edit.setStyleSheet("")
+
     def closeEvent(self, event):
         """Override close event to hide instead of close (preserves settings)"""
         event.ignore()
@@ -9779,6 +9845,9 @@ class SettingsDialog(QDialog):
                 'color': controls['color_edit'].text(),
                 'pole': controls['pole_cb'].isChecked()
             }
+        # Add marker visibility settings
+        settings['show_opposition_reticle'] = self.show_opposition_reticle.isChecked()
+        settings['show_cardinal_markers'] = self.show_cardinal_markers.isChecked()
         return settings
     
     def get_galactic_settings(self):
@@ -10229,6 +10298,9 @@ class SettingsDialog(QDialog):
                     'color': controls['color_edit'].text(),
                     'pole': controls['pole_cb'].isChecked()
                 }
+            # Marker visibility settings
+            state['planes']['show_opposition_reticle'] = self.show_opposition_reticle.isChecked()
+            state['planes']['show_cardinal_markers'] = self.show_cardinal_markers.isChecked()
 
             # Sun and Moon
             state['sunmoon'] = {
@@ -10530,12 +10602,16 @@ class SettingsDialog(QDialog):
 
             # Planes
             if 'planes' in state:
-                for plane_name, plane_settings in state['planes'].items():
+                planes_state = state['planes']
+                for plane_name, plane_settings in planes_state.items():
                     if plane_name in self.plane_controls:
                         controls = self.plane_controls[plane_name]
                         controls['plane_cb'].setChecked(plane_settings.get('enabled', False))
                         controls['color_edit'].setText(plane_settings.get('color', self.DEFAULT_COLORS.get(plane_name, '#FFFFFF')))
                         controls['pole_cb'].setChecked(plane_settings.get('pole', False))
+                # Restore marker visibility settings
+                self.show_opposition_reticle.setChecked(planes_state.get('show_opposition_reticle', True))
+                self.show_cardinal_markers.setChecked(planes_state.get('show_cardinal_markers', True))
 
             # Sun and Moon
             if 'sunmoon' in state:
@@ -10954,6 +11030,13 @@ class NEOVisualizer(QMainWindow):
             if hasattr(self.settings_dialog, 'get_plane_settings'):
                 settings = self.settings_dialog.get_plane_settings()
                 self.canvas.plane_settings = settings
+                # Update cardinal marker visibility
+                show_cardinal = settings.get('show_cardinal_markers', True)
+                if hasattr(self.canvas, 'compass_n'):
+                    self.canvas.compass_n.set_visible(show_cardinal)
+                    self.canvas.compass_s.set_visible(show_cardinal)
+                    self.canvas.compass_e.set_visible(show_cardinal)
+                    self.canvas.compass_w.set_visible(show_cardinal)
             # Update declination limit settings
             if hasattr(self.settings_dialog, 'get_dec_limit_settings'):
                 dec_settings = self.settings_dialog.get_dec_limit_settings()
@@ -12171,6 +12254,9 @@ class NEOVisualizer(QMainWindow):
                     controls['color_edit'].setText(self.settings_dialog.DEFAULT_COLORS[plane_name])
                 # Set plane visibility based on coordinate system (matches startup behavior)
                 self.settings_dialog.update_plane_defaults()
+                # Reset marker visibility to defaults (both enabled)
+                self.settings_dialog.show_opposition_reticle.setChecked(True)
+                self.settings_dialog.show_cardinal_markers.setChecked(True)
 
                 # Declination Limits
                 self.settings_dialog.dec_limits_check.setChecked(False)
@@ -12363,6 +12449,9 @@ class NEOVisualizer(QMainWindow):
                         'color': controls['color_edit'].text(),
                         'pole': controls['pole_cb'].isChecked()
                     }
+                # Marker visibility settings
+                settings['planes']['show_opposition_reticle'] = self.settings_dialog.show_opposition_reticle.isChecked()
+                settings['planes']['show_cardinal_markers'] = self.settings_dialog.show_cardinal_markers.isChecked()
 
                 # Declination Limits
                 settings['dec_limits'] = {
@@ -12592,12 +12681,16 @@ class NEOVisualizer(QMainWindow):
                 
                 # Planes and Poles
                 if 'planes' in settings:
-                    for plane_name, plane_settings in settings['planes'].items():
+                    planes_settings = settings['planes']
+                    for plane_name, plane_settings in planes_settings.items():
                         if plane_name in self.settings_dialog.plane_controls:
                             controls = self.settings_dialog.plane_controls[plane_name]
                             controls['plane_cb'].setChecked(plane_settings.get('enabled', False))
                             controls['color_edit'].setText(plane_settings.get('color', self.settings_dialog.DEFAULT_COLORS.get(plane_name, '#FFFFFF')))
                             controls['pole_cb'].setChecked(plane_settings.get('pole', False))
+                    # Restore marker visibility settings
+                    self.settings_dialog.show_opposition_reticle.setChecked(planes_settings.get('show_opposition_reticle', True))
+                    self.settings_dialog.show_cardinal_markers.setChecked(planes_settings.get('show_cardinal_markers', True))
 
                 # Declination Limits
                 if 'dec_limits' in settings:
