@@ -615,11 +615,9 @@ class SkyMapCanvas(FigureCanvas):
         # Create subplot with projection
         if self.projection == 'rectangular':
             self.ax = self.fig.add_subplot(111)
-            if self.coord_system == 'opposition':
-                # Opposition coords are -180 to +180, centered at 0
-                self.ax.set_xlim(180, -180)  # Inverted: +180 on left, -180 on right
-            else:
-                self.ax.set_xlim(360, 0)  # Inverted: 360 on left, 0 on right
+            # Center at 0° with East (increasing lon) to the left
+            # Matches curved projection centering
+            self.ax.set_xlim(180, -180)  # +180 on left, -180 on right, 0 at center
             self.ax.set_ylim(-90, 90)
             # Use auto aspect to fill available space better
             self.ax.set_aspect('auto')
@@ -1307,18 +1305,20 @@ class SkyMapCanvas(FigureCanvas):
                     line = self.ax.plot(lon_rad, lat_rad, color=color, alpha=alpha, linewidth=1.5, zorder=PLANE_ZORDER)[0]
                     self.overlay_artists.append(line)
             else:
+                # Rectangular: convert to -180 to +180 (centered at 0°)
+                lon_array = np.where(lon_array > 180, lon_array - 360, lon_array)
                 lon_diff = np.abs(np.diff(lon_array))
                 breaks = np.where(lon_diff > 180)[0]
                 if len(breaks) > 0:
                     start = 0
                     for break_idx in breaks:
                         if break_idx > start:
-                            line = self.ax.plot(lon_array[start:break_idx+1], lat_array[start:break_idx+1], 
+                            line = self.ax.plot(lon_array[start:break_idx+1], lat_array[start:break_idx+1],
                                               color=color, alpha=alpha, linewidth=1.5, zorder=PLANE_ZORDER)[0]
                             self.overlay_artists.append(line)
                         start = break_idx + 1
                     if start < len(lon_array):
-                        line = self.ax.plot(lon_array[start:], lat_array[start:], 
+                        line = self.ax.plot(lon_array[start:], lat_array[start:],
                                           color=color, alpha=alpha, linewidth=1.5, zorder=PLANE_ZORDER)[0]
                         self.overlay_artists.append(line)
                 else:
@@ -1332,7 +1332,8 @@ class SkyMapCanvas(FigureCanvas):
                 lon_rad = np.radians(-lon_plot)
                 lat_rad = np.radians(lat)
             else:
-                lon_rad = lon
+                # Rectangular: convert to -180 to +180 (centered at 0°)
+                lon_rad = lon - 360 if lon > 180 else lon
                 lat_rad = lat
             
             # Use matplotlib markers which don't distort with projection
@@ -1664,9 +1665,10 @@ class SkyMapCanvas(FigureCanvas):
                 lon_opp_rad = np.radians(-lon_opp_plot)
                 lat_opp_rad = np.radians(lat_opp)
             else:
-                lon_sun_rad = lon_sun
+                # Rectangular: convert to -180 to +180 (centered at 0°)
+                lon_sun_rad = lon_sun - 360 if lon_sun > 180 else lon_sun
                 lat_sun_rad = lat_sun
-                lon_opp_rad = lon_opp
+                lon_opp_rad = lon_opp - 360 if lon_opp > 180 else lon_opp
                 lat_opp_rad = lat_opp
             
             # Draw opposition benefit circle shading
@@ -1837,7 +1839,8 @@ class SkyMapCanvas(FigureCanvas):
                         lat_moon_rad = np.radians(lat_moon)
                         moon_radius = 0.035  # Same size as Sun
                     else:
-                        lon_moon_rad = lon_moon
+                        # Rectangular: convert to -180 to +180 (centered at 0°)
+                        lon_moon_rad = lon_moon - 360 if lon_moon > 180 else lon_moon
                         lat_moon_rad = lat_moon
                         moon_radius = 1.5
                     
@@ -2032,7 +2035,8 @@ class SkyMapCanvas(FigureCanvas):
                                 marker_size = 220  # scatter marker size (points^2)
                                 fontsize = 11
                             else:
-                                lon_rad = lon_p
+                                # Rectangular: convert to -180 to +180 (centered at 0°)
+                                lon_rad = lon_p - 360 if lon_p > 180 else lon_p
                                 lat_rad = lat_p
                                 marker_size = 220
                                 fontsize = 10
@@ -2476,7 +2480,12 @@ class SkyMapCanvas(FigureCanvas):
                                        '-', color=color, linewidth=0.5, alpha=opacity,
                                        zorder=BOUNDARY_ZORDER)[0]
                 else:
-                    # Rectangular projection
+                    # Rectangular projection: center at 0° (convert to -180 to +180)
+                    if lon1 > 180:
+                        lon1 -= 360
+                    if lon2 > 180:
+                        lon2 -= 360
+
                     # Skip segments that wrap around
                     if abs(lon1 - lon2) > 180:
                         continue
@@ -2994,6 +3003,8 @@ class SkyMapCanvas(FigureCanvas):
             
             offsets = np.column_stack([lon_rad, lat_rad])
         else:
+            # Rectangular projection: center at 0° (convert 0-360 to -180 to +180)
+            lon = np.where(lon > 180, lon - 360, lon)
             offsets = np.column_stack([lon, lat])
             dist = visible[:, 3]
 
