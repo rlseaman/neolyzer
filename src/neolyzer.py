@@ -11855,7 +11855,8 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.03</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version 3.04</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
         <ul>
