@@ -1630,7 +1630,7 @@ class SkyMapCanvas(FigureCanvas):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#4A5568'})
+                                    'show_planets': False, 'planets_color': '#2D4A6B'})
             
             # Sun marker: yellow circle with red border (1.5 weight)
             # zorder=17 so Moon (zorder=19) can appear in front during eclipses
@@ -1874,7 +1874,7 @@ class SkyMapCanvas(FigureCanvas):
             # === PLANETS ===
             if sunmoon_settings.get('show_planets', False):
                 try:
-                    planets_color = sunmoon_settings.get('planets_color', '#4A5568')
+                    planets_color = sunmoon_settings.get('planets_color', '#2D4A6B')
                     # Planet definitions: name, ephemeris key, symbol
                     planet_defs = [
                         ('Mercury', 'mercury barycenter', '☿'),
@@ -8959,7 +8959,7 @@ class SettingsDialog(QDialog):
         self.show_planets_check.stateChanged.connect(self.on_sunmoon_changed)
         planets_row.addWidget(self.show_planets_check)
         planets_row.addWidget(QLabel("Color:"))
-        self.planets_color_edit = QLineEdit("#4A5568")  # Dark gray default
+        self.planets_color_edit = QLineEdit("#2D4A6B")  # Dark gray default
         self.planets_color_edit.setMaximumWidth(70)
         self.planets_color_edit.setToolTip("Color for planet symbols (hex color code)")
         self.planets_color_edit.editingFinished.connect(self.on_sunmoon_changed)
@@ -10422,7 +10422,7 @@ class SettingsDialog(QDialog):
                 self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                 self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                 self.show_planets_check.setChecked(s.get('show_planets', False))
-                self.planets_color_edit.setText(s.get('planets_color', '#4A5568'))
+                self.planets_color_edit.setText(s.get('planets_color', '#2D4A6B'))
 
             # Declination Limits
             if 'dec_limits' in state:
@@ -11599,7 +11599,7 @@ class NEOVisualizer(QMainWindow):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#4A5568'}
+                                    'show_planets': False, 'planets_color': '#2D4A6B'}
 
             # Store sunmoon settings on canvas for draw_celestial_overlays
             self.canvas.sunmoon_settings = sunmoon_settings
@@ -12054,7 +12054,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.lunar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_phases_check.setChecked(False)
                 self.settings_dialog.show_planets_check.setChecked(False)
-                self.settings_dialog.planets_color_edit.setText("#4A5568")
+                self.settings_dialog.planets_color_edit.setText("#2D4A6B")
 
                 # Galactic Exclusion
                 self.settings_dialog.galactic_enable_check.setChecked(False)
@@ -12479,7 +12479,7 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                     self.settings_dialog.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                     self.settings_dialog.show_planets_check.setChecked(s.get('show_planets', False))
-                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#4A5568'))
+                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#2D4A6B'))
 
                 # Galactic Exclusion - all parameters
                 if 'galactic' in settings:
