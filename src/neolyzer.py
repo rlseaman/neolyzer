@@ -580,6 +580,10 @@ class SkyMapCanvas(FigureCanvas):
         self.galactic_settings = None
         self.opposition_settings = None
         self.horizon_settings = None
+        self.constellation_settings = None
+
+        # Load constellation boundary data
+        self._constellation_boundaries = self._load_constellation_boundaries()
 
         # Store last visible data for histogram equalization
         self._last_visible_data = None
@@ -826,6 +830,40 @@ class SkyMapCanvas(FigureCanvas):
         if not settings.get('enabled', False):
             self.trail_history.clear()
             self._clear_trails()
+
+    def _load_constellation_boundaries(self):
+        """Load constellation boundary data from CSV file.
+
+        Returns list of (ra1, dec1, ra2, dec2) tuples in degrees (J2000 equatorial).
+        """
+        import os
+        boundaries = []
+        # Try to find the data file
+        data_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'constellation_boundaries.csv')
+        if not os.path.exists(data_file):
+            data_file = os.path.join(os.path.dirname(__file__), 'data', 'constellation_boundaries.csv')
+        if not os.path.exists(data_file):
+            # Try relative to cwd
+            data_file = 'data/constellation_boundaries.csv'
+
+        try:
+            with open(data_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split(',')
+                    if len(parts) == 4:
+                        try:
+                            ra1, dec1, ra2, dec2 = map(float, parts)
+                            boundaries.append((ra1, dec1, ra2, dec2))
+                        except ValueError:
+                            continue
+            logger.info(f"Loaded {len(boundaries)} constellation boundary segments")
+        except Exception as e:
+            logger.warning(f"Could not load constellation boundaries: {e}")
+
+        return boundaries
 
     def _clear_trails(self):
         """Remove all trail lines from the plot"""
@@ -2003,6 +2041,14 @@ class SkyMapCanvas(FigureCanvas):
                 except Exception as e:
                     logger.debug(f"Could not draw planets: {e}")
 
+            # === CONSTELLATION BOUNDARIES ===
+            constellation_settings = getattr(self, 'constellation_settings', None)
+            if constellation_settings and constellation_settings.get('show_boundaries', False):
+                try:
+                    self._draw_constellation_boundaries(constellation_settings)
+                except Exception as e:
+                    logger.debug(f"Could not draw constellation boundaries: {e}")
+
             # === HORIZON AND TWILIGHT BOUNDARIES ===
             horizon_settings = getattr(self, 'horizon_settings', None)
             if horizon_settings and horizon_settings.get('enabled', False):
@@ -2331,7 +2377,87 @@ class SkyMapCanvas(FigureCanvas):
             draw_altitude_boundary(-18, horizon_settings.get('astro_color', '#6666FF'))
         
         logger.debug(f"Drew horizon boundaries for observer at ({observer_lat:.2f}, {observer_lon:.2f})")
-    
+
+    def _draw_constellation_boundaries(self, settings):
+        """Draw IAU constellation boundary lines.
+
+        Boundaries are stored in equatorial coordinates and transformed to the
+        current coordinate system. Uses low zorder to appear behind other elements.
+        """
+        BOUNDARY_ZORDER = 1  # Below everything else
+
+        if not self._constellation_boundaries:
+            return
+
+        color = settings.get('color', '#555555')
+        opacity = settings.get('opacity', 30) / 100.0
+
+        # Get opposition offset if needed
+        opp_offset = 0
+        if self.coord_system == 'opposition':
+            opp_offset = getattr(self, 'sun_ecl_lon', 0) + 180
+
+        for ra1, dec1, ra2, dec2 in self._constellation_boundaries:
+            try:
+                # Transform coordinates based on current system
+                if self.coord_system == 'equatorial':
+                    lon1, lat1 = ra1, dec1
+                    lon2, lat2 = ra2, dec2
+                elif self.coord_system == 'ecliptic':
+                    lon1, lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
+                    lon2, lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
+                elif self.coord_system == 'galactic':
+                    lon1, lat1 = CoordinateTransformer.equatorial_to_galactic(ra1, dec1)
+                    lon2, lat2 = CoordinateTransformer.equatorial_to_galactic(ra2, dec2)
+                elif self.coord_system == 'opposition':
+                    ecl_lon1, ecl_lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
+                    ecl_lon2, ecl_lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
+                    lon1 = (ecl_lon1 - opp_offset + 180) % 360 - 180
+                    lat1 = ecl_lat1
+                    lon2 = (ecl_lon2 - opp_offset + 180) % 360 - 180
+                    lat2 = ecl_lat2
+                else:
+                    lon1, lat1 = ra1, dec1
+                    lon2, lat2 = ra2, dec2
+
+                # Normalize longitude for plotting
+                if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                    # These projections need -180 to 180 range
+                    if lon1 > 180:
+                        lon1 -= 360
+                    if lon2 > 180:
+                        lon2 -= 360
+                    # Convert to radians
+                    lon1_rad = np.radians(lon1)
+                    lon2_rad = np.radians(lon2)
+                    lat1_rad = np.radians(lat1)
+                    lat2_rad = np.radians(lat2)
+
+                    # Skip segments that cross the edge (large longitude difference)
+                    if abs(lon1 - lon2) > 180:
+                        continue
+
+                    line = self.ax.plot([lon1_rad, lon2_rad], [lat1_rad, lat2_rad],
+                                       '-', color=color, linewidth=0.5, alpha=opacity,
+                                       zorder=BOUNDARY_ZORDER)[0]
+                else:
+                    # Rectangular projection
+                    # Skip segments that wrap around
+                    if abs(lon1 - lon2) > 180:
+                        continue
+
+                    line = self.ax.plot([lon1, lon2], [lat1, lat2],
+                                       '-', color=color, linewidth=0.5, alpha=opacity,
+                                       zorder=BOUNDARY_ZORDER)[0]
+
+                self.overlay_artists.append(line)
+
+            except Exception as e:
+                # Skip problematic segments silently
+                pass
+
+        logger.debug(f"Drew constellation boundaries")
+
     def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True,
                     h_min=None, h_max=None, selected_classes=None,
                     moid_enabled=False, moid_min=None, moid_max=None,
@@ -8925,7 +9051,49 @@ class SettingsDialog(QDialog):
 
         # Set initial defaults based on coordinate system
         self.update_plane_defaults()
-        
+
+        # Constellations and Stars section
+        constellations_group = CollapsibleGroupBox("Constellations and Stars")
+        constellations_layout = QVBoxLayout()
+        constellations_layout.setSpacing(3)
+
+        # Constellation boundaries checkbox
+        bounds_row = QHBoxLayout()
+        self.show_constellation_bounds = QCheckBox("Show constellation boundaries")
+        self.show_constellation_bounds.setChecked(False)  # Off by default
+        self.show_constellation_bounds.setToolTip("Display IAU constellation boundary lines")
+        self.show_constellation_bounds.stateChanged.connect(self.on_constellations_changed)
+        bounds_row.addWidget(self.show_constellation_bounds)
+        bounds_row.addStretch()
+        constellations_layout.addLayout(bounds_row)
+
+        # Color and opacity controls (indented)
+        style_row = QHBoxLayout()
+        style_row.addSpacing(20)
+        style_row.addWidget(QLabel("Color:"))
+        self.constellation_color_edit = QLineEdit("#555555")  # Medium gray default
+        self.constellation_color_edit.setMaximumWidth(70)
+        self.constellation_color_edit.setToolTip("Constellation boundary line color (hex)")
+        self.constellation_color_edit.editingFinished.connect(self.on_constellations_changed)
+        self.constellation_color_edit.textChanged.connect(lambda text, w=self.constellation_color_edit: self._update_color_edit_style(w))
+        style_row.addWidget(self.constellation_color_edit)
+        self._update_color_edit_style(self.constellation_color_edit)
+        style_row.addWidget(QLabel("Opacity:"))
+        self.constellation_opacity_spin = QSpinBox()
+        self.constellation_opacity_spin.setRange(10, 100)
+        self.constellation_opacity_spin.setValue(30)  # Faint by default
+        self.constellation_opacity_spin.setSuffix("%")
+        self.constellation_opacity_spin.setMaximumWidth(60)
+        self.constellation_opacity_spin.setToolTip("Boundary line opacity (10-100%)")
+        self.constellation_opacity_spin.valueChanged.connect(self.on_constellations_changed)
+        style_row.addWidget(self.constellation_opacity_spin)
+        style_row.addStretch()
+        constellations_layout.addLayout(style_row)
+
+        constellations_group.setLayout(constellations_layout)
+        self._layout.addWidget(constellations_group)
+        self.collapsible_sections.append(constellations_group)
+
         # Sun and Moon section
         sunmoon_group = CollapsibleGroupBox("Sun and Moon")
         sunmoon_layout = QVBoxLayout()
@@ -9773,6 +9941,11 @@ class SettingsDialog(QDialog):
         self.trail_color.setEnabled(trailing_enabled)
         # Clear Trails button always enabled (can clear old trails even when trailing disabled)
 
+        # Constellation controls
+        constellation_enabled = self.show_constellation_bounds.isChecked()
+        self.constellation_color_edit.setEnabled(constellation_enabled)
+        self.constellation_opacity_spin.setEnabled(constellation_enabled)
+
         # Planet controls
         self._update_planet_controls_state()
 
@@ -9990,7 +10163,26 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         if parent and hasattr(parent, 'on_sunmoon_changed'):
             parent.on_sunmoon_changed()
-    
+
+    def get_constellation_settings(self):
+        """Return current constellation display settings"""
+        return {
+            'show_boundaries': self.show_constellation_bounds.isChecked(),
+            'color': self.constellation_color_edit.text(),
+            'opacity': self.constellation_opacity_spin.value()
+        }
+
+    def on_constellations_changed(self):
+        """Emit signal when constellation settings change"""
+        # Enable/disable controls based on main checkbox
+        enabled = self.show_constellation_bounds.isChecked()
+        self.constellation_color_edit.setEnabled(enabled)
+        self.constellation_opacity_spin.setEnabled(enabled)
+
+        parent = self.parent()
+        if parent and hasattr(parent, 'on_constellations_changed'):
+            parent.on_constellations_changed()
+
     def get_horizon_settings(self):
         """Return current horizon/twilight display settings"""
         return {
@@ -10409,6 +10601,13 @@ class SettingsDialog(QDialog):
                 'line_weight': self.horizon_weight_spin.value()
             }
 
+            # Constellations
+            state['constellations'] = {
+                'show_boundaries': self.show_constellation_bounds.isChecked(),
+                'color': self.constellation_color_edit.text(),
+                'opacity': self.constellation_opacity_spin.value()
+            }
+
         try:
             loop_enabled = self.script_loop_check.isChecked()
             all_points = existing_points + self._script_buffer
@@ -10723,6 +10922,13 @@ class SettingsDialog(QDialog):
                 self.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                 self.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                 self.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
+
+            # Constellations
+            if 'constellations' in state:
+                c = state['constellations']
+                self.show_constellation_bounds.setChecked(c.get('show_boundaries', False))
+                self.constellation_color_edit.setText(c.get('color', '#555555'))
+                self.constellation_opacity_spin.setValue(c.get('opacity', 30))
 
             # Update control states and display
             self._initialize_control_states()
@@ -11094,7 +11300,14 @@ class NEOVisualizer(QMainWindow):
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
         self.update_display()
-    
+
+    def on_constellations_changed(self):
+        """Handle changes to constellation display settings"""
+        # Force overlay redraw
+        if hasattr(self.canvas, 'last_jd'):
+            self.canvas.last_jd = None
+        self.update_display()
+
     def on_appearance_changed(self):
         """Handle changes to appearance settings (kiosk mode)"""
         if self.settings_dialog and hasattr(self.settings_dialog, 'get_appearance_settings'):
@@ -11857,7 +12070,16 @@ class NEOVisualizer(QMainWindow):
             
             # Store horizon settings on canvas for draw_celestial_overlays
             self.canvas.horizon_settings = horizon_settings
-            
+
+            # Get constellation display settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_constellation_settings'):
+                constellation_settings = self.settings_dialog.get_constellation_settings()
+            else:
+                constellation_settings = {'show_boundaries': False, 'color': '#555555', 'opacity': 30}
+
+            # Store constellation settings on canvas for draw_celestial_overlays
+            self.canvas.constellation_settings = constellation_settings
+
             # FIX: If no classes selected, show nothing
             if selected_classes is None:
                 self.canvas.update_plot(None, mag_min, mag_max, jd, self.neo_classes_panel.show_hollow_check.isChecked(),
@@ -12359,7 +12581,12 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.astro_color_edit.setText("#6666FF")
                 self.settings_dialog.horizon_style_combo.setCurrentText("dashed")
                 self.settings_dialog.horizon_weight_spin.setValue(1.0)
-                
+
+                # Constellations (off by default)
+                self.settings_dialog.show_constellation_bounds.setChecked(False)
+                self.settings_dialog.constellation_color_edit.setText("#555555")
+                self.settings_dialog.constellation_opacity_spin.setValue(30)
+
                 # Clear any existing trails
                 self.clear_trails()
                 
@@ -12581,7 +12808,14 @@ class NEOVisualizer(QMainWindow):
                     'line_style': self.settings_dialog.horizon_style_combo.currentText(),
                     'line_weight': self.settings_dialog.horizon_weight_spin.value()
                 }
-            
+
+                # Constellations
+                settings['constellations'] = {
+                    'show_boundaries': self.settings_dialog.show_constellation_bounds.isChecked(),
+                    'color': self.settings_dialog.constellation_color_edit.text(),
+                    'opacity': self.settings_dialog.constellation_opacity_spin.value()
+                }
+
             with open(self._get_settings_path(), 'w') as f:
                 json.dump(settings, f, indent=2)
             
@@ -12816,7 +13050,14 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                     self.settings_dialog.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                     self.settings_dialog.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
-                
+
+                # Constellations
+                if 'constellations' in settings:
+                    c = settings['constellations']
+                    self.settings_dialog.show_constellation_bounds.setChecked(c.get('show_boundaries', False))
+                    self.settings_dialog.constellation_color_edit.setText(c.get('color', '#555555'))
+                    self.settings_dialog.constellation_opacity_spin.setValue(c.get('opacity', 30))
+
                 # Update control states
                 self.settings_dialog._initialize_control_states()
             
