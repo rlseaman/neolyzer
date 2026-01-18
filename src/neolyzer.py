@@ -585,6 +585,10 @@ class SkyMapCanvas(FigureCanvas):
 
         # Load constellation boundary data
         self._constellation_boundaries = self._load_constellation_boundaries()
+        self._boundary_lines = []  # Populated when boundaries are drawn
+        self._highlighted_constellation = None
+        self._highlight_original_styles = []
+        self._constellation_label = None
 
         # Store last visible data for histogram equalization
         self._last_visible_data = None
@@ -593,8 +597,9 @@ class SkyMapCanvas(FigureCanvas):
         self._frame_times = []
         self._last_fps_print = 0
 
-        # Connect click event
+        # Connect click and key events
         self.mpl_connect('button_press_event', self.on_click)
+        self.mpl_connect('key_press_event', self.on_key_press)
         
         self.setup_plot()
     
@@ -843,11 +848,16 @@ class SkyMapCanvas(FigureCanvas):
     def _load_constellation_boundaries(self):
         """Load constellation boundary data from CSV file.
 
-        Returns list of (ra1, dec1, ra2, dec2) tuples in degrees (J2000 equatorial).
+        Returns list of (ra1, dec1, ra2, dec2, abbrev, name) tuples.
+        Coordinates are in degrees (J2000 equatorial).
         Source: VizieR VI/49 (Davenhall & Legg 1989), precessed from B1875 to J2000.
+
+        Also populates self._constellation_segments dict mapping abbrev -> [indices].
         """
         import os
         boundaries = []
+        self._constellation_segments = {}  # abbrev -> list of segment indices
+
         # Try to find the data file (IAU boundaries from VI/49)
         data_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'iau_boundaries_j2000.csv')
         if not os.path.exists(data_file):
@@ -863,13 +873,21 @@ class SkyMapCanvas(FigureCanvas):
                     if not line or line.startswith('#'):
                         continue
                     parts = line.split(',')
-                    if len(parts) == 4:
+                    if len(parts) >= 4:
                         try:
-                            ra1, dec1, ra2, dec2 = map(float, parts)
-                            boundaries.append((ra1, dec1, ra2, dec2))
+                            ra1, dec1, ra2, dec2 = map(float, parts[:4])
+                            abbrev = parts[4] if len(parts) > 4 else ''
+                            name = parts[5] if len(parts) > 5 else abbrev
+                            idx = len(boundaries)
+                            boundaries.append((ra1, dec1, ra2, dec2, abbrev, name))
+                            # Build lookup dict
+                            if abbrev:
+                                if abbrev not in self._constellation_segments:
+                                    self._constellation_segments[abbrev] = []
+                                self._constellation_segments[abbrev].append(idx)
                         except ValueError:
                             continue
-            logger.info(f"Loaded {len(boundaries)} constellation boundary segments")
+            logger.info(f"Loaded {len(boundaries)} constellation boundary segments for {len(self._constellation_segments)} constellations")
         except Exception as e:
             logger.warning(f"Could not load constellation boundaries: {e}")
 
@@ -2402,12 +2420,18 @@ class SkyMapCanvas(FigureCanvas):
         color = settings.get('color', '#555555')
         opacity = settings.get('opacity', 30) / 100.0
 
+        # Track boundary line artists for highlighting
+        self._boundary_lines = []  # List of (line_artist, abbrev, name)
+
         # Get opposition offset if needed
         opp_offset = 0
         if self.coord_system == 'opposition':
             opp_offset = getattr(self, 'sun_ecl_lon', 0) + 180
 
-        for ra1, dec1, ra2, dec2 in self._constellation_boundaries:
+        for segment in self._constellation_boundaries:
+            ra1, dec1, ra2, dec2 = segment[:4]
+            abbrev = segment[4] if len(segment) > 4 else ''
+            name = segment[5] if len(segment) > 5 else abbrev
             try:
                 # Transform coordinates based on current system
                 if self.coord_system == 'equatorial':
@@ -2461,6 +2485,7 @@ class SkyMapCanvas(FigureCanvas):
                                        zorder=BOUNDARY_ZORDER)[0]
 
                 self.overlay_artists.append(line)
+                self._boundary_lines.append((line, abbrev, name))
 
             except Exception as e:
                 # Skip problematic segments silently
@@ -3427,21 +3452,41 @@ class SkyMapCanvas(FigureCanvas):
         self.stats_visible = not self.stats_visible
         self.stats_text.set_visible(self.stats_visible)
         self.draw()
-    
+    def on_key_press(self, event):
+        """Handle key press events."""
+        if event.key == 'escape':
+            # Clear constellation highlight on Escape
+            self._clear_constellation_highlight()
+
     def on_click(self, event):
-        """Handle mouse click to identify NEO under cursor"""
+        """Handle mouse click to identify NEO under cursor.
+
+        Shift+Click identifies constellation at click location.
+        Regular click identifies nearest NEO.
+        """
         # Don't process clicks while animation is playing
         if getattr(self, 'animation_playing', False):
             return
-        
+
         # If in selection mode, let the selector handle it
         if self.selection_mode is not None:
             return
-        
+
         # Only process clicks inside the plot area
         if event.inaxes != self.ax:
             return
-        
+
+        # Check for Shift+Click to identify constellation
+        if event.key == 'shift' or (hasattr(event, 'guiEvent') and
+                                     event.guiEvent and
+                                     event.guiEvent.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self._identify_constellation_at_click(event)
+            return
+
+        # Clear any constellation highlight on regular click
+        if self._highlighted_constellation:
+            self._clear_constellation_highlight()
+
         # Check if we have data to search
         if self.plot_offsets is None or len(self.plot_offsets) == 0:
             return
@@ -3546,7 +3591,152 @@ class SkyMapCanvas(FigureCanvas):
             self.scatter_highlight.set_offsets(np.empty((0, 2)))
             self.draw()
             self.update()
-    
+
+    def _identify_constellation_at_click(self, event):
+        """Identify and highlight constellation at click location.
+
+        Finds the nearest boundary segment and highlights all segments
+        of that constellation, displaying its name.
+        """
+        if not hasattr(self, '_boundary_lines') or not self._boundary_lines:
+            return
+
+        click_x, click_y = event.xdata, event.ydata
+        if click_x is None or click_y is None:
+            return
+
+        # Find nearest boundary line
+        min_dist = float('inf')
+        nearest_abbrev = None
+        nearest_name = None
+
+        for line, abbrev, name in self._boundary_lines:
+            # Get line data
+            xdata = line.get_xdata()
+            ydata = line.get_ydata()
+            if len(xdata) < 2:
+                continue
+
+            # Distance from point to line segment
+            x1, x2 = xdata[0], xdata[1]
+            y1, y2 = ydata[0], ydata[1]
+
+            # Vector from p1 to p2
+            dx = x2 - x1
+            dy = y2 - y1
+            len_sq = dx*dx + dy*dy
+
+            if len_sq == 0:
+                # Degenerate segment
+                dist = np.sqrt((click_x - x1)**2 + (click_y - y1)**2)
+            else:
+                # Parameter t for closest point on line
+                t = max(0, min(1, ((click_x - x1)*dx + (click_y - y1)*dy) / len_sq))
+                # Closest point on segment
+                closest_x = x1 + t * dx
+                closest_y = y1 + t * dy
+                dist = np.sqrt((click_x - closest_x)**2 + (click_y - closest_y)**2)
+
+            if dist < min_dist:
+                min_dist = dist
+                nearest_abbrev = abbrev
+                nearest_name = name
+
+        # Threshold for "close enough" (in plot coordinates)
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            threshold = 0.15  # radians
+        else:
+            threshold = 15  # degrees
+
+        if min_dist > threshold or not nearest_abbrev:
+            self._clear_constellation_highlight()
+            return
+
+        # Highlight the constellation
+        self._highlight_constellation(nearest_abbrev, nearest_name)
+
+    def _highlight_constellation(self, abbrev, name):
+        """Highlight all boundary segments of a constellation and show name."""
+        if not hasattr(self, '_boundary_lines'):
+            return
+
+        # Clear any previous highlight
+        self._clear_constellation_highlight()
+
+        # Store original colors and highlight matching segments
+        self._highlighted_constellation = abbrev
+        self._highlight_original_styles = []
+
+        highlight_color = '#FFFF00'  # Yellow
+        highlight_width = 2.0
+        highlight_alpha = 0.9
+
+        for line, seg_abbrev, seg_name in self._boundary_lines:
+            if seg_abbrev == abbrev:
+                # Store original style
+                self._highlight_original_styles.append({
+                    'line': line,
+                    'color': line.get_color(),
+                    'linewidth': line.get_linewidth(),
+                    'alpha': line.get_alpha()
+                })
+                # Apply highlight
+                line.set_color(highlight_color)
+                line.set_linewidth(highlight_width)
+                line.set_alpha(highlight_alpha)
+
+        # Show constellation name as text annotation
+        if hasattr(self, '_constellation_label') and self._constellation_label:
+            try:
+                self._constellation_label.remove()
+            except:
+                pass
+
+        # Position label at center of highlighted segments
+        xs, ys = [], []
+        for style in self._highlight_original_styles:
+            line = style['line']
+            xs.extend(line.get_xdata())
+            ys.extend(line.get_ydata())
+
+        if xs and ys:
+            center_x = np.mean(xs)
+            center_y = np.mean(ys)
+            self._constellation_label = self.ax.annotate(
+                name, xy=(center_x, center_y),
+                fontsize=12, fontweight='bold', color='white',
+                ha='center', va='center',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#333333',
+                         edgecolor=highlight_color, alpha=0.85),
+                zorder=1000
+            )
+
+        self.draw()
+        self.update()
+
+    def _clear_constellation_highlight(self):
+        """Clear constellation highlighting and label."""
+        # Restore original line styles
+        if hasattr(self, '_highlight_original_styles'):
+            for style in self._highlight_original_styles:
+                line = style['line']
+                line.set_color(style['color'])
+                line.set_linewidth(style['linewidth'])
+                line.set_alpha(style['alpha'])
+            self._highlight_original_styles = []
+
+        # Remove label
+        if hasattr(self, '_constellation_label') and self._constellation_label:
+            try:
+                self._constellation_label.remove()
+            except:
+                pass
+            self._constellation_label = None
+
+        self._highlighted_constellation = None
+        self.draw()
+        self.update()
+
     def _draw_cneos_legend(self):
         """Draw CNEOS discovery site legend"""
         # Remove existing legend if any
