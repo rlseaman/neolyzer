@@ -1,0 +1,126 @@
+NEOlyzer Astronomical Dependencies
+===================================
+
+This document describes the astronomical libraries, services, and data sources
+that NEOlyzer relies on, along with integration details and maintenance notes.
+
+
+Astronomical Libraries & Services
+---------------------------------
+
+Direct dependencies:
+
+  * Skyfield (>=1.45): Primary astronomical computation library
+  * jplephem (>=2.20): JPL ephemeris file reader (Skyfield dependency)
+  * Astropy (>=5.3.0, optional): Used only for galactic coordinate transformations
+
+External data sources:
+
+  * JPL ephemerides (DE421/DE440/DE441): Binary SPICE kernel files (~17MB to 3.5GB)
+  * Minor Planet Center: NEO orbital elements catalog (NEA.txt)
+  * JPL SBDB API: Earth MOID data (optional, fetched during setup)
+
+
+Version Specification
+---------------------
+
+The requirements.txt uses minimum versions (>=), not pinned versions:
+
+    skyfield>=1.45
+    jplephem>=2.20
+    astropy>=5.3.0
+
+This means users get whatever version pip resolves. There is no lock file or
+version pinning currently.
+
+
+How to Know When Updates Are Needed
+-----------------------------------
+
+Currently, there is no automated mechanism. You would need to:
+
+  1. Monitor Skyfield release notes for breaking API changes
+  2. Watch for deprecation warnings when running NEOlyzer
+  3. Periodically test with newer versions
+
+Skyfield has been stable - the API has not changed dramatically in recent versions.
+
+
+Integration Depth
+-----------------
+
+Skyfield is deeply integrated across multiple files:
+
+  File                   Usage
+  --------------------   ----------------------------------------------------
+  skyfield_loader.py     Centralized loader with SSL fallback, ephemeris mgmt
+  orbit_calculator.py    Uses skyfield.constants, elementslib, vectorlib
+  neolyzer.py            Timescale, Sun/Moon/planet position calculations
+  cache_manager.py       JD to date conversions
+
+Replacing Skyfield would require significant refactoring of orbital mechanics code.
+
+
+Standalone Package?
+-------------------
+
+No. Skyfield is installed from PyPI via pip. The JPL ephemeris files are
+downloaded during setup from ssd.jpl.nasa.gov and cached in ~/.skyfield/.
+The ephemeris files are binary SPICE kernels, not Python code.
+
+
+Network Access After Setup
+--------------------------
+
+  Phase       Network Required   Purpose
+  ---------   ----------------   ----------------------------------------
+  Setup       Yes                Ephemeris download, MPC catalog, MOID fetch
+  Runtime     No                 All data is local after setup
+  Optional    Yes                Web links to NEOfixer, JPL SBDB lookups
+
+Core visualization requires no network after setup.
+
+
+Alternative Libraries
+---------------------
+
+The Skyfield choice was established early in the project. Alternatives that exist:
+
+  * PyEphem: Older, Skyfield was designed as its successor
+  * Astropy: More comprehensive but heavier; NEOlyzer uses it only for
+    galactic coordinates
+  * REBOUND: Focused on N-body simulations
+  * poliastro: Focused on trajectory optimization
+
+Skyfield is a reasonable choice because:
+
+  * Modern Python API, well-documented
+  * Uses JPL ephemerides directly (high accuracy)
+  * Pure Python core (cross-platform)
+  * Actively maintained by Brandon Rhodes
+
+
+Third-Party Package Modifications
+---------------------------------
+
+NEOlyzer does not modify any third-party packages (Skyfield, SQLAlchemy, h5py,
+PyQt6, etc.). All packages are treated as black-box dependencies installed
+from PyPI.
+
+All customization lives in NEOlyzer's own files. The skyfield_loader.py wrapper
+exists to handle SSL certificate issues on certain platforms, but it calls
+Skyfield's API normally - it does not patch Skyfield internals.
+
+
+Potential Improvements
+----------------------
+
+  1. Pin exact versions in a requirements.lock for reproducibility
+  2. Add CI testing against Skyfield updates
+  3. Document the minimum Skyfield version actually tested against
+
+
+Document History
+----------------
+
+  2025-01-18  Initial version (discussion with Claude)
