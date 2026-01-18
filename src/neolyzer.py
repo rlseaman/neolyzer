@@ -1630,7 +1630,8 @@ class SkyMapCanvas(FigureCanvas):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#2D4A6B'})
+                                    'show_planets': False, 'planet_borders': True, 'planet_opacity': 100,
+                                    'planet_colors': {}})
             
             # Sun marker: yellow circle with red border (1.5 weight)
             # zorder=17 so Moon (zorder=19) can appear in front during eclipses
@@ -1874,7 +1875,18 @@ class SkyMapCanvas(FigureCanvas):
             # === PLANETS ===
             if sunmoon_settings.get('show_planets', False):
                 try:
-                    planets_color = sunmoon_settings.get('planets_color', '#2D4A6B')
+                    from matplotlib.patches import Circle
+                    # Get display settings
+                    show_borders = sunmoon_settings.get('planet_borders', True)
+                    opacity = sunmoon_settings.get('planet_opacity', 100) / 100.0
+                    planet_colors = sunmoon_settings.get('planet_colors', {})
+                    # Default colors if not specified
+                    default_colors = {
+                        'Mercury': '#A0A0A0', 'Venus': '#FFFFC0', 'Mars': '#FF6B6B',
+                        'Jupiter': '#D4A574', 'Saturn': '#FFD700', 'Uranus': '#40E0D0',
+                        'Neptune': '#4169E1', 'Pluto': '#A0826D'
+                    }
+
                     # Planet definitions: name, ephemeris key, symbol
                     planet_defs = [
                         ('Mercury', 'mercury barycenter', '☿'),
@@ -1887,6 +1899,11 @@ class SkyMapCanvas(FigureCanvas):
                         ('Pluto', 'pluto barycenter', '♇'),
                     ]
 
+                    # Sun distance for z-order reference (~1 AU)
+                    sun_dist_au = 1.0
+
+                    # Collect planet data for z-ordering
+                    planet_data = []
                     for planet_name, eph_key, symbol in planet_defs:
                         try:
                             planet = eph[eph_key]
@@ -1894,6 +1911,7 @@ class SkyMapCanvas(FigureCanvas):
                             ra_p, dec_p, dist_p = astrometric.radec()
                             ra_deg = ra_p.degrees
                             dec_deg = dec_p.degrees
+                            dist_au = dist_p.au
 
                             # Transform to current coordinate system
                             if self.coord_system == 'ecliptic':
@@ -1911,22 +1929,68 @@ class SkyMapCanvas(FigureCanvas):
                             else:
                                 lon_p, lat_p = ra_deg, dec_deg
 
+                            planet_data.append((planet_name, symbol, lon_p, lat_p, dist_au))
+                        except Exception as e:
+                            logger.debug(f"Could not compute {planet_name} position: {e}")
+
+                    # Sort by distance (farthest first = lowest zorder, drawn first)
+                    planet_data.sort(key=lambda x: -x[4])
+
+                    # Draw planets with z-ordering
+                    # Sun is at zorder=17, Moon at zorder=19
+                    # Planets closer than Sun: zorder=18 (in front of Sun, behind Moon)
+                    # Planets farther than Sun: zorder=16 (behind Sun)
+                    for planet_name, symbol, lon_p, lat_p, dist_au in planet_data:
+                        try:
+                            # Z-order based on distance relative to Sun
+                            if dist_au < sun_dist_au:
+                                base_zorder = 18  # In front of Sun (inferior conjunction)
+                            else:
+                                base_zorder = 16  # Behind Sun
+
+                            # Get planet color
+                            color = planet_colors.get(planet_name, default_colors.get(planet_name, '#808080'))
+
                             # Convert for plotting
                             if self.projection in ['hammer', 'aitoff', 'mollweide']:
                                 lon_plot = lon_p if lon_p <= 180 else lon_p - 360
                                 lon_rad = np.radians(-lon_plot)
                                 lat_rad = np.radians(lat_p)
-                                fontsize = 14
+                                circle_radius = 0.035  # Similar to Sun/Moon size
+                                fontsize = 11
                             else:
                                 lon_rad = lon_p
                                 lat_rad = lat_p
-                                fontsize = 12
+                                circle_radius = 1.5  # Degrees
+                                fontsize = 10
 
-                            # Draw planet symbol
+                            # Draw circle background
+                            edge_color = 'black' if show_borders else 'none'
+                            edge_width = 1.0 if show_borders else 0
+                            circle = Circle((lon_rad, lat_rad), circle_radius,
+                                          facecolor=color, edgecolor=edge_color,
+                                          linewidth=edge_width, alpha=opacity,
+                                          zorder=base_zorder, transform=self.ax.transData)
+                            self.ax.add_patch(circle)
+                            self.overlay_artists.append(circle)
+
+                            # Draw planet symbol (slightly higher zorder to be on top of circle)
+                            # Use dark color for light backgrounds, light for dark
+                            # Simple luminance check
+                            try:
+                                r = int(color[1:3], 16)
+                                g = int(color[3:5], 16)
+                                b = int(color[5:7], 16)
+                                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                                text_color = 'black' if luminance > 0.5 else 'white'
+                            except:
+                                text_color = 'black'
+
                             planet_text = self.ax.text(lon_rad, lat_rad, symbol,
-                                                       fontsize=fontsize, color=planets_color,
+                                                       fontsize=fontsize, color=text_color,
                                                        ha='center', va='center',
-                                                       fontweight='bold', zorder=18)
+                                                       fontweight='bold', alpha=opacity,
+                                                       zorder=base_zorder + 0.5)
                             self.overlay_artists.append(planet_text)
                         except Exception as e:
                             logger.debug(f"Could not draw {planet_name}: {e}")
@@ -8951,21 +9015,73 @@ class SettingsDialog(QDialog):
         phase_row.addStretch()
         sunmoon_layout.addLayout(phase_row)
 
-        # Planets checkbox and color
+        # Planets checkbox
         planets_row = QHBoxLayout()
         self.show_planets_check = QCheckBox("Show Planets")
         self.show_planets_check.setChecked(False)  # Default unchecked
         self.show_planets_check.setToolTip("Display planets (Mercury through Pluto) on the sky map\nUses standard planetary symbols: ☿♀♂♃♄♅♆♇")
         self.show_planets_check.stateChanged.connect(self.on_sunmoon_changed)
+        self.show_planets_check.stateChanged.connect(self._update_planet_controls_state)
         planets_row.addWidget(self.show_planets_check)
-        planets_row.addWidget(QLabel("Color:"))
-        self.planets_color_edit = QLineEdit("#2D4A6B")  # Dark gray default
-        self.planets_color_edit.setMaximumWidth(70)
-        self.planets_color_edit.setToolTip("Color for planet symbols (hex color code)")
-        self.planets_color_edit.editingFinished.connect(self.on_sunmoon_changed)
-        planets_row.addWidget(self.planets_color_edit)
         planets_row.addStretch()
         sunmoon_layout.addLayout(planets_row)
+
+        # Planet display options (indented, under Show Planets)
+        planet_options_row = QHBoxLayout()
+        planet_options_row.addSpacing(20)
+        self.planet_borders_check = QCheckBox("Borders")
+        self.planet_borders_check.setChecked(True)
+        self.planet_borders_check.setToolTip("Draw circle border around planet symbols")
+        self.planet_borders_check.stateChanged.connect(self.on_sunmoon_changed)
+        planet_options_row.addWidget(self.planet_borders_check)
+        planet_options_row.addWidget(QLabel("Opacity:"))
+        self.planet_opacity_spin = QSpinBox()
+        self.planet_opacity_spin.setRange(10, 100)
+        self.planet_opacity_spin.setValue(100)
+        self.planet_opacity_spin.setSuffix("%")
+        self.planet_opacity_spin.setMaximumWidth(60)
+        self.planet_opacity_spin.setToolTip("Planet marker opacity (transparency)")
+        self.planet_opacity_spin.valueChanged.connect(self.on_sunmoon_changed)
+        planet_options_row.addWidget(self.planet_opacity_spin)
+        planet_options_row.addStretch()
+        sunmoon_layout.addLayout(planet_options_row)
+
+        # Per-planet colors with astronomical defaults
+        # Traditional colors: Mercury=gray, Venus=white/yellow, Mars=red, Jupiter=tan,
+        # Saturn=gold, Uranus=cyan, Neptune=blue, Pluto=brown
+        self.planet_colors = {}
+        planet_color_defaults = {
+            'Mercury': '#A0A0A0',  # Gray
+            'Venus': '#FFFFC0',    # Pale yellow
+            'Mars': '#FF6B6B',     # Red
+            'Jupiter': '#D4A574',  # Tan
+            'Saturn': '#FFD700',   # Gold
+            'Uranus': '#40E0D0',   # Cyan/turquoise
+            'Neptune': '#4169E1',  # Royal blue
+            'Pluto': '#A0826D'     # Brown-gray
+        }
+        self.planet_color_defaults = planet_color_defaults
+
+        # Create two rows of 4 planets each for compact layout
+        planets_row1 = ['Mercury', 'Venus', 'Mars', 'Jupiter']
+        planets_row2 = ['Saturn', 'Uranus', 'Neptune', 'Pluto']
+        planet_symbols = {'Mercury': '☿', 'Venus': '♀', 'Mars': '♂', 'Jupiter': '♃',
+                          'Saturn': '♄', 'Uranus': '♅', 'Neptune': '♆', 'Pluto': '♇'}
+
+        for row_planets in [planets_row1, planets_row2]:
+            color_row = QHBoxLayout()
+            color_row.addSpacing(20)
+            for planet in row_planets:
+                symbol = planet_symbols[planet]
+                color_row.addWidget(QLabel(f"{symbol}:"))
+                color_edit = QLineEdit(planet_color_defaults[planet])
+                color_edit.setMaximumWidth(65)
+                color_edit.setToolTip(f"{planet} color (hex)")
+                color_edit.editingFinished.connect(self.on_sunmoon_changed)
+                self.planet_colors[planet] = color_edit
+                color_row.addWidget(color_edit)
+            color_row.addStretch()
+            sunmoon_layout.addLayout(color_row)
 
         sunmoon_group.setLayout(sunmoon_layout)
         self._layout.addWidget(sunmoon_group)
@@ -9599,6 +9715,17 @@ class SettingsDialog(QDialog):
         self.trail_weight_spin.setEnabled(trailing_enabled)
         self.trail_color.setEnabled(trailing_enabled)
         # Clear Trails button always enabled (can clear old trails even when trailing disabled)
+
+        # Planet controls
+        self._update_planet_controls_state()
+
+    def _update_planet_controls_state(self):
+        """Enable/disable planet controls based on Show Planets checkbox"""
+        planets_enabled = self.show_planets_check.isChecked()
+        self.planet_borders_check.setEnabled(planets_enabled)
+        self.planet_opacity_spin.setEnabled(planets_enabled)
+        for color_edit in self.planet_colors.values():
+            color_edit.setEnabled(planets_enabled)
     
     def closeEvent(self, event):
         """Override close event to hide instead of close (preserves settings)"""
@@ -9763,7 +9890,9 @@ class SettingsDialog(QDialog):
             'lunar_color': self.lunar_color_edit.text(),
             'lunar_show_bounds': self.lunar_show_bounds.isChecked(),
             'show_planets': self.show_planets_check.isChecked(),
-            'planets_color': self.planets_color_edit.text()
+            'planet_borders': self.planet_borders_check.isChecked(),
+            'planet_opacity': self.planet_opacity_spin.value(),
+            'planet_colors': {name: edit.text() for name, edit in self.planet_colors.items()}
         }
     
     def on_sunmoon_changed(self):
@@ -10116,7 +10245,9 @@ class SettingsDialog(QDialog):
                 'lunar_color': self.lunar_color_edit.text(),
                 'lunar_show_bounds': self.lunar_show_bounds.isChecked(),
                 'show_planets': self.show_planets_check.isChecked(),
-                'planets_color': self.planets_color_edit.text()
+                'planet_borders': self.planet_borders_check.isChecked(),
+                'planet_opacity': self.planet_opacity_spin.value(),
+                'planet_colors': {name: edit.text() for name, edit in self.planet_colors.items()}
             }
 
             # Declination Limits
@@ -10422,7 +10553,13 @@ class SettingsDialog(QDialog):
                 self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                 self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                 self.show_planets_check.setChecked(s.get('show_planets', False))
-                self.planets_color_edit.setText(s.get('planets_color', '#2D4A6B'))
+                self.planet_borders_check.setChecked(s.get('planet_borders', True))
+                self.planet_opacity_spin.setValue(s.get('planet_opacity', 100))
+                # Restore per-planet colors
+                saved_colors = s.get('planet_colors', {})
+                for planet, color_edit in self.planet_colors.items():
+                    default = self.planet_color_defaults.get(planet, '#808080')
+                    color_edit.setText(saved_colors.get(planet, default))
 
             # Declination Limits
             if 'dec_limits' in state:
@@ -11599,7 +11736,8 @@ class NEOVisualizer(QMainWindow):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#2D4A6B'}
+                                    'show_planets': False, 'planet_borders': True, 'planet_opacity': 100,
+                                    'planet_colors': {}}
 
             # Store sunmoon settings on canvas for draw_celestial_overlays
             self.canvas.sunmoon_settings = sunmoon_settings
@@ -12055,7 +12193,11 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.lunar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_phases_check.setChecked(False)
                 self.settings_dialog.show_planets_check.setChecked(False)
-                self.settings_dialog.planets_color_edit.setText("#2D4A6B")
+                self.settings_dialog.planet_borders_check.setChecked(True)
+                self.settings_dialog.planet_opacity_spin.setValue(100)
+                # Reset per-planet colors to defaults
+                for planet, color_edit in self.settings_dialog.planet_colors.items():
+                    color_edit.setText(self.settings_dialog.planet_color_defaults[planet])
 
                 # Galactic Exclusion
                 self.settings_dialog.galactic_enable_check.setChecked(False)
@@ -12246,7 +12388,9 @@ class NEOVisualizer(QMainWindow):
                     'lunar_color': self.settings_dialog.lunar_color_edit.text(),
                     'lunar_show_bounds': self.settings_dialog.lunar_show_bounds.isChecked(),
                     'show_planets': self.settings_dialog.show_planets_check.isChecked(),
-                    'planets_color': self.settings_dialog.planets_color_edit.text()
+                    'planet_borders': self.settings_dialog.planet_borders_check.isChecked(),
+                    'planet_opacity': self.settings_dialog.planet_opacity_spin.value(),
+                    'planet_colors': {name: edit.text() for name, edit in self.settings_dialog.planet_colors.items()}
                 }
 
                 # Galactic Exclusion - all parameters
@@ -12480,7 +12624,13 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                     self.settings_dialog.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                     self.settings_dialog.show_planets_check.setChecked(s.get('show_planets', False))
-                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#2D4A6B'))
+                    self.settings_dialog.planet_borders_check.setChecked(s.get('planet_borders', True))
+                    self.settings_dialog.planet_opacity_spin.setValue(s.get('planet_opacity', 100))
+                    # Restore per-planet colors
+                    saved_colors = s.get('planet_colors', {})
+                    for planet, color_edit in self.settings_dialog.planet_colors.items():
+                        default = self.settings_dialog.planet_color_defaults.get(planet, '#808080')
+                        color_edit.setText(saved_colors.get(planet, default))
 
                 # Galactic Exclusion - all parameters
                 if 'galactic' in settings:
