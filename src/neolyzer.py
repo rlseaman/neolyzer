@@ -3595,8 +3595,8 @@ class SkyMapCanvas(FigureCanvas):
     def _identify_constellation_at_click(self, event):
         """Identify and highlight constellation at click location.
 
-        Finds the nearest boundary segment and highlights all segments
-        of that constellation, displaying its name.
+        Uses majority voting: counts all boundary segments within threshold
+        and picks the constellation with the most nearby segments.
         """
         if not hasattr(self, '_boundary_lines') or not self._boundary_lines:
             return
@@ -3605,13 +3605,18 @@ class SkyMapCanvas(FigureCanvas):
         if click_x is None or click_y is None:
             return
 
-        # Find nearest boundary line
-        min_dist = float('inf')
-        nearest_abbrev = None
-        nearest_name = None
+        # Threshold for "close enough" (in plot coordinates)
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            threshold = 0.15  # radians
+        else:
+            threshold = 15  # degrees
+
+        # Count segments within threshold for each constellation (voting)
+        from collections import Counter
+        votes = Counter()  # abbrev -> count
+        names = {}  # abbrev -> name
 
         for line, abbrev, name in self._boundary_lines:
-            # Get line data
             xdata = line.get_xdata()
             ydata = line.get_ydata()
             if len(xdata) < 2:
@@ -3620,40 +3625,28 @@ class SkyMapCanvas(FigureCanvas):
             # Distance from point to line segment
             x1, x2 = xdata[0], xdata[1]
             y1, y2 = ydata[0], ydata[1]
-
-            # Vector from p1 to p2
-            dx = x2 - x1
-            dy = y2 - y1
+            dx, dy = x2 - x1, y2 - y1
             len_sq = dx*dx + dy*dy
 
             if len_sq == 0:
-                # Degenerate segment
                 dist = np.sqrt((click_x - x1)**2 + (click_y - y1)**2)
             else:
-                # Parameter t for closest point on line
                 t = max(0, min(1, ((click_x - x1)*dx + (click_y - y1)*dy) / len_sq))
-                # Closest point on segment
                 closest_x = x1 + t * dx
                 closest_y = y1 + t * dy
                 dist = np.sqrt((click_x - closest_x)**2 + (click_y - closest_y)**2)
 
-            if dist < min_dist:
-                min_dist = dist
-                nearest_abbrev = abbrev
-                nearest_name = name
+            if dist <= threshold:
+                votes[abbrev] += 1
+                names[abbrev] = name
 
-        # Threshold for "close enough" (in plot coordinates)
-        if self.projection in ['hammer', 'aitoff', 'mollweide']:
-            threshold = 0.15  # radians
-        else:
-            threshold = 15  # degrees
-
-        if min_dist > threshold or not nearest_abbrev:
+        # Pick constellation with most votes
+        if not votes:
             self._clear_constellation_highlight()
             return
 
-        # Highlight the constellation
-        self._highlight_constellation(nearest_abbrev, nearest_name)
+        winner = votes.most_common(1)[0][0]
+        self._highlight_constellation(winner, names[winner])
 
     def _highlight_constellation(self, abbrev, name):
         """Highlight all boundary segments of a constellation and show name."""
