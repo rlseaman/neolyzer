@@ -1630,7 +1630,7 @@ class SkyMapCanvas(FigureCanvas):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#808080'})
+                                    'show_planets': False, 'planets_color': '#4A5568'})
             
             # Sun marker: yellow circle with red border (1.5 weight)
             # zorder=17 so Moon (zorder=19) can appear in front during eclipses
@@ -1874,7 +1874,7 @@ class SkyMapCanvas(FigureCanvas):
             # === PLANETS ===
             if sunmoon_settings.get('show_planets', False):
                 try:
-                    planets_color = sunmoon_settings.get('planets_color', '#808080')
+                    planets_color = sunmoon_settings.get('planets_color', '#4A5568')
                     # Planet definitions: name, ephemeris key, symbol
                     planet_defs = [
                         ('Mercury', 'mercury', '☿'),
@@ -8959,7 +8959,7 @@ class SettingsDialog(QDialog):
         self.show_planets_check.stateChanged.connect(self.on_sunmoon_changed)
         planets_row.addWidget(self.show_planets_check)
         planets_row.addWidget(QLabel("Color:"))
-        self.planets_color_edit = QLineEdit("#808080")  # Dark gray default
+        self.planets_color_edit = QLineEdit("#4A5568")  # Dark gray default
         self.planets_color_edit.setMaximumWidth(70)
         self.planets_color_edit.setToolTip("Color for planet symbols (hex color code)")
         self.planets_color_edit.editingFinished.connect(self.on_sunmoon_changed)
@@ -10422,7 +10422,7 @@ class SettingsDialog(QDialog):
                 self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                 self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                 self.show_planets_check.setChecked(s.get('show_planets', False))
-                self.planets_color_edit.setText(s.get('planets_color', '#808080'))
+                self.planets_color_edit.setText(s.get('planets_color', '#4A5568'))
 
             # Declination Limits
             if 'dec_limits' in state:
@@ -11599,7 +11599,7 @@ class NEOVisualizer(QMainWindow):
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planets_color': '#808080'}
+                                    'show_planets': False, 'planets_color': '#4A5568'}
 
             # Store sunmoon settings on canvas for draw_celestial_overlays
             self.canvas.sunmoon_settings = sunmoon_settings
@@ -11892,6 +11892,20 @@ class NEOVisualizer(QMainWindow):
         <li><b>Plane overlays:</b> Ecliptic, Equator, Galactic (configurable)</li>
         </ul>
 
+        <h3>Planet Symbols</h3>
+        <p>Enable "Show Planets" in Settings > Sun and Moon to display planets.</p>
+        <table border="1" cellpadding="4" cellspacing="0" style="border-collapse: collapse;">
+        <tr><th>Symbol</th><th>Planet</th><th>Period (yr)</th><th>H (mag)</th></tr>
+        <tr><td align="center">☿</td><td>Mercury</td><td align="right">0.24</td><td align="right">−0.6</td></tr>
+        <tr><td align="center">♀</td><td>Venus</td><td align="right">0.62</td><td align="right">−4.4</td></tr>
+        <tr><td align="center">♂</td><td>Mars</td><td align="right">1.88</td><td align="right">−1.5</td></tr>
+        <tr><td align="center">♃</td><td>Jupiter</td><td align="right">11.86</td><td align="right">−9.4</td></tr>
+        <tr><td align="center">♄</td><td>Saturn</td><td align="right">29.46</td><td align="right">−8.9</td></tr>
+        <tr><td align="center">♅</td><td>Uranus</td><td align="right">84.01</td><td align="right">−7.2</td></tr>
+        <tr><td align="center">♆</td><td>Neptune</td><td align="right">164.8</td><td align="right">−7.0</td></tr>
+        <tr><td align="center">♇</td><td>Pluto</td><td align="right">247.9</td><td align="right">−0.7</td></tr>
+        </table>
+
         <h3>Animation Panel</h3>
         <ul>
         <li><b>Play/Pause:</b> Start/stop time animation</li>
@@ -12040,7 +12054,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.lunar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_phases_check.setChecked(False)
                 self.settings_dialog.show_planets_check.setChecked(False)
-                self.settings_dialog.planets_color_edit.setText("#808080")
+                self.settings_dialog.planets_color_edit.setText("#4A5568")
 
                 # Galactic Exclusion
                 self.settings_dialog.galactic_enable_check.setChecked(False)
@@ -12465,7 +12479,7 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                     self.settings_dialog.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
                     self.settings_dialog.show_planets_check.setChecked(s.get('show_planets', False))
-                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#808080'))
+                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#4A5568'))
 
                 # Galactic Exclusion - all parameters
                 if 'galactic' in settings:
