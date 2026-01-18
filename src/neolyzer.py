@@ -12034,6 +12034,9 @@ class NEOVisualizer(QMainWindow):
             
             self.status_label.setText("Reset to factory defaults")
             self.update_display()
+
+            # Re-apply V magnitude equalization (default at startup)
+            QTimer.singleShot(200, self._auto_equalize)
         except Exception as e:
             logger.error(f"Reset error: {e}")
     
