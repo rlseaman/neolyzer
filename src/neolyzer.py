@@ -2125,7 +2125,8 @@ class SkyMapCanvas(FigureCanvas):
                     logger.debug(f"Could not draw declination limits: {e}")
 
             # Opposition marker: circular reticle with crossed lines (if enabled)
-            show_opposition_reticle = getattr(self, 'plane_settings', {}).get('show_opposition_reticle', True)
+            plane_settings = getattr(self, 'plane_settings', None) or {}
+            show_opposition_reticle = plane_settings.get('show_opposition_reticle', True)
             if show_opposition_reticle:
                 # Use scatter marker for circle to avoid distortion in Mollweide
                 opp_circle = self.ax.scatter([lon_opp_rad], [lat_opp_rad], marker='o', s=250,
