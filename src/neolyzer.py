@@ -1629,7 +1629,8 @@ class SkyMapCanvas(FigureCanvas):
                                     'solar_color': '#FFD700', 'solar_show_bounds': True,
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
-                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True})
+                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
+                                    'show_planets': False, 'planets_color': '#808080'})
             
             # Sun marker: yellow circle with red border (1.5 weight)
             # zorder=17 so Moon (zorder=19) can appear in front during eclipses
@@ -1869,7 +1870,69 @@ class SkyMapCanvas(FigureCanvas):
                     
                 except Exception as e:
                     logger.debug(f"Could not draw Moon: {e}")
-            
+
+            # === PLANETS ===
+            if sunmoon_settings.get('show_planets', False):
+                try:
+                    planets_color = sunmoon_settings.get('planets_color', '#808080')
+                    # Planet definitions: name, ephemeris key, symbol
+                    planet_defs = [
+                        ('Mercury', 'mercury', '☿'),
+                        ('Venus', 'venus', '♀'),
+                        ('Mars', 'mars', '♂'),
+                        ('Jupiter', 'jupiter barycenter', '♃'),
+                        ('Saturn', 'saturn barycenter', '♄'),
+                        ('Uranus', 'uranus barycenter', '♅'),
+                        ('Neptune', 'neptune barycenter', '♆'),
+                        ('Pluto', 'pluto barycenter', '♇'),
+                    ]
+
+                    for planet_name, eph_key, symbol in planet_defs:
+                        try:
+                            planet = eph[eph_key]
+                            astrometric = earth.at(t).observe(planet)
+                            ra_p, dec_p, dist_p = astrometric.radec()
+                            ra_deg = ra_p.degrees
+                            dec_deg = dec_p.degrees
+
+                            # Transform to current coordinate system
+                            if self.coord_system == 'ecliptic':
+                                lon_p, lat_p = CoordinateTransformer.equatorial_to_ecliptic(ra_deg, dec_deg)
+                            elif self.coord_system == 'galactic':
+                                lon_p, lat_p = CoordinateTransformer.equatorial_to_galactic(ra_deg, dec_deg)
+                            elif self.coord_system == 'opposition':
+                                ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(ra_deg, dec_deg)
+                                lon_p = ecl_lon - self.sun_ecl_lon - 180
+                                if lon_p < -180:
+                                    lon_p += 360
+                                if lon_p > 180:
+                                    lon_p -= 360
+                                lat_p = ecl_lat
+                            else:
+                                lon_p, lat_p = ra_deg, dec_deg
+
+                            # Convert for plotting
+                            if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                                lon_plot = lon_p if lon_p <= 180 else lon_p - 360
+                                lon_rad = np.radians(-lon_plot)
+                                lat_rad = np.radians(lat_p)
+                                fontsize = 14
+                            else:
+                                lon_rad = lon_p
+                                lat_rad = lat_p
+                                fontsize = 12
+
+                            # Draw planet symbol
+                            planet_text = self.ax.text(lon_rad, lat_rad, symbol,
+                                                       fontsize=fontsize, color=planets_color,
+                                                       ha='center', va='center',
+                                                       fontweight='bold', zorder=18)
+                            self.overlay_artists.append(planet_text)
+                        except Exception as e:
+                            logger.debug(f"Could not draw {planet_name}: {e}")
+                except Exception as e:
+                    logger.debug(f"Could not draw planets: {e}")
+
             # === HORIZON AND TWILIGHT BOUNDARIES ===
             horizon_settings = getattr(self, 'horizon_settings', None)
             if horizon_settings and horizon_settings.get('enabled', False):
@@ -8887,7 +8950,23 @@ class SettingsDialog(QDialog):
         phase_row.addWidget(self.show_moon_phases_check)
         phase_row.addStretch()
         sunmoon_layout.addLayout(phase_row)
-        
+
+        # Planets checkbox and color
+        planets_row = QHBoxLayout()
+        self.show_planets_check = QCheckBox("Show Planets")
+        self.show_planets_check.setChecked(False)  # Default unchecked
+        self.show_planets_check.setToolTip("Display planets (Mercury through Pluto) on the sky map\nUses standard planetary symbols: ☿♀♂♃♄♅♆♇")
+        self.show_planets_check.stateChanged.connect(self.on_sunmoon_changed)
+        planets_row.addWidget(self.show_planets_check)
+        planets_row.addWidget(QLabel("Color:"))
+        self.planets_color_edit = QLineEdit("#808080")  # Dark gray default
+        self.planets_color_edit.setMaximumWidth(70)
+        self.planets_color_edit.setToolTip("Color for planet symbols (hex color code)")
+        self.planets_color_edit.editingFinished.connect(self.on_sunmoon_changed)
+        planets_row.addWidget(self.planets_color_edit)
+        planets_row.addStretch()
+        sunmoon_layout.addLayout(planets_row)
+
         sunmoon_group.setLayout(sunmoon_layout)
         self._layout.addWidget(sunmoon_group)
         self.collapsible_sections.append(sunmoon_group)
@@ -9682,7 +9761,9 @@ class SettingsDialog(QDialog):
             'lunar_radius': self.lunar_radius_spin.value(),
             'lunar_penalty': self.lunar_penalty_spin.value(),
             'lunar_color': self.lunar_color_edit.text(),
-            'lunar_show_bounds': self.lunar_show_bounds.isChecked()
+            'lunar_show_bounds': self.lunar_show_bounds.isChecked(),
+            'show_planets': self.show_planets_check.isChecked(),
+            'planets_color': self.planets_color_edit.text()
         }
     
     def on_sunmoon_changed(self):
@@ -10033,7 +10114,9 @@ class SettingsDialog(QDialog):
                 'lunar_radius': self.lunar_radius_spin.value(),
                 'lunar_penalty': self.lunar_penalty_spin.value(),
                 'lunar_color': self.lunar_color_edit.text(),
-                'lunar_show_bounds': self.lunar_show_bounds.isChecked()
+                'lunar_show_bounds': self.lunar_show_bounds.isChecked(),
+                'show_planets': self.show_planets_check.isChecked(),
+                'planets_color': self.planets_color_edit.text()
             }
 
             # Declination Limits
@@ -10338,6 +10421,8 @@ class SettingsDialog(QDialog):
                 self.lunar_penalty_spin.setValue(s.get('lunar_penalty', 3.0))
                 self.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                 self.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
+                self.show_planets_check.setChecked(s.get('show_planets', False))
+                self.planets_color_edit.setText(s.get('planets_color', '#808080'))
 
             # Declination Limits
             if 'dec_limits' in state:
@@ -11513,8 +11598,9 @@ class NEOVisualizer(QMainWindow):
                                     'solar_color': '#FFD700', 'solar_show_bounds': True,
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
-                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True}
-            
+                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
+                                    'show_planets': False, 'planets_color': '#808080'}
+
             # Store sunmoon settings on canvas for draw_celestial_overlays
             self.canvas.sunmoon_settings = sunmoon_settings
 
@@ -11953,7 +12039,9 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.lunar_color_edit.setText("#228B22")
                 self.settings_dialog.lunar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_phases_check.setChecked(False)
-                
+                self.settings_dialog.show_planets_check.setChecked(False)
+                self.settings_dialog.planets_color_edit.setText("#808080")
+
                 # Galactic Exclusion
                 self.settings_dialog.galactic_enable_check.setChecked(False)
                 self.settings_dialog.galactic_offset_spin.setValue(15.0)
@@ -12141,9 +12229,11 @@ class NEOVisualizer(QMainWindow):
                     'lunar_radius': self.settings_dialog.lunar_radius_spin.value(),
                     'lunar_penalty': self.settings_dialog.lunar_penalty_spin.value(),
                     'lunar_color': self.settings_dialog.lunar_color_edit.text(),
-                    'lunar_show_bounds': self.settings_dialog.lunar_show_bounds.isChecked()
+                    'lunar_show_bounds': self.settings_dialog.lunar_show_bounds.isChecked(),
+                    'show_planets': self.settings_dialog.show_planets_check.isChecked(),
+                    'planets_color': self.settings_dialog.planets_color_edit.text()
                 }
-                
+
                 # Galactic Exclusion - all parameters
                 settings['galactic'] = {
                     'enabled': self.settings_dialog.galactic_enable_check.isChecked(),
@@ -12374,7 +12464,9 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.lunar_penalty_spin.setValue(s.get('lunar_penalty', 3.0))
                     self.settings_dialog.lunar_color_edit.setText(s.get('lunar_color', '#228B22'))
                     self.settings_dialog.lunar_show_bounds.setChecked(s.get('lunar_show_bounds', True))
-                
+                    self.settings_dialog.show_planets_check.setChecked(s.get('show_planets', False))
+                    self.settings_dialog.planets_color_edit.setText(s.get('planets_color', '#808080'))
+
                 # Galactic Exclusion - all parameters
                 if 'galactic' in settings:
                     g = settings['galactic']
