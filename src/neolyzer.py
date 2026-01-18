@@ -2461,15 +2461,16 @@ class SkyMapCanvas(FigureCanvas):
                         lon1 -= 360
                     if lon2 > 180:
                         lon2 -= 360
-                    # Convert to radians
-                    lon1_rad = np.radians(lon1)
-                    lon2_rad = np.radians(lon2)
-                    lat1_rad = np.radians(lat1)
-                    lat2_rad = np.radians(lat2)
 
                     # Skip segments that cross the edge (large longitude difference)
                     if abs(lon1 - lon2) > 180:
                         continue
+
+                    # Convert to radians, negating longitude (East on left, matching NEO positions)
+                    lon1_rad = np.radians(-lon1)
+                    lon2_rad = np.radians(-lon2)
+                    lat1_rad = np.radians(lat1)
+                    lat2_rad = np.radians(lat2)
 
                     line = self.ax.plot([lon1_rad, lon2_rad], [lat1_rad, lat2_rad],
                                        '-', color=color, linewidth=0.5, alpha=opacity,
