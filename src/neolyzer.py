@@ -8211,9 +8211,9 @@ class ColorbarPanel(QWidget):
         self.size_defaults = {
             'V magnitude': {'data_min': 19.0, 'data_max': 25.0, 'bin_size': 0.25, 'invert': True, 'unit': 'mag', 'size_min': 2, 'size_max': 12},
             'H magnitude': {'data_min': 18.0, 'data_max': 28.0, 'bin_size': 0.25, 'invert': True, 'unit': 'mag', 'size_min': 2, 'size_max': 12},
-            'Distance': {'data_min': 0.0, 'data_max': 2.0, 'bin_size': 0.05, 'invert': True, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
-            'Earth MOID': {'data_min': 0.0, 'data_max': 0.1, 'bin_size': 0.005, 'invert': True, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
-            'Period': {'data_min': 0.5, 'data_max': 5.0, 'bin_size': 0.25, 'invert': True, 'unit': 'yr', 'size_min': 2, 'size_max': 12},
+            'Distance': {'data_min': 0.0, 'data_max': 2.0, 'bin_size': 0.05, 'invert': False, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
+            'Earth MOID': {'data_min': 0.0, 'data_max': 0.1, 'bin_size': 0.005, 'invert': False, 'unit': 'AU', 'size_min': 2, 'size_max': 12},
+            'Period': {'data_min': 0.5, 'data_max': 5.0, 'bin_size': 0.25, 'invert': False, 'unit': 'yr', 'size_min': 2, 'size_max': 12},
             'Eccentricity': {'data_min': 0.0, 'data_max': 1.0, 'bin_size': 0.05, 'invert': False, 'unit': '', 'size_min': 2, 'size_max': 12}
         }
 
