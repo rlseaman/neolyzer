@@ -844,16 +844,17 @@ class SkyMapCanvas(FigureCanvas):
         """Load constellation boundary data from CSV file.
 
         Returns list of (ra1, dec1, ra2, dec2) tuples in degrees (J2000 equatorial).
+        Source: VizieR VI/49 (Davenhall & Legg 1989), precessed from B1875 to J2000.
         """
         import os
         boundaries = []
-        # Try to find the data file
-        data_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'constellation_boundaries.csv')
+        # Try to find the data file (IAU boundaries from VI/49)
+        data_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'iau_boundaries_j2000.csv')
         if not os.path.exists(data_file):
-            data_file = os.path.join(os.path.dirname(__file__), 'data', 'constellation_boundaries.csv')
+            data_file = os.path.join(os.path.dirname(__file__), 'data', 'iau_boundaries_j2000.csv')
         if not os.path.exists(data_file):
             # Try relative to cwd
-            data_file = 'data/constellation_boundaries.csv'
+            data_file = 'data/iau_boundaries_j2000.csv'
 
         try:
             with open(data_file, 'r') as f:
