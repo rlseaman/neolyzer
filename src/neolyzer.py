@@ -764,7 +764,8 @@ class SkyMapCanvas(FigureCanvas):
         self.ax.set_facecolor('white')  # Keep plot white
 
         # Apply cardinal markers visibility from current settings
-        show_cardinal = getattr(self, 'plane_settings', {}).get('show_cardinal_markers', True)
+        plane_settings = getattr(self, 'plane_settings', None) or {}
+        show_cardinal = plane_settings.get('show_cardinal_markers', True)
         self.compass_n.set_visible(show_cardinal)
         self.compass_s.set_visible(show_cardinal)
         self.compass_e.set_visible(show_cardinal)
