@@ -1604,18 +1604,46 @@ class SkyMapCanvas(FigureCanvas):
                     logger.error(f"Error drawing opposition circle: {e}")
             
             # Get sun/moon display settings
-            sunmoon_settings = getattr(self, 'sunmoon_settings', {'show_sun': True, 'show_moon': True, 'show_phases': False,
-                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0, 
+            sunmoon_settings = getattr(self, 'sunmoon_settings', {'show_sun': True,
+                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
+                                    'solar_color': '#FFD700', 'solar_show_bounds': True,
+                                    'show_moon': True, 'show_phases': False,
+                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True})
             
             # Sun marker: yellow circle with red border (1.5 weight)
             # zorder=17 so Moon (zorder=19) can appear in front during eclipses
             if sunmoon_settings.get('show_sun', True):
-                sun_marker = self.ax.plot(lon_sun_rad, lat_sun_rad, 'o', 
+                sun_marker = self.ax.plot(lon_sun_rad, lat_sun_rad, 'o',
                                          color='yellow', markersize=12,
                                          markeredgecolor='red', markeredgewidth=1.5, zorder=17)[0]
                 self.overlay_artists.append(sun_marker)
-            
+
+            # Draw solar elongation exclusion circle if enabled
+            if sunmoon_settings.get('solar_elongation_enabled', False) and sunmoon_settings.get('solar_show_bounds', True):
+                try:
+                    solar_radius = sunmoon_settings.get('solar_radius', 45.0)
+                    solar_color = sunmoon_settings.get('solar_color', '#FFD700')
+
+                    if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                        # Draw dashed circle in radians
+                        circle_theta = np.linspace(0, 2*np.pi, 72)
+                        radius_rad = np.radians(solar_radius)
+                        cx = lon_sun_rad + radius_rad * np.cos(circle_theta)
+                        cy = lat_sun_rad + radius_rad * np.sin(circle_theta)
+                        solar_circle = self.ax.plot(cx, cy, '--', color=solar_color,
+                                                   linewidth=1.5, alpha=0.7, zorder=16)[0]
+                    else:
+                        # Rectangular - use degrees
+                        circle_theta = np.linspace(0, 2*np.pi, 72)
+                        cx = lon_sun_rad + solar_radius * np.cos(circle_theta)
+                        cy = lat_sun_rad + solar_radius * np.sin(circle_theta)
+                        solar_circle = self.ax.plot(cx, cy, '--', color=solar_color,
+                                                   linewidth=1.5, alpha=0.7, zorder=16)[0]
+                    self.overlay_artists.append(solar_circle)
+                except Exception as e:
+                    logger.debug(f"Could not draw solar exclusion circle: {e}")
+
             # === MOON POSITION AND PHASE ===
             if sunmoon_settings.get('show_moon', True):
                 try:
@@ -2004,7 +2032,7 @@ class SkyMapCanvas(FigureCanvas):
                     orb_filters=None, asteroids=None, size_settings=None,
                     galactic_settings=None, opposition_settings=None, hide_before_discovery=False,
                     hide_missing_discovery=False, color_by='V magnitude', show_legend=False,
-                    site_filter=None):
+                    site_filter=None, misc_filter=None):
         """Update plot with positions"""
         _profile = self._show_fps
         if _profile:
@@ -2032,7 +2060,8 @@ class SkyMapCanvas(FigureCanvas):
         self.color_by = color_by
         self.show_legend = show_legend
         self.site_filter = site_filter
-        
+        self.misc_filter = misc_filter
+
         # Store galactic and opposition settings for overlay drawing
         self.galactic_settings = galactic_settings
         self.opposition_settings = opposition_settings
@@ -2059,7 +2088,125 @@ class SkyMapCanvas(FigureCanvas):
                 logger.debug("TRAIL: No positions - cleared trails")
             self.draw()  # Force immediate redraw
             return
-        
+
+        # Extract miscellaneous filter settings
+        if misc_filter is None:
+            misc_filter = {}
+        hide_numbered = misc_filter.get('hide_numbered', False)
+        geo_near_enabled = misc_filter.get('geo_near_enabled', False)
+        geo_near_dist = misc_filter.get('geo_near_dist', 0.0)
+        geo_far_enabled = misc_filter.get('geo_far_enabled', False)
+        geo_far_dist = misc_filter.get('geo_far_dist', 5.0)
+        helio_near_enabled = misc_filter.get('helio_near_enabled', False)
+        helio_near_dist = misc_filter.get('helio_near_dist', 0.0)
+        helio_far_enabled = misc_filter.get('helio_far_enabled', False)
+        helio_far_dist = misc_filter.get('helio_far_dist', 5.0)
+
+        # Filter out numbered objects if enabled (early filter for performance)
+        if hide_numbered and asteroids is not None:
+            numbered_mask = np.ones(len(positions), dtype=bool)
+            for i in range(len(positions)):
+                ast_idx = int(positions[i, 0])
+                if ast_idx < len(asteroids):
+                    desig = asteroids[ast_idx].get('designation', '')
+                    # Numbered objects have 5-character packed designations
+                    # Provisional designations are 7 characters
+                    if desig and len(desig) == 5:
+                        numbered_mask[i] = False
+            positions = positions[numbered_mask]
+            if len(positions) == 0:
+                self.scatter.set_offsets(np.empty((0, 2)))
+                self.scatter.set_array(np.array([]))
+                self.stats_text.set_text('No provisional objects (all numbered)')
+                if self.trailing_settings.get('enabled', False):
+                    self._clear_trails()
+                    self.trail_history.clear()
+                self.draw()
+                return
+
+        # Filter by geocentric distance (r) - positions[:, 3] is geocentric distance
+        if geo_near_enabled or geo_far_enabled:
+            geo_dist = positions[:, 3]
+            geo_mask = np.ones(len(positions), dtype=bool)
+            if geo_near_enabled:
+                geo_mask &= (geo_dist >= geo_near_dist)
+            if geo_far_enabled:
+                geo_mask &= (geo_dist <= geo_far_dist)
+            positions = positions[geo_mask]
+            if len(positions) == 0:
+                self.scatter.set_offsets(np.empty((0, 2)))
+                self.scatter.set_array(np.array([]))
+                self.stats_text.set_text('No objects in geocentric distance range')
+                if self.trailing_settings.get('enabled', False):
+                    self._clear_trails()
+                    self.trail_history.clear()
+                self.draw()
+                return
+
+        # Filter by heliocentric distance (Δ) - calculated via law of cosines
+        if helio_near_enabled or helio_far_enabled:
+            if hasattr(self, 'sun_dist') and self.sun_dist is not None:
+                # Calculate heliocentric distance for each object
+                # helio² = geo² + sun² - 2*geo*sun*cos(angular_sep)
+                geo_dist = positions[:, 3]
+                ra = np.radians(positions[:, 1])
+                dec = np.radians(positions[:, 2])
+                sun_ra_rad = np.radians(self.sun_ra)
+                sun_dec_rad = np.radians(self.sun_dec)
+
+                cos_sep = (np.sin(dec) * np.sin(sun_dec_rad) +
+                          np.cos(dec) * np.cos(sun_dec_rad) * np.cos(ra - sun_ra_rad))
+                cos_sep = np.clip(cos_sep, -1, 1)
+
+                helio_dist_sq = geo_dist**2 + self.sun_dist**2 - 2 * geo_dist * self.sun_dist * cos_sep
+                helio_dist = np.sqrt(np.abs(helio_dist_sq))
+
+                helio_mask = np.ones(len(positions), dtype=bool)
+                if helio_near_enabled:
+                    helio_mask &= (helio_dist >= helio_near_dist)
+                if helio_far_enabled:
+                    helio_mask &= (helio_dist <= helio_far_dist)
+                positions = positions[helio_mask]
+                if len(positions) == 0:
+                    self.scatter.set_offsets(np.empty((0, 2)))
+                    self.scatter.set_array(np.array([]))
+                    self.stats_text.set_text('No objects in heliocentric distance range')
+                    if self.trailing_settings.get('enabled', False):
+                        self._clear_trails()
+                        self.trail_history.clear()
+                    self.draw()
+                    return
+
+        # Filter by solar elongation (angular distance from Sun)
+        sunmoon_settings = getattr(self, 'sunmoon_settings', None)
+        if sunmoon_settings and sunmoon_settings.get('solar_elongation_enabled', False):
+            if hasattr(self, 'sun_ra') and hasattr(self, 'sun_dec') and self.sun_ra is not None:
+                solar_radius = sunmoon_settings.get('solar_radius', 45.0)
+
+                # Calculate angular separation from Sun for all objects
+                ra = np.radians(positions[:, 1])
+                dec = np.radians(positions[:, 2])
+                sun_ra_rad = np.radians(self.sun_ra)
+                sun_dec_rad = np.radians(self.sun_dec)
+
+                # Haversine formula for angular separation
+                d_ra = ra - sun_ra_rad
+                a = np.sin((dec - sun_dec_rad)/2)**2 + np.cos(dec) * np.cos(sun_dec_rad) * np.sin(d_ra/2)**2
+                angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+
+                # Keep only objects outside the solar exclusion zone
+                solar_mask = angular_sep >= solar_radius
+                positions = positions[solar_mask]
+                if len(positions) == 0:
+                    self.scatter.set_offsets(np.empty((0, 2)))
+                    self.scatter.set_array(np.array([]))
+                    self.stats_text.set_text(f'No objects outside {solar_radius:.0f}° solar elongation')
+                    if self.trailing_settings.get('enabled', False):
+                        self._clear_trails()
+                        self.trail_history.clear()
+                    self.draw()
+                    return
+
         # Filter by magnitude (both min and max)
         # Note: We expand mag_max by opposition benefit to allow objects that could become
         # visible due to the benefit to pass initial filtering
@@ -8175,7 +8322,127 @@ class SettingsDialog(QDialog):
         
         # Track all collapsible sections
         self.collapsible_sections = []
-        
+
+        # Miscellaneous Filters section (at top for visibility)
+        misc_group = CollapsibleGroupBox("Miscellaneous Filters")
+        misc_layout = QVBoxLayout()
+        misc_layout.setSpacing(3)
+
+        # Hide numbered objects checkbox
+        self.hide_numbered_check = QCheckBox("Hide numbered objects")
+        self.hide_numbered_check.setChecked(False)
+        self.hide_numbered_check.setToolTip("Hide asteroids with permanent numbers (show only provisional designations)")
+        self.hide_numbered_check.stateChanged.connect(self.on_misc_filter_changed)
+        misc_layout.addWidget(self.hide_numbered_check)
+
+        # Geocentric distance filters (r)
+        geo_near_row = QHBoxLayout()
+        self.geo_near_check = QCheckBox("Hide nearer than")
+        self.geo_near_check.setChecked(False)
+        self.geo_near_check.setToolTip("Hide objects closer than this geocentric distance")
+        self.geo_near_check.stateChanged.connect(self.on_misc_filter_changed)
+        geo_near_row.addWidget(self.geo_near_check)
+        self.geo_near_spin = QDoubleSpinBox()
+        self.geo_near_spin.setRange(0.0, 10.0)
+        self.geo_near_spin.setValue(0.0)
+        self.geo_near_spin.setSingleStep(0.050)
+        self.geo_near_spin.setDecimals(3)
+        self.geo_near_spin.setSuffix(" au")
+        self.geo_near_spin.valueChanged.connect(self.on_misc_filter_changed)
+        geo_near_row.addWidget(self.geo_near_spin)
+        geo_near_row.addWidget(QLabel("(r)"))
+        geo_near_row.addStretch()
+        misc_layout.addLayout(geo_near_row)
+
+        geo_far_row = QHBoxLayout()
+        self.geo_far_check = QCheckBox("Hide farther than")
+        self.geo_far_check.setChecked(False)
+        self.geo_far_check.setToolTip("Hide objects farther than this geocentric distance")
+        self.geo_far_check.stateChanged.connect(self.on_misc_filter_changed)
+        geo_far_row.addWidget(self.geo_far_check)
+        self.geo_far_spin = QDoubleSpinBox()
+        self.geo_far_spin.setRange(0.0, 100.0)
+        self.geo_far_spin.setValue(5.0)
+        self.geo_far_spin.setSingleStep(0.25)
+        self.geo_far_spin.setDecimals(2)
+        self.geo_far_spin.setSuffix(" au")
+        self.geo_far_spin.valueChanged.connect(self.on_misc_filter_changed)
+        geo_far_row.addWidget(self.geo_far_spin)
+        geo_far_row.addWidget(QLabel("(r)"))
+        geo_far_row.addStretch()
+        misc_layout.addLayout(geo_far_row)
+
+        # Heliocentric distance filters (Δ)
+        helio_near_row = QHBoxLayout()
+        self.helio_near_check = QCheckBox("Hide nearer than")
+        self.helio_near_check.setChecked(False)
+        self.helio_near_check.setToolTip("Hide objects closer than this heliocentric distance")
+        self.helio_near_check.stateChanged.connect(self.on_misc_filter_changed)
+        helio_near_row.addWidget(self.helio_near_check)
+        self.helio_near_spin = QDoubleSpinBox()
+        self.helio_near_spin.setRange(0.0, 10.0)
+        self.helio_near_spin.setValue(0.0)
+        self.helio_near_spin.setSingleStep(0.050)
+        self.helio_near_spin.setDecimals(3)
+        self.helio_near_spin.setSuffix(" au")
+        self.helio_near_spin.valueChanged.connect(self.on_misc_filter_changed)
+        helio_near_row.addWidget(self.helio_near_spin)
+        helio_near_row.addWidget(QLabel("(Δ)"))
+        helio_near_row.addStretch()
+        misc_layout.addLayout(helio_near_row)
+
+        helio_far_row = QHBoxLayout()
+        self.helio_far_check = QCheckBox("Hide farther than")
+        self.helio_far_check.setChecked(False)
+        self.helio_far_check.setToolTip("Hide objects farther than this heliocentric distance")
+        self.helio_far_check.stateChanged.connect(self.on_misc_filter_changed)
+        helio_far_row.addWidget(self.helio_far_check)
+        self.helio_far_spin = QDoubleSpinBox()
+        self.helio_far_spin.setRange(0.0, 100.0)
+        self.helio_far_spin.setValue(5.0)
+        self.helio_far_spin.setSingleStep(0.25)
+        self.helio_far_spin.setDecimals(2)
+        self.helio_far_spin.setSuffix(" au")
+        self.helio_far_spin.valueChanged.connect(self.on_misc_filter_changed)
+        helio_far_row.addWidget(self.helio_far_spin)
+        helio_far_row.addWidget(QLabel("(Δ)"))
+        helio_far_row.addStretch()
+        misc_layout.addLayout(helio_far_row)
+
+        # Site whitelist row
+        whitelist_row = QHBoxLayout()
+        self.site_whitelist_check = QCheckBox("Only show sites:")
+        self.site_whitelist_check.setChecked(False)
+        self.site_whitelist_check.setToolTip("Only show NEOs discovered by these sites (comma-separated codes)")
+        self.site_whitelist_check.stateChanged.connect(self.on_misc_filter_changed)
+        whitelist_row.addWidget(self.site_whitelist_check)
+
+        self.site_whitelist_edit = QLineEdit()
+        self.site_whitelist_edit.setPlaceholderText("e.g., 703, G96, F51, T05")
+        self.site_whitelist_edit.setToolTip("Comma-separated site codes (e.g., 703, G96, F51)")
+        self.site_whitelist_edit.editingFinished.connect(self.on_misc_filter_changed)
+        whitelist_row.addWidget(self.site_whitelist_edit)
+        misc_layout.addLayout(whitelist_row)
+
+        # Site blacklist row
+        blacklist_row = QHBoxLayout()
+        self.site_blacklist_check = QCheckBox("Hide sites:")
+        self.site_blacklist_check.setChecked(False)
+        self.site_blacklist_check.setToolTip("Hide NEOs discovered by these sites (comma-separated codes)")
+        self.site_blacklist_check.stateChanged.connect(self.on_misc_filter_changed)
+        blacklist_row.addWidget(self.site_blacklist_check)
+
+        self.site_blacklist_edit = QLineEdit()
+        self.site_blacklist_edit.setPlaceholderText("e.g., C51")
+        self.site_blacklist_edit.setToolTip("Comma-separated site codes to exclude")
+        self.site_blacklist_edit.editingFinished.connect(self.on_misc_filter_changed)
+        blacklist_row.addWidget(self.site_blacklist_edit)
+        misc_layout.addLayout(blacklist_row)
+
+        misc_group.setLayout(misc_layout)
+        self._layout.addWidget(misc_group)
+        self.collapsible_sections.append(misc_group)
+
         # Orbital elements panel (wrapped in collapsible)
         orbital_wrapper = CollapsibleGroupBox("Orbital Elements")
         orbital_wrapper.content_layout.addWidget(self.orbital_panel)
@@ -8255,7 +8522,44 @@ class SettingsDialog(QDialog):
         sun_row.addWidget(self.show_sun_check)
         sun_row.addStretch()
         sunmoon_layout.addLayout(sun_row)
-        
+
+        # Solar elongation limit enable (indented)
+        solar_elong_row = QHBoxLayout()
+        solar_elong_row.addSpacing(20)
+        self.solar_elongation_check = QCheckBox("Enable solar elongation limit")
+        self.solar_elongation_check.setChecked(False)
+        self.solar_elongation_check.setToolTip("Filter out NEOs within specified angular distance of the Sun")
+        self.solar_elongation_check.stateChanged.connect(self.on_sunmoon_changed)
+        solar_elong_row.addWidget(self.solar_elongation_check)
+        solar_elong_row.addStretch()
+        sunmoon_layout.addLayout(solar_elong_row)
+
+        # Solar elongation radius row (indented)
+        solar_radius_row = QHBoxLayout()
+        solar_radius_row.addSpacing(20)
+        solar_radius_row.addWidget(QLabel("Solar elongation:"))
+        self.solar_radius_spin = QDoubleSpinBox()
+        self.solar_radius_spin.setRange(5.0, 180.0)
+        self.solar_radius_spin.setValue(45.0)
+        self.solar_radius_spin.setSingleStep(5.0)
+        self.solar_radius_spin.setSuffix("°")
+        self.solar_radius_spin.setToolTip("Filter objects within this angular distance of the Sun")
+        self.solar_radius_spin.valueChanged.connect(self.on_sunmoon_changed)
+        solar_radius_row.addWidget(self.solar_radius_spin)
+        solar_radius_row.addWidget(QLabel("Color:"))
+        self.solar_color_edit = QLineEdit("#FFD700")  # Gold/yellow like sun
+        self.solar_color_edit.setMaximumWidth(70)
+        self.solar_color_edit.setToolTip("Color for solar exclusion circle (hex or name)")
+        self.solar_color_edit.editingFinished.connect(self.on_sunmoon_changed)
+        solar_radius_row.addWidget(self.solar_color_edit)
+        self.solar_show_bounds = QCheckBox("Show boundary")
+        self.solar_show_bounds.setChecked(True)
+        self.solar_show_bounds.setToolTip("Draw dashed circle showing solar exclusion zone")
+        self.solar_show_bounds.stateChanged.connect(self.on_sunmoon_changed)
+        solar_radius_row.addWidget(self.solar_show_bounds)
+        solar_radius_row.addStretch()
+        sunmoon_layout.addLayout(solar_radius_row)
+
         # Moon checkbox
         moon_row = QHBoxLayout()
         self.show_moon_check = QCheckBox("Show Moon")
@@ -8609,228 +8913,6 @@ class SettingsDialog(QDialog):
         opposition_group.setLayout(opposition_layout)
         self._layout.addWidget(opposition_group)
         self.collapsible_sections.append(opposition_group)
-        
-        # Site Filtering section
-        site_group = CollapsibleGroupBox("Site Filtering")
-        site_layout = QVBoxLayout()
-        site_layout.setSpacing(3)
-        
-        # Whitelist row
-        whitelist_row = QHBoxLayout()
-        self.site_whitelist_check = QCheckBox("Only show sites:")
-        self.site_whitelist_check.setChecked(False)
-        self.site_whitelist_check.setToolTip("Only show NEOs discovered by these sites (comma-separated codes)")
-        self.site_whitelist_check.stateChanged.connect(self.on_site_filter_changed)
-        whitelist_row.addWidget(self.site_whitelist_check)
-        
-        self.site_whitelist_edit = QLineEdit()
-        self.site_whitelist_edit.setPlaceholderText("e.g., 703, G96, F51, T05")
-        self.site_whitelist_edit.setToolTip("Comma-separated site codes (e.g., 703, G96, F51)")
-        self.site_whitelist_edit.editingFinished.connect(self.on_site_filter_changed)
-        whitelist_row.addWidget(self.site_whitelist_edit)
-        site_layout.addLayout(whitelist_row)
-        
-        # Blacklist row
-        blacklist_row = QHBoxLayout()
-        self.site_blacklist_check = QCheckBox("Hide sites:")
-        self.site_blacklist_check.setChecked(False)
-        self.site_blacklist_check.setToolTip("Hide NEOs discovered by these sites (comma-separated codes)")
-        self.site_blacklist_check.stateChanged.connect(self.on_site_filter_changed)
-        blacklist_row.addWidget(self.site_blacklist_check)
-        
-        self.site_blacklist_edit = QLineEdit()
-        self.site_blacklist_edit.setPlaceholderText("e.g., C51")
-        self.site_blacklist_edit.setToolTip("Comma-separated site codes to exclude")
-        self.site_blacklist_edit.editingFinished.connect(self.on_site_filter_changed)
-        blacklist_row.addWidget(self.site_blacklist_edit)
-        site_layout.addLayout(blacklist_row)
-        
-        site_group.setLayout(site_layout)
-        self._layout.addWidget(site_group)
-        self.collapsible_sections.append(site_group)
-        
-        # Advanced Controls section (keyboard navigation)
-        advanced_group = CollapsibleGroupBox("Advanced Controls")
-        advanced_layout = QVBoxLayout()
-        advanced_layout.setSpacing(3)
-        
-        # Trailing section (at top of Advanced Controls)
-        trail_label = QLabel("Trailing (during animation):")
-        trail_label.setStyleSheet("font-weight: bold;")
-        advanced_layout.addWidget(trail_label)
-        
-        # Enable trailing checkbox
-        self.enable_trailing_check = QCheckBox("Enable trails")
-        self.enable_trailing_check.setChecked(False)
-        self.enable_trailing_check.setToolTip("Show motion trails during animation")
-        self.enable_trailing_check.stateChanged.connect(self.on_trailing_changed)
-        advanced_layout.addWidget(self.enable_trailing_check)
-        
-        # Trail length
-        trail_len_row = QHBoxLayout()
-        trail_len_row.addWidget(QLabel("Trail length:"))
-        self.trail_length_spin = QSpinBox()
-        self.trail_length_spin.setRange(5, 10000)  # Allow very long trails
-        self.trail_length_spin.setValue(50)
-        self.trail_length_spin.setMaximumWidth(70)
-        self.trail_length_spin.setToolTip("Number of animation steps to retain in trail history")
-        self.trail_length_spin.valueChanged.connect(self.on_trailing_changed)
-        trail_len_row.addWidget(self.trail_length_spin)
-        trail_len_row.addWidget(QLabel("steps"))
-        trail_len_row.addStretch()
-        advanced_layout.addLayout(trail_len_row)
-        
-        # Trail line weight
-        weight_row = QHBoxLayout()
-        weight_row.addWidget(QLabel("Line weight:"))
-        self.trail_weight_spin = QDoubleSpinBox()
-        self.trail_weight_spin.setRange(0.5, 5.0)
-        self.trail_weight_spin.setValue(1.0)
-        self.trail_weight_spin.setSingleStep(0.5)
-        self.trail_weight_spin.setMaximumWidth(60)
-        self.trail_weight_spin.setToolTip("Trail line thickness in pixels")
-        self.trail_weight_spin.valueChanged.connect(self.on_trailing_changed)
-        weight_row.addWidget(self.trail_weight_spin)
-        weight_row.addWidget(QLabel("px"))
-        weight_row.addStretch()
-        advanced_layout.addLayout(weight_row)
-        
-        # Trail color
-        color_row = QHBoxLayout()
-        color_row.addWidget(QLabel("Trail color:"))
-        self.trail_color = QLineEdit("#00AA00")
-        self.trail_color.setMaximumWidth(70)
-        self.trail_color.setToolTip("Trail line color (green default)")
-        color_row.addWidget(self.trail_color)
-        color_row.addStretch()
-        advanced_layout.addLayout(color_row)
-        
-        # Clear trails button
-        self.clear_trails_btn = QPushButton("Clear Trails")
-        self.clear_trails_btn.setToolTip("Remove all accumulated trail history")
-        self.clear_trails_btn.clicked.connect(self.on_clear_trails)
-        self.clear_trails_btn.setMaximumWidth(100)
-        advanced_layout.addWidget(self.clear_trails_btn)
-
-        # Fast animation section
-        fast_sep = QFrame()
-        if PYQT_VERSION == 6:
-            fast_sep.setFrameShape(QFrame.Shape.HLine)
-        else:
-            fast_sep.setFrameShape(QFrame.HLine)
-        fast_sep.setStyleSheet("color: #ccc;")
-        advanced_layout.addWidget(fast_sep)
-
-        fast_label = QLabel("Animation Performance:")
-        fast_label.setStyleSheet("font-weight: bold;")
-        advanced_layout.addWidget(fast_label)
-
-        # Fast animation checkbox
-        self.fast_animation_check = QCheckBox("Fast animation mode")
-        self.fast_animation_check.setChecked(False)
-        self.fast_animation_check.setToolTip("Show fewer points during animation for smoother playback")
-        advanced_layout.addWidget(self.fast_animation_check)
-
-        # Decimation factor
-        decimate_row = QHBoxLayout()
-        decimate_row.addWidget(QLabel("Show every"))
-        self.decimate_spin = QSpinBox()
-        self.decimate_spin.setRange(2, 20)
-        self.decimate_spin.setValue(4)
-        self.decimate_spin.setMaximumWidth(50)
-        self.decimate_spin.setToolTip("Show every Nth point during animation (4 = 25% of points)")
-        decimate_row.addWidget(self.decimate_spin)
-        decimate_row.addWidget(QLabel("points"))
-        decimate_row.addStretch()
-        advanced_layout.addLayout(decimate_row)
-
-        # Hidden controls for backward compatibility with factory reset
-        self.trails_before_discovery_check = QCheckBox()
-        self.trails_before_discovery_check.hide()
-        self.trail_before_color = QLineEdit()
-        self.trail_before_color.hide()
-        self.trail_after_color = QLineEdit()
-        self.trail_after_color.hide()
-        
-        # Hidden controls for keyboard navigation compatibility (used by factory reset)
-        self.ud_increment_spin = QSpinBox()
-        self.ud_increment_spin.setValue(1)
-        self.ud_increment_spin.hide()
-        self.ud_unit_combo = QComboBox()
-        self.ud_unit_combo.addItems(["lunation", "month", "year"])
-        self.ud_unit_combo.setCurrentText("lunation")
-        self.ud_unit_combo.hide()
-        
-        # Separator before misc options
-        sep1 = QFrame()
-        if PYQT_VERSION == 6:
-            sep1.setFrameShape(QFrame.Shape.HLine)
-        else:
-            sep1.setFrameShape(QFrame.HLine)
-        sep1.setStyleSheet("color: #ccc;")
-        advanced_layout.addWidget(sep1)
-        
-        # Hide missing tracklets (moved from Discovery Circumstances)
-        self.hide_missing_discovery_check = QCheckBox("Hide NEOs with missing discovery tracklets")
-        self.hide_missing_discovery_check.setChecked(False)
-        self.hide_missing_discovery_check.setToolTip("Hide NEOs that don't have discovery tracklet data")
-        self.hide_missing_discovery_check.stateChanged.connect(self.on_discovery_changed)
-        advanced_layout.addWidget(self.hide_missing_discovery_check)
-        
-        # Collapsible control panels
-        self.kiosk_mode_check = QCheckBox("Collapsible control panels")
-        self.kiosk_mode_check.setChecked(False)
-        self.kiosk_mode_check.setToolTip("Click top bar to collapse/expand all control panels as a drawer")
-        self.kiosk_mode_check.stateChanged.connect(self.on_appearance_changed)
-        advanced_layout.addWidget(self.kiosk_mode_check)
-        
-        # Shift+[ and Shift+] keys for time navigation
-        lr_row = QHBoxLayout()
-        lr_row.addWidget(QLabel("Shift+[/] keys:"))
-        self.lr_increment_spin = QDoubleSpinBox()
-        self.lr_increment_spin.setRange(0.001, 1000)
-        self.lr_increment_spin.setValue(1.0)
-        self.lr_increment_spin.setDecimals(3)
-        self.lr_increment_spin.setSingleStep(0.1)
-        self.lr_increment_spin.setMaximumWidth(70)
-        lr_row.addWidget(self.lr_increment_spin)
-
-        self.lr_unit_combo = QComboBox()
-        self.lr_unit_combo.addItems(["minute", "hour", "solar day", "sidereal day", "lunation", "month", "year"])
-        self.lr_unit_combo.setCurrentText("hour")
-        self.lr_unit_combo.setMaximumWidth(100)
-        lr_row.addWidget(self.lr_unit_combo)
-        lr_row.addStretch()
-        advanced_layout.addLayout(lr_row)
-        
-        # Help text
-        help_label = QLabel("Press Shift+[ to go back, Shift+] to go forward in time")
-        help_label.setStyleSheet("color: gray; font-style: italic;")
-        advanced_layout.addWidget(help_label)
-
-        # Magnitude hysteresis (reduces twinkling at filter boundaries)
-        hyst_row = QHBoxLayout()
-        hyst_row.addWidget(QLabel("Mag hysteresis:"))
-        self.mag_hysteresis_spin = QDoubleSpinBox()
-        self.mag_hysteresis_spin.setRange(0.00, 0.50)
-        self.mag_hysteresis_spin.setValue(0.10)
-        self.mag_hysteresis_spin.setDecimals(2)
-        self.mag_hysteresis_spin.setSingleStep(0.05)
-        self.mag_hysteresis_spin.setMaximumWidth(60)
-        self.mag_hysteresis_spin.setToolTip("Prevents objects from flickering at magnitude filter boundaries during animation")
-        self.mag_hysteresis_spin.valueChanged.connect(self._on_hysteresis_changed)
-        hyst_row.addWidget(self.mag_hysteresis_spin)
-        hyst_row.addWidget(QLabel("mag"))
-        hyst_row.addStretch()
-        advanced_layout.addLayout(hyst_row)
-
-        hyst_help = QLabel("Set to 0.00 to disable. Reduces 'twinkling' at filter boundaries.")
-        hyst_help.setStyleSheet("color: gray; font-style: italic;")
-        advanced_layout.addWidget(hyst_help)
-
-        advanced_group.setLayout(advanced_layout)
-        self._layout.addWidget(advanced_group)
-        self.collapsible_sections.append(advanced_group)
 
         # Scripted Playback section
         script_group = CollapsibleGroupBox("Scripted Playback")
@@ -8904,6 +8986,189 @@ class SettingsDialog(QDialog):
         # Script recording state
         self._script_recording = False
         self._script_buffer = []  # List of JD values
+
+        # Advanced Controls section (keyboard navigation)
+        advanced_group = CollapsibleGroupBox("Advanced Controls")
+        advanced_layout = QVBoxLayout()
+        advanced_layout.setSpacing(3)
+
+        # Trailing section (at top of Advanced Controls)
+        trail_label = QLabel("Trailing (during animation):")
+        trail_label.setStyleSheet("font-weight: bold;")
+        advanced_layout.addWidget(trail_label)
+
+        # Enable trailing checkbox
+        self.enable_trailing_check = QCheckBox("Enable trails")
+        self.enable_trailing_check.setChecked(False)
+        self.enable_trailing_check.setToolTip("Show motion trails during animation")
+        self.enable_trailing_check.stateChanged.connect(self.on_trailing_changed)
+        advanced_layout.addWidget(self.enable_trailing_check)
+
+        # Trail length
+        trail_len_row = QHBoxLayout()
+        trail_len_row.addWidget(QLabel("Trail length:"))
+        self.trail_length_spin = QSpinBox()
+        self.trail_length_spin.setRange(5, 10000)  # Allow very long trails
+        self.trail_length_spin.setValue(50)
+        self.trail_length_spin.setMaximumWidth(70)
+        self.trail_length_spin.setToolTip("Number of animation steps to retain in trail history")
+        self.trail_length_spin.valueChanged.connect(self.on_trailing_changed)
+        trail_len_row.addWidget(self.trail_length_spin)
+        trail_len_row.addWidget(QLabel("steps"))
+        trail_len_row.addStretch()
+        advanced_layout.addLayout(trail_len_row)
+
+        # Trail line weight
+        weight_row = QHBoxLayout()
+        weight_row.addWidget(QLabel("Line weight:"))
+        self.trail_weight_spin = QDoubleSpinBox()
+        self.trail_weight_spin.setRange(0.5, 5.0)
+        self.trail_weight_spin.setValue(1.0)
+        self.trail_weight_spin.setSingleStep(0.5)
+        self.trail_weight_spin.setMaximumWidth(60)
+        self.trail_weight_spin.setToolTip("Trail line thickness in pixels")
+        self.trail_weight_spin.valueChanged.connect(self.on_trailing_changed)
+        weight_row.addWidget(self.trail_weight_spin)
+        weight_row.addWidget(QLabel("px"))
+        weight_row.addStretch()
+        advanced_layout.addLayout(weight_row)
+
+        # Trail color
+        color_row = QHBoxLayout()
+        color_row.addWidget(QLabel("Trail color:"))
+        self.trail_color = QLineEdit("#00AA00")
+        self.trail_color.setMaximumWidth(70)
+        self.trail_color.setToolTip("Trail line color (green default)")
+        color_row.addWidget(self.trail_color)
+        color_row.addStretch()
+        advanced_layout.addLayout(color_row)
+
+        # Clear trails button
+        self.clear_trails_btn = QPushButton("Clear Trails")
+        self.clear_trails_btn.setToolTip("Remove all accumulated trail history")
+        self.clear_trails_btn.clicked.connect(self.on_clear_trails)
+        self.clear_trails_btn.setMaximumWidth(100)
+        advanced_layout.addWidget(self.clear_trails_btn)
+
+        # Fast animation section
+        fast_sep = QFrame()
+        if PYQT_VERSION == 6:
+            fast_sep.setFrameShape(QFrame.Shape.HLine)
+        else:
+            fast_sep.setFrameShape(QFrame.HLine)
+        fast_sep.setStyleSheet("color: #ccc;")
+        advanced_layout.addWidget(fast_sep)
+
+        fast_label = QLabel("Animation Performance:")
+        fast_label.setStyleSheet("font-weight: bold;")
+        advanced_layout.addWidget(fast_label)
+
+        # Fast animation checkbox
+        self.fast_animation_check = QCheckBox("Fast animation mode")
+        self.fast_animation_check.setChecked(False)
+        self.fast_animation_check.setToolTip("Show fewer points during animation for smoother playback")
+        advanced_layout.addWidget(self.fast_animation_check)
+
+        # Decimation factor
+        decimate_row = QHBoxLayout()
+        decimate_row.addWidget(QLabel("Show every"))
+        self.decimate_spin = QSpinBox()
+        self.decimate_spin.setRange(2, 20)
+        self.decimate_spin.setValue(4)
+        self.decimate_spin.setMaximumWidth(50)
+        self.decimate_spin.setToolTip("Show every Nth point during animation (4 = 25% of points)")
+        decimate_row.addWidget(self.decimate_spin)
+        decimate_row.addWidget(QLabel("points"))
+        decimate_row.addStretch()
+        advanced_layout.addLayout(decimate_row)
+
+        # Hidden controls for backward compatibility with factory reset
+        self.trails_before_discovery_check = QCheckBox()
+        self.trails_before_discovery_check.hide()
+        self.trail_before_color = QLineEdit()
+        self.trail_before_color.hide()
+        self.trail_after_color = QLineEdit()
+        self.trail_after_color.hide()
+
+        # Hidden controls for keyboard navigation compatibility (used by factory reset)
+        self.ud_increment_spin = QSpinBox()
+        self.ud_increment_spin.setValue(1)
+        self.ud_increment_spin.hide()
+        self.ud_unit_combo = QComboBox()
+        self.ud_unit_combo.addItems(["lunation", "month", "year"])
+        self.ud_unit_combo.setCurrentText("lunation")
+        self.ud_unit_combo.hide()
+
+        # Separator before misc options
+        sep1 = QFrame()
+        if PYQT_VERSION == 6:
+            sep1.setFrameShape(QFrame.Shape.HLine)
+        else:
+            sep1.setFrameShape(QFrame.HLine)
+        sep1.setStyleSheet("color: #ccc;")
+        advanced_layout.addWidget(sep1)
+
+        # Hide missing tracklets (moved from Discovery Circumstances)
+        self.hide_missing_discovery_check = QCheckBox("Hide NEOs with missing discovery tracklets")
+        self.hide_missing_discovery_check.setChecked(False)
+        self.hide_missing_discovery_check.setToolTip("Hide NEOs that don't have discovery tracklet data")
+        self.hide_missing_discovery_check.stateChanged.connect(self.on_discovery_changed)
+        advanced_layout.addWidget(self.hide_missing_discovery_check)
+
+        # Collapsible control panels
+        self.kiosk_mode_check = QCheckBox("Collapsible control panels")
+        self.kiosk_mode_check.setChecked(False)
+        self.kiosk_mode_check.setToolTip("Click top bar to collapse/expand all control panels as a drawer")
+        self.kiosk_mode_check.stateChanged.connect(self.on_appearance_changed)
+        advanced_layout.addWidget(self.kiosk_mode_check)
+
+        # Shift+[ and Shift+] keys for time navigation
+        lr_row = QHBoxLayout()
+        lr_row.addWidget(QLabel("Shift+[/] keys:"))
+        self.lr_increment_spin = QDoubleSpinBox()
+        self.lr_increment_spin.setRange(0.001, 1000)
+        self.lr_increment_spin.setValue(1.0)
+        self.lr_increment_spin.setDecimals(3)
+        self.lr_increment_spin.setSingleStep(0.1)
+        self.lr_increment_spin.setMaximumWidth(70)
+        lr_row.addWidget(self.lr_increment_spin)
+
+        self.lr_unit_combo = QComboBox()
+        self.lr_unit_combo.addItems(["minute", "hour", "solar day", "sidereal day", "lunation", "month", "year"])
+        self.lr_unit_combo.setCurrentText("hour")
+        self.lr_unit_combo.setMaximumWidth(100)
+        lr_row.addWidget(self.lr_unit_combo)
+        lr_row.addStretch()
+        advanced_layout.addLayout(lr_row)
+
+        # Help text
+        help_label = QLabel("Press Shift+[ to go back, Shift+] to go forward in time")
+        help_label.setStyleSheet("color: gray; font-style: italic;")
+        advanced_layout.addWidget(help_label)
+
+        # Magnitude hysteresis (reduces twinkling at filter boundaries)
+        hyst_row = QHBoxLayout()
+        hyst_row.addWidget(QLabel("Mag hysteresis:"))
+        self.mag_hysteresis_spin = QDoubleSpinBox()
+        self.mag_hysteresis_spin.setRange(0.00, 0.50)
+        self.mag_hysteresis_spin.setValue(0.10)
+        self.mag_hysteresis_spin.setDecimals(2)
+        self.mag_hysteresis_spin.setSingleStep(0.05)
+        self.mag_hysteresis_spin.setMaximumWidth(60)
+        self.mag_hysteresis_spin.setToolTip("Prevents objects from flickering at magnitude filter boundaries during animation")
+        self.mag_hysteresis_spin.valueChanged.connect(self._on_hysteresis_changed)
+        hyst_row.addWidget(self.mag_hysteresis_spin)
+        hyst_row.addWidget(QLabel("mag"))
+        hyst_row.addStretch()
+        advanced_layout.addLayout(hyst_row)
+
+        hyst_help = QLabel("Set to 0.00 to disable. Reduces 'twinkling' at filter boundaries.")
+        hyst_help.setStyleSheet("color: gray; font-style: italic;")
+        advanced_layout.addWidget(hyst_help)
+
+        advanced_group.setLayout(advanced_layout)
+        self._layout.addWidget(advanced_group)
+        self.collapsible_sections.append(advanced_group)
 
         # Set content layout and add to scroll area
         content.setLayout(self._layout)
@@ -9127,11 +9392,35 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         if parent and hasattr(parent, 'on_site_filter_changed'):
             parent.on_site_filter_changed()
-    
+
+    def on_misc_filter_changed(self):
+        """Emit signal when miscellaneous filter settings change"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'on_misc_filter_changed'):
+            parent.on_misc_filter_changed()
+
+    def get_misc_filter_settings(self):
+        """Return current miscellaneous filter settings"""
+        return {
+            'hide_numbered': self.hide_numbered_check.isChecked(),
+            'geo_near_enabled': self.geo_near_check.isChecked(),
+            'geo_near_dist': self.geo_near_spin.value(),
+            'geo_far_enabled': self.geo_far_check.isChecked(),
+            'geo_far_dist': self.geo_far_spin.value(),
+            'helio_near_enabled': self.helio_near_check.isChecked(),
+            'helio_near_dist': self.helio_near_spin.value(),
+            'helio_far_enabled': self.helio_far_check.isChecked(),
+            'helio_far_dist': self.helio_far_spin.value()
+        }
+
     def get_sunmoon_settings(self):
         """Return current sun and moon display settings"""
         return {
             'show_sun': self.show_sun_check.isChecked(),
+            'solar_elongation_enabled': self.solar_elongation_check.isChecked(),
+            'solar_radius': self.solar_radius_spin.value(),
+            'solar_color': self.solar_color_edit.text(),
+            'solar_show_bounds': self.solar_show_bounds.isChecked(),
             'show_moon': self.show_moon_check.isChecked(),
             'show_phases': self.show_moon_phases_check.isChecked(),
             'lunar_exclusion_enabled': self.lunar_exclusion_check.isChecked(),
@@ -10063,7 +10352,11 @@ class NEOVisualizer(QMainWindow):
     def on_site_filter_changed(self):
         """Handle changes to site filter settings"""
         self.update_display()
-    
+
+    def on_misc_filter_changed(self):
+        """Handle changes to miscellaneous filter settings"""
+        self.update_display()
+
     def on_sunmoon_changed(self):
         """Handle changes to sun/moon display settings"""
         # Force overlay redraw
@@ -10794,13 +11087,22 @@ class NEOVisualizer(QMainWindow):
                 site_filter = self.settings_dialog.get_site_filter_settings()
             else:
                 site_filter = {'whitelist_enabled': False, 'whitelist': [], 'blacklist_enabled': False, 'blacklist': []}
-            
+
+            # Get miscellaneous filter settings (hide numbered, distance filters)
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_misc_filter_settings'):
+                misc_filter = self.settings_dialog.get_misc_filter_settings()
+            else:
+                misc_filter = {'hide_numbered': False}
+
             # Get sun/moon display settings
             if self.settings_dialog and hasattr(self.settings_dialog, 'get_sunmoon_settings'):
                 sunmoon_settings = self.settings_dialog.get_sunmoon_settings()
             else:
-                sunmoon_settings = {'show_sun': True, 'show_moon': True, 'show_phases': False,
-                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0, 
+                sunmoon_settings = {'show_sun': True,
+                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
+                                    'solar_color': '#FFD700', 'solar_show_bounds': True,
+                                    'show_moon': True, 'show_phases': False,
+                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
                                     'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True}
             
             # Store sunmoon settings on canvas for draw_celestial_overlays
@@ -10823,11 +11125,12 @@ class NEOVisualizer(QMainWindow):
             # FIX: If no classes selected, show nothing
             if selected_classes is None:
                 self.canvas.update_plot(None, mag_min, mag_max, jd, self.neo_classes_panel.show_hollow_check.isChecked(),
-                                       h_min, h_max, selected_classes, moid_enabled, moid_min, moid_max, orb_filters, 
+                                       h_min, h_max, selected_classes, moid_enabled, moid_min, moid_max, orb_filters,
                                        asteroids=None, size_settings=size_settings,
                                        galactic_settings=galactic_settings, opposition_settings=opposition_settings,
                                        hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
-                                       color_by=color_by, show_legend=show_legend, site_filter=site_filter)
+                                       color_by=color_by, show_legend=show_legend, site_filter=site_filter,
+                                       misc_filter=misc_filter)
                 self.status_label.setText("No orbit classes selected")
                 return
             
@@ -10924,7 +11227,8 @@ class NEOVisualizer(QMainWindow):
                                        asteroids=None, size_settings=size_settings,
                                        galactic_settings=galactic_settings, opposition_settings=opposition_settings,
                                        hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
-                                       color_by=color_by, show_legend=show_legend, site_filter=site_filter)
+                                       color_by=color_by, show_legend=show_legend, site_filter=site_filter,
+                                       misc_filter=misc_filter)
                 if lunation_discoveries_only:
                     try:
                         current_cln, _ = jd_to_cln(jd)
@@ -10959,7 +11263,8 @@ class NEOVisualizer(QMainWindow):
                                    asteroids=display_asteroids, size_settings=size_settings,
                                    galactic_settings=galactic_settings, opposition_settings=opposition_settings,
                                    hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
-                                   color_by=color_by, show_legend=show_legend, site_filter=site_filter)
+                                   color_by=color_by, show_legend=show_legend, site_filter=site_filter,
+                                   misc_filter=misc_filter)
 
             if self.show_fps:
                 t2 = time.time()
@@ -11210,6 +11515,10 @@ class NEOVisualizer(QMainWindow):
                 
                 # Sun and Moon
                 self.settings_dialog.show_sun_check.setChecked(True)
+                self.settings_dialog.solar_elongation_check.setChecked(False)
+                self.settings_dialog.solar_radius_spin.setValue(45.0)
+                self.settings_dialog.solar_color_edit.setText("#FFD700")
+                self.settings_dialog.solar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_check.setChecked(True)
                 self.settings_dialog.lunar_exclusion_check.setChecked(False)
                 self.settings_dialog.lunar_radius_spin.setValue(30.0)
@@ -11235,12 +11544,21 @@ class NEOVisualizer(QMainWindow):
                 # Discovery Circumstances
                 self.settings_dialog.hide_missing_discovery_check.setChecked(False)
                 
-                # Site Filtering
+                # Miscellaneous Filters (including site filtering)
+                self.settings_dialog.hide_numbered_check.setChecked(False)  # Show all by default
+                self.settings_dialog.geo_near_check.setChecked(False)
+                self.settings_dialog.geo_near_spin.setValue(0.0)
+                self.settings_dialog.geo_far_check.setChecked(False)
+                self.settings_dialog.geo_far_spin.setValue(5.0)
+                self.settings_dialog.helio_near_check.setChecked(False)
+                self.settings_dialog.helio_near_spin.setValue(0.0)
+                self.settings_dialog.helio_far_check.setChecked(False)
+                self.settings_dialog.helio_far_spin.setValue(5.0)
                 self.settings_dialog.site_whitelist_check.setChecked(False)
                 self.settings_dialog.site_whitelist_edit.clear()
                 self.settings_dialog.site_blacklist_check.setChecked(False)
                 self.settings_dialog.site_blacklist_edit.clear()
-                
+
                 # Advanced Controls
                 self.settings_dialog.lr_increment_spin.setValue(1.0)
                 self.settings_dialog.lr_unit_combo.setCurrentText("hour")
@@ -11374,6 +11692,10 @@ class NEOVisualizer(QMainWindow):
                 # Sun and Moon - all parameters
                 settings['sunmoon'] = {
                     'show_sun': self.settings_dialog.show_sun_check.isChecked(),
+                    'solar_elongation_enabled': self.settings_dialog.solar_elongation_check.isChecked(),
+                    'solar_radius': self.settings_dialog.solar_radius_spin.value(),
+                    'solar_color': self.settings_dialog.solar_color_edit.text(),
+                    'solar_show_bounds': self.settings_dialog.solar_show_bounds.isChecked(),
                     'show_moon': self.settings_dialog.show_moon_check.isChecked(),
                     'show_phases': self.settings_dialog.show_moon_phases_check.isChecked(),
                     'lunar_exclusion_enabled': self.settings_dialog.lunar_exclusion_check.isChecked(),
@@ -11413,7 +11735,20 @@ class NEOVisualizer(QMainWindow):
                     'blacklist_enabled': self.settings_dialog.site_blacklist_check.isChecked(),
                     'blacklist': self.settings_dialog.site_blacklist_edit.text()
                 }
-                
+
+                # Miscellaneous Filters
+                settings['misc_filter'] = {
+                    'hide_numbered': self.settings_dialog.hide_numbered_check.isChecked(),
+                    'geo_near_enabled': self.settings_dialog.geo_near_check.isChecked(),
+                    'geo_near_dist': self.settings_dialog.geo_near_spin.value(),
+                    'geo_far_enabled': self.settings_dialog.geo_far_check.isChecked(),
+                    'geo_far_dist': self.settings_dialog.geo_far_spin.value(),
+                    'helio_near_enabled': self.settings_dialog.helio_near_check.isChecked(),
+                    'helio_near_dist': self.settings_dialog.helio_near_spin.value(),
+                    'helio_far_enabled': self.settings_dialog.helio_far_check.isChecked(),
+                    'helio_far_dist': self.settings_dialog.helio_far_spin.value()
+                }
+
                 # Advanced Controls
                 settings['advanced'] = {
                     'lr_increment': self.settings_dialog.lr_increment_spin.value(),
@@ -11580,6 +11915,10 @@ class NEOVisualizer(QMainWindow):
                 if 'sunmoon' in settings:
                     s = settings['sunmoon']
                     self.settings_dialog.show_sun_check.setChecked(s.get('show_sun', True))
+                    self.settings_dialog.solar_elongation_check.setChecked(s.get('solar_elongation_enabled', False))
+                    self.settings_dialog.solar_radius_spin.setValue(s.get('solar_radius', 45.0))
+                    self.settings_dialog.solar_color_edit.setText(s.get('solar_color', '#FFD700'))
+                    self.settings_dialog.solar_show_bounds.setChecked(s.get('solar_show_bounds', True))
                     self.settings_dialog.show_moon_check.setChecked(s.get('show_moon', True))
                     self.settings_dialog.show_moon_phases_check.setChecked(s.get('show_phases', False))
                     self.settings_dialog.lunar_exclusion_check.setChecked(s.get('lunar_exclusion_enabled', False))
@@ -11618,7 +11957,20 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.site_whitelist_edit.setText(sf.get('whitelist', ''))
                     self.settings_dialog.site_blacklist_check.setChecked(sf.get('blacklist_enabled', False))
                     self.settings_dialog.site_blacklist_edit.setText(sf.get('blacklist', ''))
-                
+
+                # Miscellaneous Filters
+                if 'misc_filter' in settings:
+                    mf = settings['misc_filter']
+                    self.settings_dialog.hide_numbered_check.setChecked(mf.get('hide_numbered', False))
+                    self.settings_dialog.geo_near_check.setChecked(mf.get('geo_near_enabled', False))
+                    self.settings_dialog.geo_near_spin.setValue(mf.get('geo_near_dist', 0.0))
+                    self.settings_dialog.geo_far_check.setChecked(mf.get('geo_far_enabled', False))
+                    self.settings_dialog.geo_far_spin.setValue(mf.get('geo_far_dist', 5.0))
+                    self.settings_dialog.helio_near_check.setChecked(mf.get('helio_near_enabled', False))
+                    self.settings_dialog.helio_near_spin.setValue(mf.get('helio_near_dist', 0.0))
+                    self.settings_dialog.helio_far_check.setChecked(mf.get('helio_far_enabled', False))
+                    self.settings_dialog.helio_far_spin.setValue(mf.get('helio_far_dist', 5.0))
+
                 # Advanced Controls
                 if 'advanced' in settings:
                     a = settings['advanced']
