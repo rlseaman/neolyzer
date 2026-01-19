@@ -1,0 +1,254 @@
+DELTA CACHING AND ORBIT INTEGRATION DISCUSSION
+==============================================
+Date: 2026-01-19
+
+This conversation explores possibilities for adding orbit integration and
+incremental update capabilities to NEOlyzer.
+
+--------------------------------------------------------------------------------
+
+USER:
+Good Morning. I'd like to talk about the possibilities for adding more
+computationally expensive features and/or those involving more complex coding
+challenges. So, for this session, please comment only, no significant code
+changes. First question: how are your C/C++ skills? How well does "Claude Code"
+in particular manage the build process? Can multiple languages be integrated
+into single projects? What about more vintage languages like Fortran? That's
+enough to get started.
+
+CLAUDE:
+Good morning. Happy to discuss.
+
+**C/C++ skills:** Strong. I can write idiomatic C and modern C++ (through
+C++20), handle memory management, pointers, templates, RAII patterns, and the
+standard library. For scientific computing, I'm comfortable with performance
+optimization — cache-friendly data layouts, SIMD intrinsics, OpenMP
+parallelization. I understand the footguns (undefined behavior, buffer
+overflows, etc.) and how to avoid them.
+
+**Claude Code and build processes:** Claude Code works well with CMake, Make,
+autotools, and other build systems. I can create CMakeLists.txt files,
+configure compiler flags, link libraries, and debug build errors. The iterative
+nature of builds (edit, compile, fix errors, repeat) fits the tool-use model
+well. Cross-platform builds (macOS/Linux/Windows) are manageable with
+appropriate conditionals.
+
+**Multi-language integration:** Yes, this is common and well-supported. The
+typical patterns:
+- **Python + C/C++:** Via ctypes, cffi, Cython, pybind11, or Python C
+  extensions. pybind11 is particularly clean for exposing C++ to Python.
+- **Python + Fortran:** Via f2py (part of NumPy) or direct shared library calls.
+- The general pattern is: compile the performance-critical code to a shared
+  library (.so/.dylib/.dll), then call it from Python.
+
+**Fortran:** I can read and write Fortran — both legacy (F77 fixed-format) and
+modern (F90/95/2003 free-format). Many orbital mechanics libraries and legacy
+astronomical codes are in Fortran. f2py makes wrapping Fortran for Python
+relatively straightforward.
+
+For NEOlyzer specifically, what kinds of computationally expensive features are
+you considering? Orbit propagation, Monte Carlo uncertainty analysis, collision
+probability calculations? That context would help me think about the right
+approach.
+
+--------------------------------------------------------------------------------
+
+USER:
+Orbit propagation is one area. Since NEOlyzer is already caching the historical
+and predicted positions of NEOs, it seems to me the cached positions might as
+well be the correctly integrated ones. It could be acceptable for the necessary
+setup time to increase to allow for the 40,000+ daily, weekly, or monthly
+integrations back from the current catalog of orbits. Indeed, our project
+already invests resources in managing orbital integrations for the larger
+MPCORB.DAT catalog with ~1.5 million entries (and soon to grow much larger),
+this can be over several year periods. The perturbers can include the larger
+main belt asteroids, not just the planets. I'd have to see how the
+non-gravitational effects are handled by the orbit integrating code.
+
+CLAUDE:
+This is a natural evolution. The current approach uses Keplerian two-body
+propagation via Skyfield's `KeplerianOrbit` — computationally cheap but
+increasingly inaccurate over longer timespans, especially for NEOs with close
+planetary encounters or high eccentricity.
+
+**Existing integration packages worth considering:**
+
+- **REBOUND** (C with Python bindings): Widely used, multiple integrators
+  (IAS15 for high accuracy, WHFast for speed). Clean API. Handles arbitrary
+  perturbers. MIT licensed.
+
+- **ASSIST** (built on REBOUND): Specifically designed for asteroid/NEO
+  propagation in the Solar System. Includes planetary ephemerides integration,
+  handles close encounters well. From the same team (Hanno Rein et al.).
+
+- **OpenOrb** (Fortran with Python wrappers): Finnish heritage, used by
+  LSST/Rubin. Designed for asteroid orbit computation and ephemeris prediction.
+  Handles statistical ranging and orbit determination.
+
+- **OrbFit** (Fortran): The consortium standard for NEO orbit determination.
+  Handles non-gravitational parameters (A1, A2, A3 for Yarkovsky/radiation
+  pressure). More oriented toward orbit fitting than bulk propagation, but the
+  integrator is solid.
+
+- **SOFA/NOVAS** (C/Fortran): Lower-level astrometry libraries, not full
+  integrators but useful for reference frame transformations.
+
+**Non-gravitational effects:**
+
+Most integrators handle this via the Marsden-Sekanina formalism (A1, A2, A3
+parameters) or direct Yarkovsky modeling. The MPC catalog increasingly includes
+these parameters for well-observed NEOs. The question is whether your existing
+MPCORB pipeline already computes/stores these, and whether the integration code
+you use accepts them.
+
+**Architecture questions:**
+
+- Would integration happen at setup time (build full cache once) or
+  incrementally (nightly updates)?
+- Cache format implications — HDF5 can certainly handle this, but the
+  generation pipeline becomes more complex.
+- Error budgets — how accurate does visualization really need to be vs. the
+  definitive calculations your team runs separately?
+
+What integration code does your current MPCORB pipeline use?
+
+--------------------------------------------------------------------------------
+
+USER:
+We use https://www.projectpluto.com/pluto/integrat.htm (and work directly with
+the programmer) but other options might be acceptable. Do you agree that at
+least two options exist, of integrating the orbits external to NEOlyzer and
+arranging for the NEOlyzer setup process to import the results, versus building
+orbit integration directly into the NEOlyzer code base (but likely not in
+Python), if the chore of repeatedly integrating 40,000+ orbits over a
+decades-long grid proves manageable? I should point out that the orbits of NEOs
+are more frequently updated than the orbits of main belt asteroids, so it isn't
+really a sunk cost to throw out the previous days integrations.
+
+CLAUDE:
+Yes, those two options are distinct and each has merit.
+
+**Option 1: External integration, import results**
+
+Advantages:
+- Leverages trusted, validated code (Project Pluto's integrat is well-regarded;
+  Bill Gray's work is meticulous)
+- NEOlyzer remains a visualization/analysis tool, not an orbit computation tool
+- Your team already has expertise and infrastructure for this pipeline
+- Easier to validate — compare against JPL Horizons or your existing products
+- Clear separation of concerns
+
+Disadvantages:
+- Dependency on external pipeline and format coordination
+- Setup process becomes: run integration pipeline → export → NEOlyzer import
+- Two codebases to maintain/coordinate when catalog format changes
+
+**Option 2: Built-in integration**
+
+Advantages:
+- Self-contained — users run setup, everything happens
+- Potentially easier distribution (single tool)
+- Could optimize specifically for NEOlyzer's needs (time grid, precision
+  requirements)
+
+Disadvantages:
+- Significant development and validation effort
+- Duplicates capability you already have
+- Orbit integration is subtle — edge cases, close encounters, numerical
+  stability
+- Ongoing maintenance burden for code that isn't your core mission
+
+**The daily update cycle is the key consideration.** If NEO orbits change
+frequently enough that yesterday's integrations are stale, the question becomes:
+who is better positioned to run that daily computation? Your existing pipeline
+with Project Pluto tools, or a fresh implementation in NEOlyzer?
+
+Given your direct relationship with Bill Gray and existing infrastructure,
+Option 1 seems more pragmatic — unless there's a compelling reason for NEOlyzer
+to be fully standalone. Is standalone deployment to users without your pipeline
+access a goal?
+
+--------------------------------------------------------------------------------
+
+USER:
+Option 1 is more attractive. I should say that we're already engaged in an
+archival project that will require daily integrations of the entire MPCORB.DAT
+file. What requirements and infrastructure would NEOlyzer need to tap into this
+with a daily update cadence? I'm imagining that Catalina Sky Survey (my team)
+would make updated cache or catalog or database or other format files available
+to the NEOlyzer users for download. Note that not all NEO orbits are updated
+daily, only those with new observations, or even those without on roughly a
+200-day cadence. Can the underlying NEOlyzer data files be updated as diffs for
+only a subset of objects (that is, update the cached positions also)? Could this
+be efficient either at runtime or a lightweight delta setup procedure?
+
+CLAUDE:
+Good questions about the practical architecture.
+
+**Current NEOlyzer data structure:**
+- SQLite database: orbital elements, metadata, MOID values, discovery tracklets
+- HDF5 cache: pre-computed positions on time grids (daily/weekly/monthly tiers)
+
+**Delta updates for the database (straightforward):**
+
+SQLite handles incremental updates naturally. A delta file could be a simple
+format — CSV or JSON with object designations and updated orbital elements. The
+update process: match on designation, INSERT or UPDATE. This is lightweight and
+fast.
+
+**Delta updates for the position cache (more complex):**
+
+The current HDF5 structure stores positions in large arrays indexed by object.
+Updating a subset requires either:
+
+1. **Per-object chunking:** Restructure HDF5 so each object's positions are a
+   separate dataset or chunk. Then deltas replace individual chunks. HDF5
+   supports this but it changes the access patterns.
+
+2. **Overlay architecture:** Keep a "base" cache (full integration from some
+   epoch) plus "overlay" files with recent updates. At runtime, overlay takes
+   precedence. Periodically merge overlays into base.
+
+3. **Switch to SQLite for positions:** SQLite can store position time series
+   efficiently (object_id, jd, ra, dec, possibly compressed). Updates become
+   simple row operations. Slightly slower random access than HDF5 but much more
+   update-friendly.
+
+**Distribution model:**
+
+CSS publishes daily:
+- `neo_catalog_YYYYMMDD.db` (or delta: `neo_delta_YYYYMMDD.sql`)
+- `neo_positions_YYYYMMDD.h5` (or delta format)
+- Manifest file with checksums and "changed since" object list
+
+NEOlyzer update command:
+```
+./run_update.sh  # Downloads deltas, applies to local files
+```
+
+**Efficiency considerations:**
+
+If ~1-5% of NEOs update daily, delta files would be perhaps 1/20th to 1/100th
+the size of full replacement. The 200-day refresh cadence means the "long tail"
+of unchanged objects eventually cycles through anyway.
+
+**Key design question:** Should updates be pushed into the existing cache
+structure, or would a "base + overlays" model be cleaner operationally? The
+latter avoids ever modifying the base files, which simplifies rollback and
+debugging.
+
+--------------------------------------------------------------------------------
+
+END OF DISCUSSION
+
+Summary: Option 1 (external integration with CSS-published updates) is the
+preferred approach. Key considerations for future implementation:
+
+1. CSS would produce daily integrated ephemerides as part of existing archival
+   project
+2. NEOlyzer would download and apply delta updates (not full replacements)
+3. Database deltas are straightforward (SQLite INSERT/UPDATE)
+4. Position cache deltas require architectural decision: per-object chunking,
+   overlay files, or switch to SQLite for positions
+5. Not all objects update daily — only those with new observations or on
+   ~200-day refresh cadence
