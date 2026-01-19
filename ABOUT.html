@@ -10,10 +10,16 @@ by Claude and confirmed by Rob. NEO resource choices, the other way around.</p>
 <p>NEOlyzer is available from:</p>
 <p style="margin-left: 20px;"><a href="https://github.com/rlseaman/neolyzer">https://github.com/rlseaman/neolyzer</a></p>
 
-<p>The source code and various text files will provide context related to this project and its
-use of AI coding practices. I am wondering how the AI paradigm (send comments to Rob who will
-chat with Claude and push updates) will coexist with the gitmosphere mosh pit (everybody
-modifies everything). Neither programming model is prevalent in the Planetary Defense community.</p>
+<p>The source code and various text files provide context related to this project and its use of
+AI coding practices, in particular the many dependencies on third-party Python software packages.
+Claude and I thank two of these projects in particular:
+<a href="https://rhodesmill.org/skyfield/">Skyfield</a>, which has indeed proven to provide "Elegant
+Astronomy for Python", and the absolutely fundamental importance to our community of the planetary
+ephemerides from NASA's <a href="https://ssd.jpl.nasa.gov/planets/orbits.html">Jet Propulsion Laboratory</a>.</p>
+
+<p>If you are new to the NEO community, NASA's
+<a href="https://science.nasa.gov/planetary-defense/">Planetary Defense Coordination Office"</a> (PDCO)
+is the place to start your journey.</p>
 
 <p>AI coding tools are much more capable in 2026 than they were the last time I checked in on
 the options in 2023. <a href="https://claude.com/product/claude-code">Claude Code</a> was used for this
@@ -23,19 +29,23 @@ that are growing like weeds. Let the buyer beware!</p>
 
 <p>The regular Claude Chat interface was more than sufficient to get to the stage of a
 "Minimum Viable Product" (MVP), the goal of "vibe coding" in 2025. I would not be
-surprised if vibe coding as a concept becomes pass&eacute; in 2026. I can say is that this
-experienced, but world-weary programmer found the AI coding paradigm to be very productive.</p>
-
-<p>But I have a hard time imagining how a younger Rob, learning to program in high school,
-undergraduate, and into graduate school, would have dealt with such a tool. I very much
-suspect I would not have had the discipline necessary to learn the underlying computer
-science and systems software architectures, but would have used AI as a crutch.</p>
+surprised if vibe coding as a concept becomes pass&eacute; in 2026. All I can say is that this
+experienced but world-weary programmer found the AI coding paradigm to be very productive,
+and the MVP version of NEOlyzer was reached long before two weeks had elapsed, which is
+how long it has been from my first prompt to the AI to writing this text.</p>
 
 <p>Note that NEOlyzer itself makes no use of AI or machine learning techniques. It is a capable
 plotting layer with many options of map projection, coordinates, source filtering, etc., on
-top of a database, with caching of sky coordinates supporting a trade-off between the number
-of NEOs plotted and the speed of rendering during animation. The database is as important
-as the mapping and I welcome suggestions and corrections related to both.</p>
+top of a database deriving from <a href="https://minorplanetcenter.net/iau/MPCORB/NEA.txt">NEA.txt</a>
+from the <a href="https://minorplanetcenter.net">MPC</a>, MOIDs fetched from the
+<a href="https://ssd-api.jpl.nasa.gov/doc/sbdb.html">JPL SBDB API</a>, and discovery circumstances
+by a bespoke <a href="https://sbnmpc.astro.umd.edu/MPC_database/replication-info.shtml">PostgreSQL query</a>
+from the <a href="https://pdssbn.astro.umd.edu">PDS SBN</a>, Caching of sky coordinates
+supports a trade-off between the number of NEOs plotted and the speed of rendering during
+animation.</p>
+
+<p>The database is as important as the mapping. I welcome feature suggestions and
+error reports related to both.</p>
 
 <hr>
 

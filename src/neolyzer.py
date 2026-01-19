@@ -11592,15 +11592,16 @@ class NEOVisualizer(QMainWindow):
             logo_label.setAlignment(QtCompat.AlignTop | QtCompat.AlignLeft)
             logo_container_layout.addWidget(logo_label)
 
-            # About button under logo
-            about_btn = QPushButton("About")
-            about_btn.setMaximumWidth(60)
+            # About button under logo with spacing
+            logo_container_layout.addSpacing(8)
+            about_btn = QPushButton("ℹ️ About")
+            about_btn.setMaximumWidth(70)
             about_btn.setToolTip("About NEOlyzer")
             about_btn.clicked.connect(self.show_about)
             logo_container_layout.addWidget(about_btn, 0, QtCompat.AlignHCenter)
 
             self.logo_container.setLayout(logo_container_layout)
-            self.logo_container.setMaximumSize(130, 160)  # Taller to accommodate button
+            self.logo_container.setMaximumSize(130, 168)  # Taller to accommodate button + spacing
             top_section.addWidget(self.logo_container, 0, QtCompat.AlignTop)
         
         # RIGHT: Control Panel (compact horizontal layout)
