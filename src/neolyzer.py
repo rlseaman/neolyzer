@@ -9182,8 +9182,7 @@ class SettingsDialog(QDialog):
         misc_layout.addWidget(sep1)
 
         # Geocentric distances label
-        geo_label = QLabel("Geocentric distances")
-        geo_label.setStyleSheet("font-weight: bold; font-size: 9pt;")
+        geo_label = QLabel("<b>Geocentric distances</b>")
         misc_layout.addWidget(geo_label)
 
         # Geocentric distance filters (r)
@@ -9224,8 +9223,7 @@ class SettingsDialog(QDialog):
         misc_layout.addLayout(geo_far_row)
 
         # Heliocentric distances label
-        helio_label = QLabel("Heliocentric distances")
-        helio_label.setStyleSheet("font-weight: bold; font-size: 9pt;")
+        helio_label = QLabel("<b>Heliocentric distances</b>")
         misc_layout.addWidget(helio_label)
 
         # Heliocentric distance filters (Δ)
