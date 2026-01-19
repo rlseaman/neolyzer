@@ -1,0 +1,235 @@
+DATA FUSION AND DATABASE ARCHITECTURE DISCUSSION
+================================================
+Date: 2026-01-19
+
+This conversation explores possibilities for enriching NEOlyzer's database
+with additional data sources and scaling for future catalog growth.
+
+--------------------------------------------------------------------------------
+
+USER:
+Second question regarding adding complex features to NEOlyzer. The job of the
+Catalina Sky Survey (https://catalina.lpl.arizona.edu) is to find near-Earth
+asteroids and improve their orbits through astrometric follow-up. We work within
+the larger planetary defense community (https://science.nasa.gov/planetary-defense/)
+and also provide tools (like NEOlyzer itself), in particular our targeting
+broker, NEOfixer (https://neofixer.arizona.edu). Please comment on the
+practicality, efficiency, and utility of merging information into the SQLite
+database via the NEOfixer API (https://neofixer.arizona.edu/api-info), either at
+setup time or runtime.
+
+CLAUDE:
+This is an interesting integration possibility. Let me think through the
+dimensions.
+
+**What NEOfixer likely provides that NEOlyzer could use:**
+
+- Follow-up priority scores or urgency rankings
+- Orbital uncertainty metrics (how well-determined is the orbit?)
+- Time-critical flags (objects at risk of being lost)
+- Recent observation history
+- Observability predictions for specific sites
+- Confirmation status for newly discovered objects
+
+**Setup-time integration:**
+
+Advantages:
+- Single API call (or paginated batch) during setup
+- Data stored locally, no runtime latency
+- Works offline after setup
+- Minimal API load — one user, one fetch per setup
+
+Disadvantages:
+- Data is stale immediately (targeting priorities change hourly/daily)
+- Setup time increases
+- Need to handle API failures gracefully
+
+**Runtime integration:**
+
+Advantages:
+- Current data — priorities reflect latest observations
+- Could fetch on-demand for specific objects (click for details)
+- Natural fit for "what should I observe tonight?" use case
+
+Disadvantages:
+- Requires network connectivity during use
+- API rate limiting concerns if many users
+- Latency affects UI responsiveness
+- More complex error handling
+
+**Hybrid approach (likely best):**
+
+- Setup: Fetch bulk priority/uncertainty data, store in SQLite
+- Runtime: Optional "refresh priorities" button or automatic refresh on startup
+- On-demand: Detailed object info fetched when user clicks/selects specific NEO
+
+**Database schema considerations:**
+
+New table or columns for NEOfixer data:
+```
+neofixer_priority (designation, priority_score, uncertainty,
+                   last_obs_date, days_until_lost, fetched_at)
+```
+
+The `fetched_at` timestamp lets the UI indicate data freshness ("priorities as
+of 6 hours ago").
+
+**Practical questions:**
+
+1. Does the NEOfixer API support bulk queries (all NEOs) or only per-object
+   lookups?
+2. Is there authentication/rate limiting?
+3. What's the data volume — full priority list for 40K objects?
+4. Is there a "changes since timestamp" endpoint for efficient updates?
+
+Would the goal be to visualize priority overlaid on the sky map (color/size by
+urgency), or more for filtering/sorting in a table view?
+
+--------------------------------------------------------------------------------
+
+USER:
+More for filtering/sorting. I'll have to get back to you about the bulk download
+possibilities. I couldn't find the answer myself and will have to ask the human
+intelligence involved. To broaden the discussion, I am a data engineer, and my
+interest in NEOlyzer is as much about enhancing the underlying database(s) as
+about the visualization layer. The NEOlyzer database is currently the result of
+a data fusion between assets from the MPC, JPL, and a bespoke query I did to get
+the discovery circumstances. I would like to work toward enlarging/enriching the
+database with more information from JPL SBDB as well as from NEOfixer and
+perhaps some other community assets. (For instance, did you know you had an
+asteroid? https://minorplanetcenter.net/db_search/show_object?object_id=18838)
+Please comment on practical limits to enlarging the NEO database underlying
+NEOlyzer - the catalog of known NEOs is likely to increase by a factor of 10
+over the next decade - as well as ramifying its complexity, perhaps with
+additional tables requiring a normalized schema.
+
+CLAUDE:
+I did not know that — thank you for the introduction to (18838) Seaman. A
+fitting name for someone navigating the celestial seas.
+
+**SQLite scaling — the good news:**
+
+SQLite comfortably handles databases with millions of rows and file sizes in the
+tens of gigabytes. 400K NEOs with rich metadata is well within its design
+envelope. The SQLite developers explicitly target "edge" and embedded use cases
+with datasets of this scale. You won't hit fundamental limits.
+
+**The real constraints are architectural:**
+
+1. **Query patterns:** Flat tables work for simple filters. As queries become
+   more complex (joins across data sources, time-series analysis, aggregations),
+   schema design matters more than row count.
+
+2. **Update granularity:** Different data sources update on different cadences:
+   - MPC orbital elements: daily for active objects
+   - JPL SBDB physical properties: less frequent
+   - NEOfixer priorities: hourly/daily
+   - Discovery circumstances: essentially static
+
+   A normalized schema lets you update each independently without rewriting the
+   whole database.
+
+3. **Data provenance:** When fusing multiple sources, tracking where each datum
+   came from (and when) becomes important for debugging discrepancies.
+
+**Normalized schema sketch:**
+
+```
+objects (id, designation, name, orbit_class, discovery_date)
+    |
+orbital_elements (object_id, epoch, a, e, i, node, peri, M, source, fetched_at)
+    |
+physical_properties (object_id, H, G, diameter, albedo, rotation_period, source)
+    |
+discovery_circumstances (object_id, discovery_site, discovery_lunation, ...)
+    |
+moid_values (object_id, earth_moid, venus_moid, mars_moid, source, fetched_at)
+    |
+neofixer_priority (object_id, priority_score, uncertainty, arc_days, ...)
+    |
+sbdb_extended (object_id, spectral_type, pha_flag, neo_flag, condition_code, ...)
+```
+
+Primary key on `designation` (or internal integer ID with designation as unique
+index). Foreign keys enforce integrity. Each table can be updated independently.
+
+**Practical considerations:**
+
+- **Joins are fast** in SQLite for this scale, especially with proper indexes
+- **Views** can present the denormalized "flat" interface that visualization
+  code expects
+- **Triggers** can maintain derived fields or update timestamps
+- **Migrations** — schema changes are manageable with Alembic or simple
+  version-tracked SQL scripts
+
+**Beyond SQLite (probably not needed, but worth noting):**
+
+If you eventually want concurrent write access from multiple processes, or
+network-accessible database, PostgreSQL is the natural step up. But for a
+single-user desktop application, SQLite remains ideal even at 10x scale.
+
+**The interesting data engineering question:**
+
+How to structure the ETL pipeline that populates this from heterogeneous
+sources — MPC's fixed-width formats, JPL's JSON API, NEOfixer's API, your custom
+queries. That pipeline design is where the real complexity lives, not the
+database schema itself.
+
+Would you want NEOlyzer's setup to orchestrate all these fetches, or would you
+build a separate pipeline that produces a "blessed" database file for
+distribution?
+
+--------------------------------------------------------------------------------
+
+USER:
+You misread (or is it, misheard) that. Claude must surely be a reference to
+Claude Shannon and the asteroid is (18838) Shannon. We can have that
+conversation at another time. I want NEOlyzer to orchestrate, for some of the
+reasons you give, but also other messy human reasons. So it sounds like SQLite
+will continue to suffice at least as long as it's only a question of more rows
+and columns in the single current table and even for building a more complex
+schema with multiple tables if the right indexes are budgeted for. I'll put my
+thinking cap on and get back to you.
+
+CLAUDE:
+Ha — Claude Shannon, of course. The father of information theory. A much more
+distinguished namesake than I initially parsed. My apologies to the asteroid.
+
+**Summary of where we've landed:**
+
+- SQLite remains suitable for the foreseeable scale (10x NEO growth, richer
+  per-object data, normalized multi-table schema)
+- NEOlyzer orchestrates the data fusion from MPC, JPL SBDB, NEOfixer, and other
+  sources
+- Schema normalization is warranted as data sources and update cadences diverge
+- Proper indexing is the key investment for query performance
+- The ETL pipeline design (fetch, validate, merge, update) is the substantive
+  engineering work
+
+Looking forward to continuing when you've had time to think it through. I'll be
+here.
+
+--------------------------------------------------------------------------------
+
+USER:
+We don't apologize to asteroids, they should apologize to the dinosaurs.
+
+--------------------------------------------------------------------------------
+
+END OF DISCUSSION
+
+Summary: NEOlyzer will orchestrate data fusion from multiple sources (MPC, JPL
+SBDB, NEOfixer, others). SQLite scales adequately for 10x catalog growth with
+proper indexing. A normalized multi-table schema is warranted as the database
+enriches with heterogeneous data sources having different update cadences.
+
+Key integration targets:
+- NEOfixer API for follow-up priorities (filtering/sorting use case)
+- JPL SBDB for extended physical and orbital properties
+- Discovery circumstances (already integrated)
+- Future community data assets TBD
+
+Architecture decisions pending:
+- NEOfixer API bulk query capabilities (to be researched)
+- Specific normalized schema design
+- ETL pipeline structure within NEOlyzer setup
