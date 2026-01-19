@@ -590,6 +590,9 @@ class SkyMapCanvas(FigureCanvas):
         self._highlight_original_styles = []
         self._constellation_label = None
 
+        # Load bright star catalog
+        self._star_catalog = self._load_star_catalog()
+
         # Store last visible data for histogram equalization
         self._last_visible_data = None
 
@@ -890,6 +893,45 @@ class SkyMapCanvas(FigureCanvas):
             logger.warning(f"Could not load constellation boundaries: {e}")
 
         return boundaries
+
+    def _load_star_catalog(self):
+        """Load bright star catalog from CSV file.
+
+        Returns list of (hip_id, vmag, ra, dec) tuples.
+        Coordinates are in degrees (J2000 equatorial).
+        Source: Hipparcos catalog.
+        """
+        import os
+        stars = []
+
+        # Try to find the data file
+        data_file = os.path.join(os.path.dirname(__file__), '..', 'data', 'bright_stars.csv')
+        if not os.path.exists(data_file):
+            data_file = os.path.join(os.path.dirname(__file__), 'data', 'bright_stars.csv')
+        if not os.path.exists(data_file):
+            data_file = 'data/bright_stars.csv'
+
+        try:
+            with open(data_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    parts = line.split(',')
+                    if len(parts) >= 4:
+                        try:
+                            hip_id = int(parts[0])
+                            vmag = float(parts[1])
+                            ra = float(parts[2])
+                            dec = float(parts[3])
+                            stars.append((hip_id, vmag, ra, dec))
+                        except ValueError:
+                            continue
+            logger.info(f"Loaded {len(stars)} bright stars from Hipparcos catalog")
+        except Exception as e:
+            logger.warning(f"Could not load star catalog: {e}")
+
+        return stars
 
     def _clear_trails(self):
         """Remove all trail lines from the plot"""
@@ -2081,6 +2123,14 @@ class SkyMapCanvas(FigureCanvas):
                 except Exception as e:
                     logger.debug(f"Could not draw constellation boundaries: {e}")
 
+            # === BACKGROUND STARS ===
+            star_settings = getattr(self, 'star_settings', None)
+            if star_settings and star_settings.get('show_stars', False):
+                try:
+                    self._draw_background_stars(star_settings)
+                except Exception as e:
+                    logger.debug(f"Could not draw background stars: {e}")
+
             # === HORIZON AND TWILIGHT BOUNDARIES ===
             horizon_settings = getattr(self, 'horizon_settings', None)
             if horizon_settings and horizon_settings.get('enabled', False):
@@ -2502,6 +2552,100 @@ class SkyMapCanvas(FigureCanvas):
                 pass
 
         logger.debug(f"Drew constellation boundaries")
+
+    def _draw_background_stars(self, settings):
+        """Draw background stars from Hipparcos catalog.
+
+        Stars are stored in equatorial coordinates and transformed to the
+        current coordinate system. Uses low zorder to appear behind NEOs.
+        Size varies inversely with magnitude (brighter = larger).
+        """
+        STAR_ZORDER = 2  # Above boundaries (1), below other overlays
+
+        if not self._star_catalog:
+            return
+
+        mag_limit = settings.get('mag_limit', 4.0)
+        color = settings.get('color', '#FF99FF')
+        scale = settings.get('size', 5)  # Scale factor (1-10)
+
+        # Get opposition offset if needed
+        opp_offset = 0
+        if self.coord_system == 'opposition':
+            opp_offset = getattr(self, 'sun_ecl_lon', 0) + 180
+
+        # Static magnitude-to-size mapping (in points², before scaling)
+        # Mag 0: 120, Mag 1: 80, Mag 2: 50, Mag 3: 30, Mag 4: 15, Mag 5: 8, Mag 6: 4
+        MAG_SIZES = {0: 120, 1: 80, 2: 50, 3: 30, 4: 15, 5: 8, 6: 4}
+
+        # Filter by magnitude and collect coordinates
+        lons = []
+        lats = []
+        sizes = []
+
+        for star in self._star_catalog:
+            hip_id, vmag, ra, dec = star
+
+            # Filter by magnitude limit (brighter = smaller number)
+            if vmag > mag_limit:
+                continue
+
+            # Transform coordinates based on current system
+            if self.coord_system == 'equatorial':
+                lon, lat = ra, dec
+            elif self.coord_system == 'ecliptic':
+                lon, lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+            elif self.coord_system == 'galactic':
+                lon, lat = CoordinateTransformer.equatorial_to_galactic(ra, dec)
+            elif self.coord_system == 'opposition':
+                ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+                lon = (ecl_lon - opp_offset + 180) % 360 - 180
+                lat = ecl_lat
+            else:
+                lon, lat = ra, dec
+
+            # Normalize longitude to -180 to 180
+            if lon > 180:
+                lon -= 360
+
+            # Calculate size based on magnitude using static mapping
+            # Interpolate between integer magnitudes
+            mag_floor = int(vmag)
+            mag_ceil = min(mag_floor + 1, 6)
+            frac = vmag - mag_floor
+            size_floor = MAG_SIZES.get(mag_floor, MAG_SIZES[6])
+            size_ceil = MAG_SIZES.get(mag_ceil, MAG_SIZES[6])
+            base_size = size_floor + frac * (size_ceil - size_floor)
+            # Apply scale factor (scale 5 = 1x, scale 1 = 0.2x, scale 10 = 2x)
+            star_size = base_size * (scale / 5.0)
+
+            lons.append(lon)
+            lats.append(lat)
+            sizes.append(star_size)
+
+        if not lons:
+            return
+
+        lons = np.array(lons)
+        lats = np.array(lats)
+        sizes = np.array(sizes)
+
+        # Plot based on projection using star marker
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            # Convert to radians, negating longitude (East on left)
+            lons_rad = np.radians(-lons)
+            lats_rad = np.radians(lats)
+            scatter = self.ax.scatter(lons_rad, lats_rad, s=sizes, c=color,
+                                     marker='*', alpha=0.9, zorder=STAR_ZORDER,
+                                     edgecolors='none')
+        else:
+            # Rectangular projection: use degrees
+            scatter = self.ax.scatter(lons, lats, s=sizes, c=color,
+                                     marker='*', alpha=0.9, zorder=STAR_ZORDER,
+                                     edgecolors='none')
+
+        self.overlay_artists.append(scatter)
+        logger.debug(f"Drew {len(lons)} background stars (V < {mag_limit})")
 
     def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True,
                     h_min=None, h_max=None, selected_classes=None,
@@ -7730,12 +7874,21 @@ class MagnitudeRangesPanel(QWidget):
         h_row.addStretch()
         mag_layout.addLayout(h_row)
         
-        # Show all NEOs checkbox (bypasses V/H filtering)
-        self.show_all_neos_check = QCheckBox("Show all NEOs (override V/H)")
+        # Show all / Hide all NEOs row
+        show_hide_row = QHBoxLayout()
+        self.show_all_neos_check = QCheckBox("Show all NEOs")
         self.show_all_neos_check.setChecked(False)
         self.show_all_neos_check.setToolTip("Display all NEOs regardless of V and H magnitude limits")
         self.show_all_neos_check.stateChanged.connect(self.on_show_all_changed)
-        mag_layout.addWidget(self.show_all_neos_check)
+        show_hide_row.addWidget(self.show_all_neos_check)
+
+        self.hide_all_neos_check = QCheckBox("Hide all NEOs")
+        self.hide_all_neos_check.setChecked(False)
+        self.hide_all_neos_check.setToolTip("Hide all NEOs regardless of other filter settings")
+        self.hide_all_neos_check.stateChanged.connect(self.on_filters_changed)
+        show_hide_row.addWidget(self.hide_all_neos_check)
+        show_hide_row.addStretch()
+        mag_layout.addLayout(show_hide_row)
         
         # Show only discoveries per lunation
         self.lunation_discoveries_check = QCheckBox("Show discoveries per lunation")
@@ -7768,7 +7921,11 @@ class MagnitudeRangesPanel(QWidget):
     def get_show_all_neos(self):
         """Return whether to show all NEOs regardless of V/H limits"""
         return self.show_all_neos_check.isChecked()
-    
+
+    def get_hide_all_neos(self):
+        """Return whether to hide all NEOs"""
+        return self.hide_all_neos_check.isChecked()
+
     def get_lunation_discoveries_only(self):
         """Return whether to show only NEOs discovered during current lunation"""
         return self.lunation_discoveries_check.isChecked()
@@ -9308,6 +9465,49 @@ class SettingsDialog(QDialog):
         style_row.addStretch()
         constellations_layout.addLayout(style_row)
 
+        # Background stars checkbox
+        stars_row = QHBoxLayout()
+        self.show_stars_check = QCheckBox("Show background stars")
+        self.show_stars_check.setChecked(False)  # Off by default
+        self.show_stars_check.setToolTip("Display bright stars from Hipparcos catalog")
+        self.show_stars_check.stateChanged.connect(self.on_stars_changed)
+        stars_row.addWidget(self.show_stars_check)
+        stars_row.addStretch()
+        constellations_layout.addLayout(stars_row)
+
+        # Star magnitude limit and appearance (indented)
+        star_style_row = QHBoxLayout()
+        star_style_row.addSpacing(20)
+        star_style_row.addWidget(QLabel("Limit:"))
+        self.star_mag_limit_spin = QDoubleSpinBox()
+        self.star_mag_limit_spin.setRange(0.0, 6.0)
+        self.star_mag_limit_spin.setValue(4.0)  # Show stars brighter than V=4 by default
+        self.star_mag_limit_spin.setSingleStep(0.5)
+        self.star_mag_limit_spin.setDecimals(1)
+        self.star_mag_limit_spin.setMaximumWidth(60)
+        self.star_mag_limit_spin.setToolTip("Show stars brighter than this V magnitude")
+        self.star_mag_limit_spin.valueChanged.connect(self.on_stars_changed)
+        star_style_row.addWidget(self.star_mag_limit_spin)
+        star_style_row.addWidget(QLabel("mag"))
+        star_style_row.addWidget(QLabel("Color:"))
+        self.star_color_edit = QLineEdit("#FF99FF")  # Match galactic plane
+        self.star_color_edit.setMaximumWidth(70)
+        self.star_color_edit.setToolTip("Star marker color (hex)")
+        self.star_color_edit.editingFinished.connect(self.on_stars_changed)
+        self.star_color_edit.textChanged.connect(lambda text, w=self.star_color_edit: self._update_color_edit_style(w))
+        star_style_row.addWidget(self.star_color_edit)
+        self._update_color_edit_style(self.star_color_edit)
+        star_style_row.addWidget(QLabel("Scale:"))
+        self.star_size_spin = QSpinBox()
+        self.star_size_spin.setRange(1, 10)
+        self.star_size_spin.setValue(5)
+        self.star_size_spin.setMaximumWidth(50)
+        self.star_size_spin.setToolTip("Scale factor for star sizes (1=tiny, 10=large)")
+        self.star_size_spin.valueChanged.connect(self.on_stars_changed)
+        star_style_row.addWidget(self.star_size_spin)
+        star_style_row.addStretch()
+        constellations_layout.addLayout(star_style_row)
+
         constellations_group.setLayout(constellations_layout)
         self._layout.addWidget(constellations_group)
         self.collapsible_sections.append(constellations_group)
@@ -10164,6 +10364,12 @@ class SettingsDialog(QDialog):
         self.constellation_color_edit.setEnabled(constellation_enabled)
         self.constellation_opacity_spin.setEnabled(constellation_enabled)
 
+        # Star controls
+        stars_enabled = self.show_stars_check.isChecked()
+        self.star_mag_limit_spin.setEnabled(stars_enabled)
+        self.star_color_edit.setEnabled(stars_enabled)
+        self.star_size_spin.setEnabled(stars_enabled)
+
         # Planet controls
         self._update_planet_controls_state()
 
@@ -10401,6 +10607,27 @@ class SettingsDialog(QDialog):
         if parent and hasattr(parent, 'on_constellations_changed'):
             parent.on_constellations_changed()
 
+    def get_star_settings(self):
+        """Return current background star display settings"""
+        return {
+            'show_stars': self.show_stars_check.isChecked(),
+            'mag_limit': self.star_mag_limit_spin.value(),
+            'color': self.star_color_edit.text(),
+            'size': self.star_size_spin.value()
+        }
+
+    def on_stars_changed(self):
+        """Emit signal when star display settings change"""
+        # Enable/disable controls based on main checkbox
+        enabled = self.show_stars_check.isChecked()
+        self.star_mag_limit_spin.setEnabled(enabled)
+        self.star_color_edit.setEnabled(enabled)
+        self.star_size_spin.setEnabled(enabled)
+
+        parent = self.parent()
+        if parent and hasattr(parent, 'on_stars_changed'):
+            parent.on_stars_changed()
+
     def get_horizon_settings(self):
         """Return current horizon/twilight display settings"""
         return {
@@ -10629,6 +10856,7 @@ class SettingsDialog(QDialog):
                     'h_min': parent.magnitude_panel.h_min_spin.value(),
                     'h_max': parent.magnitude_panel.h_max_spin.value(),
                     'show_all': parent.magnitude_panel.show_all_neos_check.isChecked(),
+                    'hide_all': parent.magnitude_panel.hide_all_neos_check.isChecked(),
                     'lunation_discoveries_only': parent.magnitude_panel.lunation_discoveries_check.isChecked()
                 }
 
@@ -10827,6 +11055,14 @@ class SettingsDialog(QDialog):
                 'opacity': self.constellation_opacity_spin.value()
             }
 
+            # Background stars
+            state['stars'] = {
+                'show_stars': self.show_stars_check.isChecked(),
+                'mag_limit': self.star_mag_limit_spin.value(),
+                'color': self.star_color_edit.text(),
+                'size': self.star_size_spin.value()
+            }
+
         try:
             loop_enabled = self.script_loop_check.isChecked()
             all_points = existing_points + self._script_buffer
@@ -10949,6 +11185,7 @@ class SettingsDialog(QDialog):
                 parent.magnitude_panel.h_min_spin.setValue(m.get('h_min', 9.0))
                 parent.magnitude_panel.h_max_spin.setValue(m.get('h_max', 22.0))
                 parent.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
+                parent.magnitude_panel.hide_all_neos_check.setChecked(m.get('hide_all', False))
                 parent.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
 
             # Animation
@@ -11149,6 +11386,14 @@ class SettingsDialog(QDialog):
                 self.show_constellation_bounds.setChecked(c.get('show_boundaries', False))
                 self.constellation_color_edit.setText(c.get('color', '#555555'))
                 self.constellation_opacity_spin.setValue(c.get('opacity', 30))
+
+            # Background stars
+            if 'stars' in state:
+                s = state['stars']
+                self.show_stars_check.setChecked(s.get('show_stars', False))
+                self.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
+                self.star_color_edit.setText(s.get('color', '#FFFFFF'))
+                self.star_size_spin.setValue(s.get('size', 5))
 
             # Update control states and display
             self._initialize_control_states()
@@ -11476,23 +11721,44 @@ class NEOVisualizer(QMainWindow):
             if hasattr(self.settings_dialog, 'get_dec_limit_settings'):
                 dec_settings = self.settings_dialog.get_dec_limit_settings()
                 self.canvas.dec_limit_settings = dec_settings
-            # Force redraw of overlays and re-filter NEOs (declination limits affect filtering)
+            # Force complete overlay redraw
+            if hasattr(self.canvas, 'overlay_artists'):
+                for artist in self.canvas.overlay_artists:
+                    try:
+                        artist.remove()
+                    except:
+                        pass
+                self.canvas.overlay_artists = []
             self.canvas.last_overlay_jd = None
             self.canvas.last_jd = None  # Force update_plot to redraw
             self.update_display()  # Full update to apply declination filtering
     
     def on_galactic_changed(self):
         """Handle changes to galactic exclusion settings"""
-        # Force overlay redraw
+        # Force complete overlay redraw
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
         self.update_display()
-    
+
     def on_opposition_changed(self):
         """Handle changes to opposition benefit settings"""
-        # Force overlay redraw
+        # Force complete overlay redraw
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
         self.update_display()
     
     def on_discovery_changed(self):
@@ -11509,23 +11775,60 @@ class NEOVisualizer(QMainWindow):
 
     def on_sunmoon_changed(self):
         """Handle changes to sun/moon display settings"""
-        # Force overlay redraw
+        # Force complete overlay redraw
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
         self.update_display()
-    
+
     def on_horizon_changed(self):
         """Handle changes to horizon/twilight display settings"""
-        # Force overlay redraw
+        # Force complete overlay redraw
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
         self.update_display()
 
     def on_constellations_changed(self):
         """Handle changes to constellation display settings"""
-        # Force overlay redraw
+        # Force complete overlay redraw by clearing cached JD
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
+        # Also clear existing overlay artists to ensure fresh draw
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
+        self.update_display()
+
+    def on_stars_changed(self):
+        """Handle changes to background star display settings"""
+        # Force complete overlay redraw by clearing cached JD
+        if hasattr(self.canvas, 'last_jd'):
+            self.canvas.last_jd = None
+        # Also clear existing overlay artists to ensure fresh draw
+        if hasattr(self.canvas, 'overlay_artists'):
+            for artist in self.canvas.overlay_artists:
+                try:
+                    artist.remove()
+                except:
+                    pass
+            self.canvas.overlay_artists = []
         self.update_display()
 
     def on_appearance_changed(self):
@@ -12198,7 +12501,88 @@ class NEOVisualizer(QMainWindow):
             mag_min, mag_max = self.magnitude_panel.get_magnitude_limits()
             h_min, h_max = self.magnitude_panel.get_h_limits()
             show_all_neos = self.magnitude_panel.get_show_all_neos()
-            
+            hide_all_neos = self.magnitude_panel.get_hide_all_neos()
+
+            # Get ALL overlay settings BEFORE any early returns so they always work
+            # regardless of whether NEOs are being displayed
+
+            # Sun/Moon/Planets settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_sunmoon_settings'):
+                sunmoon_settings = self.settings_dialog.get_sunmoon_settings()
+            else:
+                sunmoon_settings = {'show_sun': True,
+                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
+                                    'solar_color': '#FFD700', 'solar_show_bounds': True,
+                                    'show_moon': True, 'show_phases': False,
+                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
+                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
+                                    'show_planets': False, 'planet_borders': True, 'planet_opacity': 100,
+                                    'planet_colors': {}}
+            self.canvas.sunmoon_settings = sunmoon_settings
+
+            # Plane settings (ecliptic, equator, galactic, poles, reticle, cardinal markers)
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_plane_settings'):
+                plane_settings = self.settings_dialog.get_plane_settings()
+                self.canvas.plane_settings = plane_settings
+
+            # Declination limit settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_dec_limit_settings'):
+                dec_limit_settings = self.settings_dialog.get_dec_limit_settings()
+            else:
+                dec_limit_settings = {'enabled': False, 'north': 60.0, 'south': -25.0,
+                                     'color': '#88FFFF', 'show_bounds': True}
+            self.canvas.dec_limit_settings = dec_limit_settings
+
+            # Horizon/twilight settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_horizon_settings'):
+                horizon_settings = self.settings_dialog.get_horizon_settings()
+            else:
+                horizon_settings = {'enabled': False, 'observer_lat': 32.2226, 'observer_lon': -110.9747,
+                                   'show_horizon': True, 'horizon_color': '#FF6600',
+                                   'show_civil': True, 'civil_color': '#FF9933',
+                                   'show_nautical': True, 'nautical_color': '#CC66FF',
+                                   'show_astro': True, 'astro_color': '#6666FF',
+                                   'line_style': 'dashed', 'line_weight': 1.0}
+            self.canvas.horizon_settings = horizon_settings
+
+            # Constellation settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_constellation_settings'):
+                constellation_settings = self.settings_dialog.get_constellation_settings()
+            else:
+                constellation_settings = {'show_boundaries': False, 'color': '#555555', 'opacity': 30}
+            self.canvas.constellation_settings = constellation_settings
+
+            # Star settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_star_settings'):
+                star_settings = self.settings_dialog.get_star_settings()
+            else:
+                star_settings = {'show_stars': False, 'mag_limit': 4.0, 'color': '#FF99FF', 'size': 5}
+            self.canvas.star_settings = star_settings
+
+            # Galactic exclusion settings (affects overlay boundaries)
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_galactic_settings'):
+                galactic_settings = self.settings_dialog.get_galactic_settings()
+            else:
+                galactic_settings = {'enabled': False, 'offset': 15.0, 'penalty': 2.0, 'color': '#FF99FF', 'show_bounds': True}
+
+            # Opposition benefit settings (affects overlay boundaries)
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_opposition_settings'):
+                opposition_settings = self.settings_dialog.get_opposition_settings()
+            else:
+                opposition_settings = {'enabled': False, 'radius': 5.0, 'benefit': 2.0, 'color': '#90EE90', 'show_bounds': True}
+
+            # If hiding all NEOs, skip the rest and show empty plot
+            if hide_all_neos:
+                self.canvas.update_plot(None, mag_min, mag_max, jd, False,
+                                       h_min, h_max, None, False, None, None, None,
+                                       asteroids=None, size_settings=None,
+                                       galactic_settings=galactic_settings, opposition_settings=opposition_settings,
+                                       hide_before_discovery=False, hide_missing_discovery=False,
+                                       color_by='V magnitude', show_legend=False, site_filter=None,
+                                       misc_filter=None)
+                self.status_label.setText("All NEOs hidden")
+                return
+
             # Override V/H limits if showing all NEOs
             if show_all_neos:
                 mag_min, mag_max = -100.0, 200.0  # Extreme range to include H=99.99 objects
@@ -12212,21 +12596,7 @@ class NEOVisualizer(QMainWindow):
             
             # Get symbol size settings
             size_settings = self.colorbar_panel.get_size_settings()
-            
-            # Get galactic exclusion settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_galactic_settings'):
-                galactic_settings = self.settings_dialog.get_galactic_settings()
-            else:
-                # Defaults if dialog not available
-                galactic_settings = {'enabled': False, 'offset': 15.0, 'penalty': 2.0, 'color': '#FF99FF', 'show_bounds': True}
-            
-            # Get opposition benefit settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_opposition_settings'):
-                opposition_settings = self.settings_dialog.get_opposition_settings()
-            else:
-                # Defaults if dialog not available
-                opposition_settings = {'enabled': False, 'radius': 5.0, 'benefit': 2.0, 'color': '#90EE90', 'show_bounds': True}
-            
+
             # Get discovery settings
             if self.settings_dialog and hasattr(self.settings_dialog, 'get_discovery_settings'):
                 discovery_settings = self.settings_dialog.get_discovery_settings()
@@ -12252,55 +12622,6 @@ class NEOVisualizer(QMainWindow):
                 misc_filter = self.settings_dialog.get_misc_filter_settings()
             else:
                 misc_filter = {'hide_numbered': False}
-
-            # Get sun/moon display settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_sunmoon_settings'):
-                sunmoon_settings = self.settings_dialog.get_sunmoon_settings()
-            else:
-                sunmoon_settings = {'show_sun': True,
-                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
-                                    'solar_color': '#FFD700', 'solar_show_bounds': True,
-                                    'show_moon': True, 'show_phases': False,
-                                    'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
-                                    'lunar_penalty': 3.0, 'lunar_color': '#228B22', 'lunar_show_bounds': True,
-                                    'show_planets': False, 'planet_borders': True, 'planet_opacity': 100,
-                                    'planet_colors': {}}
-
-            # Store sunmoon settings on canvas for draw_celestial_overlays
-            self.canvas.sunmoon_settings = sunmoon_settings
-
-            # Get declination limit settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_dec_limit_settings'):
-                dec_limit_settings = self.settings_dialog.get_dec_limit_settings()
-            else:
-                dec_limit_settings = {'enabled': False, 'north': 60.0, 'south': -25.0,
-                                     'color': '#88FFFF', 'show_bounds': True}
-
-            # Store dec limit settings on canvas for draw_celestial_overlays and filtering
-            self.canvas.dec_limit_settings = dec_limit_settings
-
-            # Get horizon/twilight display settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_horizon_settings'):
-                horizon_settings = self.settings_dialog.get_horizon_settings()
-            else:
-                horizon_settings = {'enabled': False, 'observer_lat': 32.2226, 'observer_lon': -110.9747,
-                                   'show_horizon': True, 'horizon_color': '#FF6600',
-                                   'show_civil': True, 'civil_color': '#FF9933',
-                                   'show_nautical': True, 'nautical_color': '#CC66FF',
-                                   'show_astro': True, 'astro_color': '#6666FF',
-                                   'line_style': 'dashed', 'line_weight': 1.0}
-            
-            # Store horizon settings on canvas for draw_celestial_overlays
-            self.canvas.horizon_settings = horizon_settings
-
-            # Get constellation display settings
-            if self.settings_dialog and hasattr(self.settings_dialog, 'get_constellation_settings'):
-                constellation_settings = self.settings_dialog.get_constellation_settings()
-            else:
-                constellation_settings = {'show_boundaries': False, 'color': '#555555', 'opacity': 30}
-
-            # Store constellation settings on canvas for draw_celestial_overlays
-            self.canvas.constellation_settings = constellation_settings
 
             # FIX: If no classes selected, show nothing
             if selected_classes is None:
@@ -12676,8 +12997,9 @@ class NEOVisualizer(QMainWindow):
             self.magnitude_panel.h_min_spin.setValue(9.0)
             self.magnitude_panel.h_max_spin.setValue(22.0)
             self.magnitude_panel.show_all_neos_check.setChecked(False)
+            self.magnitude_panel.hide_all_neos_check.setChecked(False)
             self.magnitude_panel.lunation_discoveries_check.setChecked(False)
-            
+
             # NEO classes panel
             self.neo_classes_panel.select_all()
             self.neo_classes_panel.moid_enabled_check.setChecked(False)
@@ -12809,6 +13131,12 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.constellation_color_edit.setText("#555555")
                 self.settings_dialog.constellation_opacity_spin.setValue(30)
 
+                # Background stars (off by default)
+                self.settings_dialog.show_stars_check.setChecked(False)
+                self.settings_dialog.star_mag_limit_spin.setValue(4.0)
+                self.settings_dialog.star_color_edit.setText("#FF99FF")
+                self.settings_dialog.star_size_spin.setValue(5)
+
                 # Clear any existing trails
                 self.clear_trails()
                 
@@ -12846,6 +13174,7 @@ class NEOVisualizer(QMainWindow):
                     'h_min': self.magnitude_panel.h_min_spin.value(),
                     'h_max': self.magnitude_panel.h_max_spin.value(),
                     'show_all': self.magnitude_panel.show_all_neos_check.isChecked(),
+                    'hide_all': self.magnitude_panel.hide_all_neos_check.isChecked(),
                     'lunation_discoveries_only': self.magnitude_panel.lunation_discoveries_check.isChecked()
                 },
                 'animation': {
@@ -13039,6 +13368,14 @@ class NEOVisualizer(QMainWindow):
                     'opacity': self.settings_dialog.constellation_opacity_spin.value()
                 }
 
+                # Background stars
+                settings['stars'] = {
+                    'show_stars': self.settings_dialog.show_stars_check.isChecked(),
+                    'mag_limit': self.settings_dialog.star_mag_limit_spin.value(),
+                    'color': self.settings_dialog.star_color_edit.text(),
+                    'size': self.settings_dialog.star_size_spin.value()
+                }
+
             with open(self._get_settings_path(), 'w') as f:
                 json.dump(settings, f, indent=2)
             
@@ -13068,6 +13405,7 @@ class NEOVisualizer(QMainWindow):
                 self.magnitude_panel.h_min_spin.setValue(m.get('h_min', 9.0))
                 self.magnitude_panel.h_max_spin.setValue(m.get('h_max', 22.0))
                 self.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
+                self.magnitude_panel.hide_all_neos_check.setChecked(m.get('hide_all', False))
                 self.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
 
             # Animation
@@ -13281,6 +13619,14 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.show_constellation_bounds.setChecked(c.get('show_boundaries', False))
                     self.settings_dialog.constellation_color_edit.setText(c.get('color', '#555555'))
                     self.settings_dialog.constellation_opacity_spin.setValue(c.get('opacity', 30))
+
+                # Background stars
+                if 'stars' in settings:
+                    s = settings['stars']
+                    self.settings_dialog.show_stars_check.setChecked(s.get('show_stars', False))
+                    self.settings_dialog.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
+                    self.settings_dialog.star_color_edit.setText(s.get('color', '#FFFFFF'))
+                    self.settings_dialog.star_size_spin.setValue(s.get('size', 5))
 
                 # Update control states
                 self.settings_dialog._initialize_control_states()
