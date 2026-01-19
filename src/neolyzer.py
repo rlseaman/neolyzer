@@ -11103,7 +11103,7 @@ class SettingsDialog(QDialog):
             all_points = existing_points + self._script_buffer
 
             script_data = {
-                'version': '3.04',
+                'version': '3.05',
                 'loop': loop_enabled,
                 'state': state,
                 'time_points': all_points
@@ -11538,7 +11538,7 @@ class NEOVisualizer(QMainWindow):
         # Auto-equalize on first data load for better default symbol sizes
         self._auto_equalize_pending = True
 
-        self.setWindowTitle("NEOlyzer v3.04")
+        self.setWindowTitle("NEOlyzer v3.05")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -12942,7 +12942,7 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.04</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version 3.05</b> - Near-Earth Object sky position visualization and analysis tool</p>
         <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
@@ -12956,6 +12956,14 @@ class NEOVisualizer(QMainWindow):
         <li><b>MOID filtering:</b> Show only PHAs or specific MOID ranges</li>
         <li><b>Time controls:</b> Animate, jump by day/month/year/lunation</li>
         <li><b>Scripted playback:</b> Record and replay time sequences with full state</li>
+        </ul>
+
+        <h3>New in v3.05</h3>
+        <ul>
+        <li><b>About dialog:</b> Project information accessible via About button</li>
+        <li><b>Hide unnumbered:</b> Filter to show only numbered asteroids</li>
+        <li><b>Constellation boundaries:</b> IAU constellation boundary overlay</li>
+        <li><b>Background stars:</b> Bright star display with magnitude filtering</li>
         </ul>
 
         <h3>New in v3.04</h3>
@@ -13260,7 +13268,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.04',
+                'version': '3.05',
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
