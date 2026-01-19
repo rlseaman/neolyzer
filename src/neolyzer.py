@@ -8287,8 +8287,8 @@ class ProjectionPanel(QWidget):
         self.proj_combo.addItems([
             'Rectangular',
             'Hammer',
-            'Aitoff',
-            'Mollweide'
+            'Mollweide',
+            'Aitoff'
         ])
         self.proj_combo.setCurrentText('Hammer')  # Default to Hammer
         self.proj_combo.currentTextChanged.connect(self.on_settings_changed)
@@ -8610,8 +8610,8 @@ class ProjectionPanel(QWidget):
         super().mousePressEvent(event)
     
     def cycle_projection(self):
-        """Cycle through projection types: Rectangular -> Hammer -> Aitoff -> Mollweide -> Rectangular"""
-        projections = ['Rectangular', 'Hammer', 'Aitoff', 'Mollweide']
+        """Cycle through projection types: Rectangular -> Hammer -> Mollweide -> Aitoff -> Rectangular"""
+        projections = ['Rectangular', 'Hammer', 'Mollweide', 'Aitoff']
         current = self.proj_combo.currentText()
         try:
             current_idx = projections.index(current)
