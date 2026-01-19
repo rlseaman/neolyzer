@@ -1,0 +1,47 @@
+19 January 2026
+
+About NEOlyzer
+
+NEOlyzer is a standalone visualization tool for the catalog of known near-Earth asteroids (NEOs).
+It was developed by Rob Seaman of the Catalina Sky Survey (https://catalina.lpl.arizona.edu)
+with coding by the Claude AI from Anthropic. Architectural choices were generally suggested
+by Claude and confirmed by Rob. NEO resource choices, the other way around.
+
+NEOlyzer is available from:
+
+    https://github.com/rlseaman/neolyzer
+
+The source code and various text files will provide context related to this project and its
+use of AI coding practices. I am wondering how the AI paradigm (send comments to Rob who will
+chat with Claude and push updates) will coexist with the gitmosphere mosh pit (everybody
+modifies everything). Neither programming model is prevalent in the Planetary Defense community.
+
+AI coding tools are much more capable in 2026 than they were the last time I checked in on
+the options in 2023. Claude Code (https://claude.com/product/claude-code) was used for this
+project with a $100/month subscription. You are encouraged to investigate what the competing
+AI companies offer, and perhaps more complicated IDE-based tools from third party vendors
+that are growing like weeds. Let the buyer beware!
+
+The regular Claude Chat interface was more than sufficient to get to the stage of a
+"Minimum Viable Product" (MVP), the goal of "vibe coding" in 2025. I would not be
+surprised if vibe coding as a concept becomes passe in 2026.  I can say is that this
+experienced, but world-weary programmer found the AI coding paradigm to be very productive.
+
+But I have a hard time imagining how a younger Rob, learning to program in high school,
+undergraduate, and into graduate school, would have dealt with such a tool. I very much
+suspect I would not have had the discipline necessary to learn the underlying computer
+science and systems software architectures, but would have used AI as a crutch.
+
+Note that NEOlyzer itself makes no use of AI or machine learning techniques. It is a capable
+plotting layer with many options of map projection, coordinates, source filtering, etc., on
+top of a database, with caching of sky coordinates supporting a trade-off between the number
+of NEOs plotted and the speed of rendering during animation. The database is as important
+as the mapping and I welcome suggestions and corrections related to both.
+
+Rob Seaman
+
+Catalina Sky Survey
+Lunar and Planetary Laboratory
+University of Arizona
+
+rseaman@arizona.edu

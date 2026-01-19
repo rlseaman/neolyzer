@@ -11591,8 +11591,16 @@ class NEOVisualizer(QMainWindow):
             logo_label.mousePressEvent = lambda event: self.open_css_website()
             logo_label.setAlignment(QtCompat.AlignTop | QtCompat.AlignLeft)
             logo_container_layout.addWidget(logo_label)
+
+            # About button under logo
+            about_btn = QPushButton("About")
+            about_btn.setMaximumWidth(60)
+            about_btn.setToolTip("About NEOlyzer")
+            about_btn.clicked.connect(self.show_about)
+            logo_container_layout.addWidget(about_btn, 0, QtCompat.AlignHCenter)
+
             self.logo_container.setLayout(logo_container_layout)
-            self.logo_container.setMaximumSize(130, 130)  # Larger container
+            self.logo_container.setMaximumSize(130, 160)  # Taller to accommodate button
             top_section.addWidget(self.logo_container, 0, QtCompat.AlignTop)
         
         # RIGHT: Control Panel (compact horizontal layout)
@@ -12855,7 +12863,54 @@ class NEOVisualizer(QMainWindow):
         """Open Catalina Sky Survey website in default browser"""
         import webbrowser
         webbrowser.open('https://catalina.lpl.arizona.edu')
-    
+
+    def show_about(self):
+        """Show About dialog with project information"""
+        # Clear any NEO highlight when opening this dialog
+        self.canvas.clear_highlight()
+        if hasattr(self.canvas, 'current_info_dialog') and self.canvas.current_info_dialog is not None:
+            try:
+                self.canvas.current_info_dialog.canvas = None
+                self.canvas.current_info_dialog.close()
+                self.canvas.current_info_dialog = None
+            except:
+                pass
+
+        if hasattr(self, 'about_dialog') and self.about_dialog is not None and self.about_dialog.isVisible():
+            self.about_dialog.close()
+            self.about_dialog = None
+            return
+
+        self.about_dialog = QDialog(self)
+        self.about_dialog.setWindowTitle("About NEOlyzer")
+        self.about_dialog.setMinimumWidth(550)
+        self.about_dialog.setMinimumHeight(450)
+
+        layout = QVBoxLayout()
+
+        # Create text browser for scrollable content
+        text = QTextBrowser()
+        text.setOpenExternalLinks(True)
+
+        # Load content from ABOUT.html
+        about_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'ABOUT.html')
+        try:
+            with open(about_path, 'r') as f:
+                about_html = f.read()
+        except FileNotFoundError:
+            about_html = "<h2>About NEOlyzer</h2><p>NEOlyzer is a visualization tool for Near-Earth Objects.</p>"
+
+        text.setHtml(about_html)
+        layout.addWidget(text)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.about_dialog.close)
+        layout.addWidget(close_btn)
+
+        self.about_dialog.setLayout(layout)
+        self.about_dialog.show()
+
     def show_help(self):
         """Toggle help dialog with feature summary"""
         # Clear any NEO highlight when opening this dialog
