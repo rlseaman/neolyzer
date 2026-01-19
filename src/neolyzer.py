@@ -1223,8 +1223,8 @@ class SkyMapCanvas(FigureCanvas):
             xi = np.linspace(-np.pi, np.pi, 80)
             yi = np.linspace(-np.pi/2, np.pi/2, 40)
         else:
-            # For rectangular, use degree-based grid
-            xi = np.linspace(0, 360, 90)
+            # For rectangular, use degree-based grid (centered at 0°)
+            xi = np.linspace(-180, 180, 90)
             yi = np.linspace(-90, 90, 45)
         
         try:
