@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.04 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.05 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -683,7 +683,19 @@ class SkyMapCanvas(FigureCanvas):
         
         title = f'NEO Sky Map ({self.coord_system.title()})'
         self.ax.set_title(title, fontsize=11, fontweight='bold', pad=4)
-        
+
+        # Custom coordinate formatter to limit decimal places
+        if self.projection == 'rectilinear':
+            def format_coord(x, y):
+                return f'{x:.4f}°, {y:.4f}°'
+        else:
+            def format_coord(x, y):
+                # Projected coordinates are in radians
+                lon_deg = np.degrees(x)
+                lat_deg = np.degrees(y)
+                return f'{lon_deg:.4f}°, {lat_deg:.4f}°'
+        self.ax.format_coord = format_coord
+
         # Create empty scatter for near-side NEOs (filled circles)
         self.scatter = self.ax.scatter(
             [], [], s=10, c=[], 
@@ -6555,9 +6567,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing distance chart for {name}")
-    
+
     def show_moid_h_chart(self):
         """Show MOID vs H magnitude scatter plot (hazard space)"""
         if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
@@ -6643,9 +6653,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing MOID vs H chart ({pha_count} PHAs)")
-    
+
     def show_discovery_timeline(self):
         """Show discovery timeline histogram"""
         if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
@@ -6736,9 +6744,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing discovery timeline ({len(years_arr):,} objects with dates)")
-    
+
     def show_elongation_distance_chart(self):
         """Show solar elongation vs geocentric distance for visible NEOs"""
         if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
@@ -6825,9 +6831,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing elongation vs distance ({len(elong_arr)} visible NEOs)")
-    
+
     def show_a_e_chart(self):
         """Show semi-major axis vs eccentricity plot with orbit class regions"""
         if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
@@ -6930,9 +6934,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing a vs e chart ({total} objects)")
-    
+
     def show_lunar_phases_chart(self):
         """Show lunar phases through the year centered on current date"""
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -7105,9 +7107,7 @@ class ControlsPanel(QWidget):
         
         dialog.setLayout(layout)
         dialog.show()
-        
-        self.parent_window.status_label.setText(f"Showing lunar phases chart - {phase_name}")
-    
+
     def _draw_moon_phase_icon(self, ax, x_date, y, illumination, waxing, size=0.03):
         """Draw a small moon phase icon at the given position"""
         from matplotlib.patches import Circle, Path as MplPath, PathPatch
@@ -7180,8 +7180,6 @@ class ControlsPanel(QWidget):
         # Create the chart dialog
         dialog = HelicentricChartDialog(self.parent_window, self.time_panel)
         dialog.show()
-        
-        self.parent_window.status_label.setText("Heliocentric chart opened")
 
 
 class HelicentricChartDialog(QDialog):
@@ -11698,11 +11696,102 @@ class NEOVisualizer(QMainWindow):
         
         self.canvas = SkyMapCanvas(show_fps=self.show_fps)
         self.toolbar = NavigationToolbar(self.canvas, self)
-        
+
         # Connect canvas click to toggle animation
         self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
-        
-        plot_layout.addWidget(self.toolbar)
+
+        # Create toolbar row with NavigationToolbar + NEOlyzer controls (right-justified)
+        toolbar_row = QWidget()
+        toolbar_row_layout = QHBoxLayout()
+        toolbar_row_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_row_layout.setSpacing(4)
+
+        # Add matplotlib toolbar (left side)
+        toolbar_row_layout.addWidget(self.toolbar)
+
+        # Stretch pushes NEOlyzer controls to the right
+        toolbar_row_layout.addStretch()
+
+        # Search controls (first, before Table/Charts)
+        search_label = QLabel("Search:")
+        toolbar_row_layout.addWidget(search_label)
+
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("name, number, or designation")
+        self.search_input.setMaximumWidth(220)
+        self.search_input.returnPressed.connect(self.search_object)
+        toolbar_row_layout.addWidget(self.search_input)
+
+        search_btn = QPushButton("Find")
+        search_btn.setMaximumWidth(45)
+        search_btn.clicked.connect(self.search_object)
+        toolbar_row_layout.addWidget(search_btn)
+
+        clear_btn = QPushButton("Clear")
+        clear_btn.setMaximumWidth(50)
+        clear_btn.clicked.connect(self.clear_search)
+        toolbar_row_layout.addWidget(clear_btn)
+
+        # Vertical separator
+        vbar2 = QFrame()
+        vbar2.setFrameShape(QFrame.Shape.VLine)
+        vbar2.setFrameShadow(QFrame.Shadow.Sunken)
+        toolbar_row_layout.addWidget(vbar2)
+
+        # Table button with dropdown menu
+        self.toolbar_table_btn = QPushButton("📋 Table")
+        self.toolbar_table_btn.setMaximumWidth(85)
+        table_menu = QMenu(self.toolbar_table_btn)
+        table_menu.addAction("📋 Show All Visible", self.show_table_all_visible)
+        table_menu.addSeparator()
+        table_menu.addAction("🔲 Select Rectangle...", self.start_rectangle_select)
+        table_menu.addAction("⬭ Select Ellipse...", self.start_ellipse_select)
+        table_menu.addSeparator()
+        table_menu.addAction("🔍 Search Catalog...", self.search_catalog_for_table)
+        table_menu.addSeparator()
+        table_menu.addAction("❌ Clear Selection", self.clear_selection)
+        self.toolbar_table_btn.setMenu(table_menu)
+        self.toolbar_table_btn.setToolTip("Show table of NEOs (all visible or select region)")
+        toolbar_row_layout.addWidget(self.toolbar_table_btn)
+
+        # Charts button with dropdown
+        self.toolbar_charts_btn = QPushButton("📈 Charts")
+        self.toolbar_charts_btn.setMaximumWidth(90)
+        charts_menu = QMenu(self.toolbar_charts_btn)
+        charts_menu.addAction("📏 Distance vs Time (selected object)...", self.show_distance_time_chart)
+        charts_menu.addAction("⚠️ MOID vs H (hazard space)", self.show_moid_h_chart)
+        charts_menu.addAction("📅 Discovery Timeline", self.show_discovery_timeline)
+        charts_menu.addSeparator()
+        charts_menu.addAction("🌍 Solar Elongation vs Distance", self.show_elongation_distance_chart)
+        charts_menu.addAction("🔄 a vs e (orbital element space)", self.show_a_e_chart)
+        charts_menu.addSeparator()
+        charts_menu.addAction("🌙 Lunar Phases (year view)", self.show_lunar_phases_chart)
+        charts_menu.addSeparator()
+        charts_menu.addAction("☀️ Heliocentric View (polar)", self.show_heliocentric_chart)
+        self.toolbar_charts_btn.setMenu(charts_menu)
+        self.toolbar_charts_btn.setToolTip("Open analysis charts")
+        toolbar_row_layout.addWidget(self.toolbar_charts_btn)
+
+        # Vertical separator
+        vbar3 = QFrame()
+        vbar3.setFrameShape(QFrame.Shape.VLine)
+        vbar3.setFrameShadow(QFrame.Shadow.Sunken)
+        toolbar_row_layout.addWidget(vbar3)
+
+        # Help and Settings buttons (duplicates of statusbar buttons)
+        toolbar_help_btn = QPushButton("❓ Help")
+        toolbar_help_btn.setMaximumWidth(60)
+        toolbar_help_btn.clicked.connect(self.show_help)
+        toolbar_row_layout.addWidget(toolbar_help_btn)
+
+        toolbar_settings_btn = QPushButton("⚙️ Settings")
+        toolbar_settings_btn.setMaximumWidth(80)
+        toolbar_settings_btn.clicked.connect(self.show_settings)
+        toolbar_row_layout.addWidget(toolbar_settings_btn)
+
+        toolbar_row.setLayout(toolbar_row_layout)
+
+        plot_layout.addWidget(toolbar_row)
         plot_layout.addWidget(self.canvas, 1)
         plot_widget.setLayout(plot_layout)
         
@@ -12190,33 +12279,7 @@ class NEOVisualizer(QMainWindow):
         self.status_label = QLabel("Initializing...")
         self._status_label_default_style = self.status_label.styleSheet()
         self.statusbar.addWidget(self.status_label, 1)  # Stretch factor 1
-        
-        # Search field (left side of permanent widgets)
-        search_label = QLabel("Search:")
-        self.statusbar.addPermanentWidget(search_label)
-        
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search: name, number, or designation (e.g., Apophis, 99942, K22C01Q)")
-        self.search_input.setMaximumWidth(220)
-        self.search_input.returnPressed.connect(self.search_object)
-        self.statusbar.addPermanentWidget(self.search_input)
-        
-        search_btn = QPushButton("Find")
-        search_btn.setMaximumWidth(45)
-        search_btn.clicked.connect(self.search_object)
-        self.statusbar.addPermanentWidget(search_btn)
-        
-        clear_btn = QPushButton("Clear")
-        clear_btn.setMaximumWidth(45)
-        clear_btn.clicked.connect(self.clear_search)
-        self.statusbar.addPermanentWidget(clear_btn)
-        
-        # Spacer
-        spacer = QLabel("  │  ")
-        spacer.setStyleSheet("color: gray;")
-        self.statusbar.addPermanentWidget(spacer)
-        
-        # Help, Settings, Save/Reset, Exit buttons (far right)
+
         # Play/Pause button (duplicate of controls panel button for convenience)
         self.statusbar_play_btn = QPushButton("▶ Play")
         self.statusbar_play_btn.setMaximumWidth(70)
@@ -12230,45 +12293,21 @@ class NEOVisualizer(QMainWindow):
         statusbar_now_btn.clicked.connect(self.set_to_now_from_statusbar)
         self.statusbar.addPermanentWidget(statusbar_now_btn)
 
-        # Table button with dropdown menu
-        self.statusbar_table_btn = QPushButton("📋 Table")
-        self.statusbar_table_btn.setMaximumWidth(85)
-        table_menu = QMenu(self.statusbar_table_btn)
-        table_menu.addAction("📋 Show All Visible", self.show_table_all_visible)
-        table_menu.addSeparator()
-        table_menu.addAction("🔲 Select Rectangle...", self.start_rectangle_select)
-        table_menu.addAction("⬭ Select Ellipse...", self.start_ellipse_select)
-        table_menu.addSeparator()
-        table_menu.addAction("🔍 Search Catalog...", self.search_catalog_for_table)
-        table_menu.addSeparator()
-        table_menu.addAction("❌ Clear Selection", self.clear_selection)
-        self.statusbar_table_btn.setMenu(table_menu)
-        self.statusbar_table_btn.setToolTip("Show table of NEOs (all visible or select region)")
-        self.statusbar.addPermanentWidget(self.statusbar_table_btn)
-
-        # Charts button with dropdown
-        self.statusbar_charts_btn = QPushButton("📈 Charts")
-        self.statusbar_charts_btn.setMaximumWidth(90)
-        charts_menu = QMenu(self.statusbar_charts_btn)
-        charts_menu.addAction("📏 Distance vs Time (selected object)...", self.show_distance_time_chart)
-        charts_menu.addAction("⚠️ MOID vs H (hazard space)", self.show_moid_h_chart)
-        charts_menu.addAction("📅 Discovery Timeline", self.show_discovery_timeline)
-        charts_menu.addSeparator()
-        charts_menu.addAction("🌍 Solar Elongation vs Distance", self.show_elongation_distance_chart)
-        charts_menu.addAction("🔄 a vs e (orbital element space)", self.show_a_e_chart)
-        charts_menu.addSeparator()
-        charts_menu.addAction("🌙 Lunar Phases (year view)", self.show_lunar_phases_chart)
-        charts_menu.addSeparator()
-        charts_menu.addAction("☀️ Heliocentric View (polar)", self.show_heliocentric_chart)
-        self.statusbar_charts_btn.setMenu(charts_menu)
-        self.statusbar_charts_btn.setToolTip("Open analysis charts")
-        self.statusbar.addPermanentWidget(self.statusbar_charts_btn)
+        # Separator
+        sep1 = QLabel("│")
+        sep1.setStyleSheet("color: gray;")
+        self.statusbar.addPermanentWidget(sep1)
 
         help_btn = QPushButton("❓ Help")
         help_btn.setMaximumWidth(60)
         help_btn.clicked.connect(self.show_help)
         self.statusbar.addPermanentWidget(help_btn)
-        
+
+        # Separator
+        sep2 = QLabel("│")
+        sep2.setStyleSheet("color: gray;")
+        self.statusbar.addPermanentWidget(sep2)
+
         settings_btn = QPushButton("⚙️ Settings")
         settings_btn.setMaximumWidth(80)
         settings_btn.clicked.connect(self.show_settings)
@@ -12289,7 +12328,12 @@ class NEOVisualizer(QMainWindow):
         reset_menu.addAction("Factory defaults", self.reset_all)
         self.reset_btn.setMenu(reset_menu)
         self.statusbar.addPermanentWidget(self.reset_btn)
-        
+
+        # Separator
+        sep3 = QLabel("│")
+        sep3.setStyleSheet("color: gray;")
+        self.statusbar.addPermanentWidget(sep3)
+
         exit_btn = QPushButton("❌ Exit")
         exit_btn.setMaximumWidth(55)
         exit_btn.clicked.connect(self.close)
