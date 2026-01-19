@@ -587,7 +587,7 @@ class SkyMapCanvas(FigureCanvas):
         self._constellation_boundaries = self._load_constellation_boundaries()
         self._boundary_lines = []  # Populated when boundaries are drawn
         self._highlighted_constellation = None
-        self._highlight_original_styles = []
+        self._highlight_collection = None  # LineCollection for highlighted constellation
         self._constellation_label = None
 
         # Load bright star catalog
@@ -2464,8 +2464,10 @@ class SkyMapCanvas(FigureCanvas):
         """Draw IAU constellation boundary lines.
 
         Boundaries are stored in equatorial coordinates and transformed to the
-        current coordinate system. Uses low zorder to appear behind other elements.
+        current coordinate system. Uses LineCollection for fast batched drawing.
         """
+        from matplotlib.collections import LineCollection
+
         BOUNDARY_ZORDER = 1  # Below everything else
 
         if not self._constellation_boundaries:
@@ -2474,84 +2476,72 @@ class SkyMapCanvas(FigureCanvas):
         color = settings.get('color', '#555555')
         opacity = settings.get('opacity', 30) / 100.0
 
-        # Track boundary line artists for highlighting
-        self._boundary_lines = []  # List of (line_artist, abbrev, name)
-
         # Get opposition offset if needed
         opp_offset = 0
         if self.coord_system == 'opposition':
             opp_offset = getattr(self, 'sun_ecl_lon', 0) + 180
 
+        # Batch transform all segments and collect valid ones
+        segments = []  # For LineCollection: list of [(x1,y1), (x2,y2)]
+        self._boundary_lines = []  # For Shift+Click identification
+
+        use_radians = self.projection in ['hammer', 'aitoff', 'mollweide']
+
         for segment in self._constellation_boundaries:
             ra1, dec1, ra2, dec2 = segment[:4]
             abbrev = segment[4] if len(segment) > 4 else ''
             name = segment[5] if len(segment) > 5 else abbrev
-            try:
-                # Transform coordinates based on current system
-                if self.coord_system == 'equatorial':
-                    lon1, lat1 = ra1, dec1
-                    lon2, lat2 = ra2, dec2
-                elif self.coord_system == 'ecliptic':
-                    lon1, lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
-                    lon2, lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
-                elif self.coord_system == 'galactic':
-                    lon1, lat1 = CoordinateTransformer.equatorial_to_galactic(ra1, dec1)
-                    lon2, lat2 = CoordinateTransformer.equatorial_to_galactic(ra2, dec2)
-                elif self.coord_system == 'opposition':
-                    ecl_lon1, ecl_lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
-                    ecl_lon2, ecl_lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
-                    lon1 = (ecl_lon1 - opp_offset + 180) % 360 - 180
-                    lat1 = ecl_lat1
-                    lon2 = (ecl_lon2 - opp_offset + 180) % 360 - 180
-                    lat2 = ecl_lat2
-                else:
-                    lon1, lat1 = ra1, dec1
-                    lon2, lat2 = ra2, dec2
 
-                # Normalize longitude for plotting
-                if self.projection in ['hammer', 'aitoff', 'mollweide']:
-                    # These projections need -180 to 180 range
-                    if lon1 > 180:
-                        lon1 -= 360
-                    if lon2 > 180:
-                        lon2 -= 360
+            # Transform coordinates based on current system
+            if self.coord_system == 'equatorial':
+                lon1, lat1 = ra1, dec1
+                lon2, lat2 = ra2, dec2
+            elif self.coord_system == 'ecliptic':
+                lon1, lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
+                lon2, lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
+            elif self.coord_system == 'galactic':
+                lon1, lat1 = CoordinateTransformer.equatorial_to_galactic(ra1, dec1)
+                lon2, lat2 = CoordinateTransformer.equatorial_to_galactic(ra2, dec2)
+            elif self.coord_system == 'opposition':
+                ecl_lon1, ecl_lat1 = CoordinateTransformer.equatorial_to_ecliptic(ra1, dec1)
+                ecl_lon2, ecl_lat2 = CoordinateTransformer.equatorial_to_ecliptic(ra2, dec2)
+                lon1 = (ecl_lon1 - opp_offset + 180) % 360 - 180
+                lat1 = ecl_lat1
+                lon2 = (ecl_lon2 - opp_offset + 180) % 360 - 180
+                lat2 = ecl_lat2
+            else:
+                lon1, lat1 = ra1, dec1
+                lon2, lat2 = ra2, dec2
 
-                    # Skip segments that cross the edge (large longitude difference)
-                    if abs(lon1 - lon2) > 180:
-                        continue
+            # Normalize longitude to -180 to +180
+            if lon1 > 180:
+                lon1 -= 360
+            if lon2 > 180:
+                lon2 -= 360
 
-                    # Convert to radians, negating longitude (East on left, matching NEO positions)
-                    lon1_rad = np.radians(-lon1)
-                    lon2_rad = np.radians(-lon2)
-                    lat1_rad = np.radians(lat1)
-                    lat2_rad = np.radians(lat2)
+            # Skip segments that wrap around the edge
+            if abs(lon1 - lon2) > 180:
+                continue
 
-                    line = self.ax.plot([lon1_rad, lon2_rad], [lat1_rad, lat2_rad],
-                                       '-', color=color, linewidth=0.5, alpha=opacity,
-                                       zorder=BOUNDARY_ZORDER)[0]
-                else:
-                    # Rectangular projection: center at 0° (convert to -180 to +180)
-                    if lon1 > 180:
-                        lon1 -= 360
-                    if lon2 > 180:
-                        lon2 -= 360
+            if use_radians:
+                # Convert to radians, negating longitude (East on left)
+                x1, y1 = np.radians(-lon1), np.radians(lat1)
+                x2, y2 = np.radians(-lon2), np.radians(lat2)
+            else:
+                x1, y1 = lon1, lat1
+                x2, y2 = lon2, lat2
 
-                    # Skip segments that wrap around
-                    if abs(lon1 - lon2) > 180:
-                        continue
+            segments.append([(x1, y1), (x2, y2)])
+            # Store segment data for Shift+Click identification
+            self._boundary_lines.append(((x1, y1, x2, y2), abbrev, name))
 
-                    line = self.ax.plot([lon1, lon2], [lat1, lat2],
-                                       '-', color=color, linewidth=0.5, alpha=opacity,
-                                       zorder=BOUNDARY_ZORDER)[0]
+        if segments:
+            lc = LineCollection(segments, colors=color, linewidths=0.5,
+                               alpha=opacity, zorder=BOUNDARY_ZORDER)
+            self.ax.add_collection(lc)
+            self.overlay_artists.append(lc)
 
-                self.overlay_artists.append(line)
-                self._boundary_lines.append((line, abbrev, name))
-
-            except Exception as e:
-                # Skip problematic segments silently
-                pass
-
-        logger.debug(f"Drew constellation boundaries")
+        logger.debug(f"Drew {len(segments)} constellation boundary segments")
 
     def _draw_background_stars(self, settings):
         """Draw background stars from Hipparcos catalog.
@@ -3772,15 +3762,10 @@ class SkyMapCanvas(FigureCanvas):
         votes = Counter()  # abbrev -> count
         names = {}  # abbrev -> name
 
-        for line, abbrev, name in self._boundary_lines:
-            xdata = line.get_xdata()
-            ydata = line.get_ydata()
-            if len(xdata) < 2:
-                continue
+        for coords, abbrev, name in self._boundary_lines:
+            x1, y1, x2, y2 = coords
 
             # Distance from point to line segment
-            x1, x2 = xdata[0], xdata[1]
-            y1, y2 = ydata[0], ydata[1]
             dx, dy = x2 - x1, y2 - y1
             len_sq = dx*dx + dy*dy
 
@@ -3806,33 +3791,38 @@ class SkyMapCanvas(FigureCanvas):
 
     def _highlight_constellation(self, abbrev, name):
         """Highlight all boundary segments of a constellation and show name."""
+        from matplotlib.collections import LineCollection
+
         if not hasattr(self, '_boundary_lines'):
             return
 
         # Clear any previous highlight
         self._clear_constellation_highlight()
 
-        # Store original colors and highlight matching segments
         self._highlighted_constellation = abbrev
-        self._highlight_original_styles = []
 
         highlight_color = '#FFFF00'  # Yellow
         highlight_width = 2.0
         highlight_alpha = 0.9
 
-        for line, seg_abbrev, seg_name in self._boundary_lines:
+        # Collect segments for this constellation
+        highlight_segments = []
+        xs, ys = [], []
+
+        for coords, seg_abbrev, seg_name in self._boundary_lines:
             if seg_abbrev == abbrev:
-                # Store original style
-                self._highlight_original_styles.append({
-                    'line': line,
-                    'color': line.get_color(),
-                    'linewidth': line.get_linewidth(),
-                    'alpha': line.get_alpha()
-                })
-                # Apply highlight
-                line.set_color(highlight_color)
-                line.set_linewidth(highlight_width)
-                line.set_alpha(highlight_alpha)
+                x1, y1, x2, y2 = coords
+                highlight_segments.append([(x1, y1), (x2, y2)])
+                xs.extend([x1, x2])
+                ys.extend([y1, y2])
+
+        # Draw highlighted segments as a separate LineCollection
+        if highlight_segments:
+            self._highlight_collection = LineCollection(
+                highlight_segments, colors=highlight_color,
+                linewidths=highlight_width, alpha=highlight_alpha, zorder=999
+            )
+            self.ax.add_collection(self._highlight_collection)
 
         # Show constellation name as text annotation
         if hasattr(self, '_constellation_label') and self._constellation_label:
@@ -3842,12 +3832,6 @@ class SkyMapCanvas(FigureCanvas):
                 pass
 
         # Position label at center of highlighted segments
-        xs, ys = [], []
-        for style in self._highlight_original_styles:
-            line = style['line']
-            xs.extend(line.get_xdata())
-            ys.extend(line.get_ydata())
-
         if xs and ys:
             center_x = np.mean(xs)
             center_y = np.mean(ys)
@@ -3865,14 +3849,13 @@ class SkyMapCanvas(FigureCanvas):
 
     def _clear_constellation_highlight(self):
         """Clear constellation highlighting and label."""
-        # Restore original line styles
-        if hasattr(self, '_highlight_original_styles'):
-            for style in self._highlight_original_styles:
-                line = style['line']
-                line.set_color(style['color'])
-                line.set_linewidth(style['linewidth'])
-                line.set_alpha(style['alpha'])
-            self._highlight_original_styles = []
+        # Remove highlight collection
+        if hasattr(self, '_highlight_collection') and self._highlight_collection:
+            try:
+                self._highlight_collection.remove()
+            except:
+                pass
+            self._highlight_collection = None
 
         # Remove label
         if hasattr(self, '_constellation_label') and self._constellation_label:
