@@ -2704,6 +2704,7 @@ class SkyMapCanvas(FigureCanvas):
         if misc_filter is None:
             misc_filter = {}
         hide_numbered = misc_filter.get('hide_numbered', False)
+        hide_unnumbered = misc_filter.get('hide_unnumbered', False)
         geo_near_enabled = misc_filter.get('geo_near_enabled', False)
         geo_near_dist = misc_filter.get('geo_near_dist', 0.0)
         geo_far_enabled = misc_filter.get('geo_far_enabled', False)
@@ -2729,6 +2730,28 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.stats_text.set_text('No provisional objects (all numbered)')
+                if self.trailing_settings.get('enabled', False):
+                    self._clear_trails()
+                    self.trail_history.clear()
+                self.draw()
+                return
+
+        # Filter out unnumbered objects if enabled (early filter for performance)
+        if hide_unnumbered and asteroids is not None:
+            unnumbered_mask = np.ones(len(positions), dtype=bool)
+            for i in range(len(positions)):
+                ast_idx = int(positions[i, 0])
+                if ast_idx < len(asteroids):
+                    desig = asteroids[ast_idx].get('designation', '')
+                    # Unnumbered objects have 7-character packed designations
+                    # Numbered objects are 5 characters
+                    if desig and len(desig) == 7:
+                        unnumbered_mask[i] = False
+            positions = positions[unnumbered_mask]
+            if len(positions) == 0:
+                self.scatter.set_offsets(np.empty((0, 2)))
+                self.scatter.set_array(np.array([]))
+                self.stats_text.set_text('No numbered objects (all provisional)')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
                     self.trail_history.clear()
@@ -9145,6 +9168,24 @@ class SettingsDialog(QDialog):
         self.hide_numbered_check.stateChanged.connect(self.on_misc_filter_changed)
         misc_layout.addWidget(self.hide_numbered_check)
 
+        # Hide unnumbered objects checkbox
+        self.hide_unnumbered_check = QCheckBox("Hide unnumbered objects")
+        self.hide_unnumbered_check.setChecked(False)
+        self.hide_unnumbered_check.setToolTip("Hide asteroids with provisional designations (show only numbered objects)")
+        self.hide_unnumbered_check.stateChanged.connect(self.on_misc_filter_changed)
+        misc_layout.addWidget(self.hide_unnumbered_check)
+
+        # Horizontal separator
+        sep1 = QFrame()
+        sep1.setFrameShape(QFrame.Shape.HLine)
+        sep1.setFrameShadow(QFrame.Shadow.Sunken)
+        misc_layout.addWidget(sep1)
+
+        # Geocentric distances label
+        geo_label = QLabel("Geocentric distances")
+        geo_label.setStyleSheet("font-weight: bold; font-size: 9pt;")
+        misc_layout.addWidget(geo_label)
+
         # Geocentric distance filters (r)
         geo_near_row = QHBoxLayout()
         self.geo_near_check = QCheckBox("Hide nearer than")
@@ -9182,6 +9223,11 @@ class SettingsDialog(QDialog):
         geo_far_row.addStretch()
         misc_layout.addLayout(geo_far_row)
 
+        # Heliocentric distances label
+        helio_label = QLabel("Heliocentric distances")
+        helio_label.setStyleSheet("font-weight: bold; font-size: 9pt;")
+        misc_layout.addWidget(helio_label)
+
         # Heliocentric distance filters (Δ)
         helio_near_row = QHBoxLayout()
         self.helio_near_check = QCheckBox("Hide nearer than")
@@ -9218,6 +9264,12 @@ class SettingsDialog(QDialog):
         helio_far_row.addWidget(QLabel("(Δ)"))
         helio_far_row.addStretch()
         misc_layout.addLayout(helio_far_row)
+
+        # Horizontal separator before site filters
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        misc_layout.addWidget(sep2)
 
         # Site whitelist row
         whitelist_row = QHBoxLayout()
@@ -10522,6 +10574,7 @@ class SettingsDialog(QDialog):
         """Return current miscellaneous filter settings"""
         return {
             'hide_numbered': self.hide_numbered_check.isChecked(),
+            'hide_unnumbered': self.hide_unnumbered_check.isChecked(),
             'geo_near_enabled': self.geo_near_check.isChecked(),
             'geo_near_dist': self.geo_near_spin.value(),
             'geo_far_enabled': self.geo_far_check.isChecked(),
@@ -10988,6 +11041,7 @@ class SettingsDialog(QDialog):
             # Miscellaneous Filters
             state['misc_filter'] = {
                 'hide_numbered': self.hide_numbered_check.isChecked(),
+                'hide_unnumbered': self.hide_unnumbered_check.isChecked(),
                 'geo_near_enabled': self.geo_near_check.isChecked(),
                 'geo_near_dist': self.geo_near_spin.value(),
                 'geo_far_enabled': self.geo_far_check.isChecked(),
@@ -11321,6 +11375,7 @@ class SettingsDialog(QDialog):
             if 'misc_filter' in state:
                 mf = state['misc_filter']
                 self.hide_numbered_check.setChecked(mf.get('hide_numbered', False))
+                self.hide_unnumbered_check.setChecked(mf.get('hide_unnumbered', False))
                 self.geo_near_check.setChecked(mf.get('geo_near_enabled', False))
                 self.geo_near_spin.setValue(mf.get('geo_near_dist', 0.0))
                 self.geo_far_check.setChecked(mf.get('geo_far_enabled', False))
@@ -13062,6 +13117,7 @@ class NEOVisualizer(QMainWindow):
                 
                 # Miscellaneous Filters (including site filtering)
                 self.settings_dialog.hide_numbered_check.setChecked(False)  # Show all by default
+                self.settings_dialog.hide_unnumbered_check.setChecked(False)
                 self.settings_dialog.geo_near_check.setChecked(False)
                 self.settings_dialog.geo_near_spin.setValue(0.0)
                 self.settings_dialog.geo_far_check.setChecked(False)
@@ -13287,6 +13343,7 @@ class NEOVisualizer(QMainWindow):
                 # Miscellaneous Filters
                 settings['misc_filter'] = {
                     'hide_numbered': self.settings_dialog.hide_numbered_check.isChecked(),
+                    'hide_unnumbered': self.settings_dialog.hide_unnumbered_check.isChecked(),
                     'geo_near_enabled': self.settings_dialog.geo_near_check.isChecked(),
                     'geo_near_dist': self.settings_dialog.geo_near_spin.value(),
                     'geo_far_enabled': self.settings_dialog.geo_far_check.isChecked(),
@@ -13548,6 +13605,7 @@ class NEOVisualizer(QMainWindow):
                 if 'misc_filter' in settings:
                     mf = settings['misc_filter']
                     self.settings_dialog.hide_numbered_check.setChecked(mf.get('hide_numbered', False))
+                    self.settings_dialog.hide_unnumbered_check.setChecked(mf.get('hide_unnumbered', False))
                     self.settings_dialog.geo_near_check.setChecked(mf.get('geo_near_enabled', False))
                     self.settings_dialog.geo_near_spin.setValue(mf.get('geo_near_dist', 0.0))
                     self.settings_dialog.geo_far_check.setChecked(mf.get('geo_far_enabled', False))
