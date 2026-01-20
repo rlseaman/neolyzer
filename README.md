@@ -1,6 +1,6 @@
 # NEOlyzer
 
-**Near-Earth Object Visualization and Analysis** | Version 3.05
+**Near-Earth Object Visualization and Analysis** | Version 3.06
 
 Interactive visualization tool for the NEO catalog supporting Planetary Defense research and operations. Developed at Catalina Sky Survey, University of Arizona.
 
@@ -22,11 +22,11 @@ cd neolyzer
 
 ### Without Git
 
-Download and extract: [neolyzer-v3.05.zip](https://github.com/rlseaman/neolyzer/archive/refs/tags/v3.05.zip)
+Download and extract: [neolyzer-v3.06.zip](https://github.com/rlseaman/neolyzer/archive/refs/tags/v3.06.zip)
 
 ```bash
-unzip neolyzer-v3.05.zip
-cd neolyzer-3.05
+unzip neolyzer-v3.06.zip
+cd neolyzer-3.06
 ./install.sh
 ./run_neolyzer.sh
 ```
@@ -67,6 +67,8 @@ Platform-specific notes in [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt).
 - **Data tables:** Selection and CSV export
 - **Constellation boundaries:** IAU boundary overlay
 - **Background stars:** Bright star display with magnitude filtering
+- **Alternate catalogs:** Load and compare multiple catalog versions
+- **Catalog blinking:** Rapidly toggle between catalogs for comparison
 
 ---
 
@@ -109,12 +111,93 @@ During setup, select which JPL planetary ephemeris to use:
 
 ## Maintenance
 
+### Basic Commands
+
 ```bash
 ./venv/bin/python scripts/update_catalog.py   # Update catalog from MPC
 ./venv/bin/python scripts/build_cache.py      # Rebuild position cache
 ./venv/bin/python scripts/verify_installation.py  # Verify installation
 ./run_setup.sh                                 # Re-run setup wizard
 ```
+
+### Updating the Primary Catalog
+
+The primary catalog can be updated from the Minor Planet Center with various options:
+
+```bash
+# Daily update (minimal, ~5 min)
+./venv/bin/python scripts/update_catalog.py --fetch-moid --mark-stale --clear-cache
+
+# Daily update with quick cache rebuild (~10 min)
+./venv/bin/python scripts/update_catalog.py --fetch-moid --mark-stale --quick-cache
+
+# Weekly update with full cache rebuild (~35 min)
+./venv/bin/python scripts/update_catalog.py --fetch-moid --mark-stale --rebuild-cache
+
+# Clean sync - delete missing objects (destructive)
+./venv/bin/python scripts/update_catalog.py --fetch-moid --sync
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--fetch-moid` | Fetch Earth MOID values from JPL SBDB (~2-3 min) |
+| `--clear-cache` | Clear position cache (app computes on-the-fly) |
+| `--quick-cache` | Rebuild ±1 year high-precision cache only (~5 min) |
+| `--rebuild-cache` | Rebuild entire cache - all precision tiers (~30 min) |
+| `--sync` | Delete objects not in current MPC catalog (destructive) |
+| `--mark-stale` | Mark missing objects as stale with timestamp |
+| `--quiet` | Suppress progress output (for cron jobs) |
+
+### Loading Alternate Catalogs
+
+Load historical or comparison catalogs for side-by-side analysis:
+
+```bash
+# Basic load (name derived from filename)
+./venv/bin/python scripts/load_alt_catalog.py alt_data/NEA_backup.txt
+
+# Load with custom name and MOID data
+./venv/bin/python scripts/load_alt_catalog.py alt_data/NEA_jan17.txt --name jan17_backup --fetch-moid
+
+# Full load with MOID, discovery data, and position cache
+./venv/bin/python scripts/load_alt_catalog.py alt_data/NEA.txt --name backup_jan \
+    --fetch-moid --load-discovery --quick-cache
+
+# Replace existing catalog
+./venv/bin/python scripts/load_alt_catalog.py alt_data/NEA.txt --name backup --replace
+
+# List loaded catalogs
+./venv/bin/python scripts/load_alt_catalog.py --list
+
+# Show catalog info
+./venv/bin/python scripts/load_alt_catalog.py --info jan17_backup
+
+# Delete a catalog
+./venv/bin/python scripts/load_alt_catalog.py --delete old_catalog
+```
+
+**Options:**
+| Option | Description |
+|--------|-------------|
+| `--name NAME` | Catalog name (default: derived from filename) |
+| `--description TEXT` | Optional description for the catalog |
+| `--fetch-moid` | Fetch Earth MOID values from JPL SBDB |
+| `--load-discovery` | Load discovery circumstances if CSV available |
+| `--build-cache` | Build full position cache for this catalog |
+| `--quick-cache` | Build ±1 year high-precision cache only |
+| `--replace` | Replace existing catalog with same name |
+| `--list` | List all loaded alternate catalogs |
+| `--info NAME` | Show detailed info about a catalog |
+| `--delete NAME` | Delete an alternate catalog |
+| `--force` | Force delete without confirmation |
+
+**Using Alternate Catalogs in NEOlyzer:**
+1. Select catalog from dropdown (left of Search box)
+2. Click **Blink** button to toggle between primary and alternate
+3. Adjust blink rate with spinner (0.25s - 5.0s)
+4. Yellow background indicates alternate catalog is active
+5. Some filters (MOID, discovery) disabled for alternates without that data
 
 ---
 

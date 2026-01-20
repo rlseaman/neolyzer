@@ -263,6 +263,14 @@ def update_catalog(
         if new_objects > 0:
             logger.info(f"🌟 {new_objects} new objects discovered!")
 
+        # Update primary catalog metadata for provenance tracking
+        db.update_primary_catalog(
+            source_file="data/NEA.txt",
+            download_url="https://www.minorplanetcenter.net/iau/MPCORB/NEA.txt",
+            object_count=new_count,
+            cache_file="cache/positions.h5" if not clear_cache else None
+        )
+
     except Exception as e:
         logger.error(f"Database update failed: {e}")
         import traceback
@@ -277,6 +285,8 @@ def update_catalog(
             db_asteroids = db.get_asteroids(neo_only=True)
             fetch_moid_batch(db_asteroids, show_progress=not quiet)
             logger.info("MOID data updated")
+            # Update primary catalog metadata
+            db.update_primary_catalog(has_moid=True)
         except Exception as e:
             logger.error(f"MOID fetch failed: {e}")
             # Continue - this is not fatal

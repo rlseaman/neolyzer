@@ -41,7 +41,7 @@ try:
         QTableWidget, QTableWidgetItem, QMenu, QFrame
     )
     from PyQt6.QtCore import Qt, QDateTime, QTimer, pyqtSignal, QDate, QTime
-    from PyQt6.QtGui import QFont, QPixmap, QCursor, QShortcut, QKeySequence
+    from PyQt6.QtGui import QFont, QPixmap, QCursor, QShortcut, QKeySequence, QColor
     PYQT_VERSION = 6
     
     # PyQt6 enums are nested (Qt.AlignmentFlag.AlignLeft)
@@ -79,7 +79,7 @@ except ImportError:
         QTableWidget, QTableWidgetItem, QMenu, QFrame, QShortcut
     )
     from PyQt5.QtCore import Qt, QDateTime, QTimer, pyqtSignal, QDate, QTime
-    from PyQt5.QtGui import QFont, QPixmap, QCursor, QKeySequence
+    from PyQt5.QtGui import QFont, QPixmap, QCursor, QKeySequence, QColor
     PYQT_VERSION = 5
     
     # PyQt5 enums are flat (Qt.AlignLeft)
@@ -2741,6 +2741,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(positions) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text('No provisional objects (all numbered)')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -2763,6 +2764,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(positions) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text('No numbered objects (all provisional)')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -2782,6 +2784,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(positions) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text('No objects in geocentric distance range')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -2816,6 +2819,7 @@ class SkyMapCanvas(FigureCanvas):
                 if len(positions) == 0:
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
+                    self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                     self.stats_text.set_text('No objects in heliocentric distance range')
                     if self.trailing_settings.get('enabled', False):
                         self._clear_trails()
@@ -2846,6 +2850,7 @@ class SkyMapCanvas(FigureCanvas):
                 if len(positions) == 0:
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
+                    self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                     self.stats_text.set_text(f'No objects outside {solar_radius:.0f}° solar elongation')
                     if self.trailing_settings.get('enabled', False):
                         self._clear_trails()
@@ -2866,6 +2871,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(positions) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text(f'No objects in declination range {dec_south:.0f}° to {dec_north:.0f}°')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -2887,6 +2893,7 @@ class SkyMapCanvas(FigureCanvas):
         if len(visible) == 0:
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
+            self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
             self.stats_text.set_text(f'No objects {mag_min:.1f} < mag < {mag_max:.1f}')
             # Clear trails when no objects visible
             if self.trailing_settings.get('enabled', False):
@@ -2895,7 +2902,7 @@ class SkyMapCanvas(FigureCanvas):
                 logger.debug("TRAIL: No objects in initial mag range - cleared trails")
             self.draw()  # Force immediate redraw
             return
-        
+
         # Extract RA/Dec
         ra = visible[:, 1]
         dec = visible[:, 2]
@@ -3011,6 +3018,7 @@ class SkyMapCanvas(FigureCanvas):
         if len(visible) == 0:
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
+            self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
             self.stats_text.set_text('No objects in effective magnitude range')
             # Clear trails when no objects visible
             if self.trailing_settings.get('enabled', False):
@@ -3019,7 +3027,7 @@ class SkyMapCanvas(FigureCanvas):
                 logger.debug("TRAIL: No objects in mag range - cleared trails")
             self.draw()
             return
-        
+
         if _profile:
             _times['magfilter'] = time.time() - _t0
 
@@ -3044,6 +3052,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(visible) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text('No objects discovered yet at this date')
                 # Clear trails when no objects visible
                 if self.trailing_settings.get('enabled', False):
@@ -3052,7 +3061,7 @@ class SkyMapCanvas(FigureCanvas):
                     logger.debug("TRAIL: No objects discovered yet - cleared trails")
                 self.draw()
                 return
-        
+
         # Filter out objects with missing discovery tracklets if enabled
         if hide_missing_discovery and asteroids is not None:
             missing_mask = np.ones(len(visible), dtype=bool)
@@ -3073,6 +3082,7 @@ class SkyMapCanvas(FigureCanvas):
             if len(visible) == 0:
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
+                self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                 self.stats_text.set_text('No objects (all have missing discovery data)')
                 # Clear trails when no objects visible
                 if self.trailing_settings.get('enabled', False):
@@ -3081,7 +3091,7 @@ class SkyMapCanvas(FigureCanvas):
                     logger.debug("TRAIL: No objects (missing discovery) - cleared trails")
                 self.draw()
                 return
-        
+
         # Filter by discovery site (whitelist/blacklist)
         if site_filter and asteroids is not None:
             whitelist_enabled = site_filter.get('whitelist_enabled', False)
@@ -3118,6 +3128,7 @@ class SkyMapCanvas(FigureCanvas):
                 if len(visible) == 0:
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
+                    self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
                     self.stats_text.set_text('No objects match site filter')
                     # Clear trails when no objects visible
                     if self.trailing_settings.get('enabled', False):
@@ -5473,6 +5484,267 @@ class NEOTableDialog(QDialog):
         event.accept()
 
 
+class ChangedObjectsDialog(QDialog):
+    """Dialog displaying objects with changed orbital elements between catalogs"""
+
+    # Columns from NEA.txt that can change (with display names and format specs)
+    COMPARE_COLUMNS = [
+        ('H', 'H', '.2f'),
+        ('G', 'G', '.2f'),
+        ('epoch_jd', 'Epoch', '.1f'),
+        ('M', 'M°', '.4f'),
+        ('arg_peri', 'ω°', '.4f'),
+        ('node', 'Ω°', '.4f'),
+        ('i', 'i°', '.4f'),
+        ('e', 'e', '.6f'),
+        ('n', 'n', '.8f'),
+        ('a', 'a', '.6f'),
+        ('n_obs', 'Nobs', 'd'),
+        ('n_opp', 'Nopp', 'd'),
+        ('arc_length', 'Arc', 'd'),
+        ('last_obs', 'LastObs', 's'),
+    ]
+
+    last_geometry = None
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Changed Objects - Catalog Comparison")
+        self.setMinimumSize(1100, 600)
+
+        if ChangedObjectsDialog.last_geometry:
+            self.setGeometry(ChangedObjectsDialog.last_geometry)
+
+        self.setModal(False)
+        self.changed_objects = []
+        self.primary_name = "Primary"
+        self.alternate_name = "Alternate"
+
+        self.setup_ui()
+
+    def setup_ui(self):
+        layout = QVBoxLayout()
+
+        # Info label
+        self.info_label = QLabel("Comparing catalogs...")
+        self.info_label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
+        layout.addWidget(self.info_label)
+
+        # Summary label
+        self.summary_label = QLabel("")
+        self.summary_label.setStyleSheet("color: #666; margin-bottom: 10px;")
+        layout.addWidget(self.summary_label)
+
+        # Table widget
+        self.table = QTableWidget()
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.horizontalHeader().setStretchLastSection(True)
+
+        # Define columns: Designation, then pairs of (Primary, Alternate, Delta) for each changed column
+        # We'll build columns dynamically based on what actually changed
+        self.base_columns = [('Designation', 120), ('Class', 70)]
+
+        layout.addWidget(self.table)
+
+        # Button row
+        btn_layout = QHBoxLayout()
+
+        # Export button
+        export_btn = QPushButton("📥 Export CSV")
+        export_btn.clicked.connect(self.export_csv)
+        btn_layout.addWidget(export_btn)
+
+        btn_layout.addStretch()
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        btn_layout.addWidget(close_btn)
+
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def set_data(self, changed_objects, primary_name, alternate_name, changed_columns):
+        """
+        Set the comparison data
+
+        Parameters:
+        -----------
+        changed_objects : list of dict
+            Each dict contains:
+            - 'designation': str
+            - 'orbit_class': str
+            - 'primary': dict of orbital elements from primary catalog
+            - 'alternate': dict of orbital elements from alternate catalog
+            - 'changes': dict mapping column name to (primary_val, alt_val, delta)
+        primary_name : str
+            Name of primary catalog
+        alternate_name : str
+            Name of alternate catalog
+        changed_columns : list of str
+            Column names that have changes (in order to display)
+        """
+        self.changed_objects = changed_objects
+        self.primary_name = primary_name
+        self.alternate_name = alternate_name
+
+        # Build column list: Designation, Class, then for each changed column: Primary/Alternate/Delta
+        columns = list(self.base_columns)
+        for col_key in changed_columns:
+            # Find display name
+            display_name = col_key
+            for key, name, fmt in self.COMPARE_COLUMNS:
+                if key == col_key:
+                    display_name = name
+                    break
+            columns.append((f'{display_name} (Pri)', 70))
+            columns.append((f'{display_name} (Alt)', 70))
+            columns.append((f'Δ{display_name}', 60))
+
+        self.table.setColumnCount(len(columns))
+        headers = [col[0] for col in columns]
+        self.table.setHorizontalHeaderLabels(headers)
+
+        for i, (name, width) in enumerate(columns):
+            self.table.setColumnWidth(i, width)
+
+        # Populate table
+        self.table.setRowCount(len(changed_objects))
+
+        for row, obj in enumerate(changed_objects):
+            # Designation
+            des_item = QTableWidgetItem(obj.get('readable_designation') or obj['designation'])
+            des_item.setData(Qt.ItemDataRole.UserRole, obj['designation'])
+            self.table.setItem(row, 0, des_item)
+
+            # Class
+            cls_item = QTableWidgetItem(obj.get('orbit_class', ''))
+            self.table.setItem(row, 1, cls_item)
+
+            # Changed columns
+            col_idx = 2
+            for col_key in changed_columns:
+                if col_key in obj['changes']:
+                    pri_val, alt_val, delta = obj['changes'][col_key]
+
+                    # Find format spec
+                    fmt = 's'
+                    for key, name, f in self.COMPARE_COLUMNS:
+                        if key == col_key:
+                            fmt = f
+                            break
+
+                    # Format values
+                    if pri_val is None:
+                        pri_str = ''
+                    elif fmt == 's':
+                        pri_str = str(pri_val)
+                    elif fmt == 'd':
+                        pri_str = str(int(pri_val)) if pri_val is not None else ''
+                    else:
+                        pri_str = f'{pri_val:{fmt}}' if pri_val is not None else ''
+
+                    if alt_val is None:
+                        alt_str = ''
+                    elif fmt == 's':
+                        alt_str = str(alt_val)
+                    elif fmt == 'd':
+                        alt_str = str(int(alt_val)) if alt_val is not None else ''
+                    else:
+                        alt_str = f'{alt_val:{fmt}}' if alt_val is not None else ''
+
+                    if delta is None or fmt == 's':
+                        delta_str = ''
+                    elif fmt == 'd':
+                        delta_str = f'{int(delta):+d}' if delta != 0 else '0'
+                    else:
+                        delta_str = f'{delta:+{fmt}}' if delta != 0 else '0'
+
+                    pri_item = QTableWidgetItem(pri_str)
+                    alt_item = QTableWidgetItem(alt_str)
+                    delta_item = QTableWidgetItem(delta_str)
+
+                    # Color delta based on sign
+                    if delta is not None and delta != 0 and fmt != 's':
+                        if delta > 0:
+                            delta_item.setForeground(QColor('#008800'))
+                        else:
+                            delta_item.setForeground(QColor('#CC0000'))
+
+                    # Make numeric for sorting
+                    if fmt != 's' and pri_val is not None:
+                        pri_item.setData(Qt.ItemDataRole.UserRole, float(pri_val) if pri_val else 0)
+                    if fmt != 's' and alt_val is not None:
+                        alt_item.setData(Qt.ItemDataRole.UserRole, float(alt_val) if alt_val else 0)
+                    if fmt != 's' and delta is not None:
+                        delta_item.setData(Qt.ItemDataRole.UserRole, float(delta) if delta else 0)
+
+                    self.table.setItem(row, col_idx, pri_item)
+                    self.table.setItem(row, col_idx + 1, alt_item)
+                    self.table.setItem(row, col_idx + 2, delta_item)
+                else:
+                    # No change for this column in this object
+                    self.table.setItem(row, col_idx, QTableWidgetItem(''))
+                    self.table.setItem(row, col_idx + 1, QTableWidgetItem(''))
+                    self.table.setItem(row, col_idx + 2, QTableWidgetItem(''))
+
+                col_idx += 3
+
+        # Update labels
+        self.info_label.setText(f"Comparing {primary_name} vs {alternate_name}")
+        self.summary_label.setText(f"{len(changed_objects)} objects with element changes")
+
+    def export_csv(self):
+        """Export comparison data to CSV"""
+        if not self.changed_objects:
+            return
+
+        from PyQt6.QtWidgets import QFileDialog
+        import csv
+
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Export Changed Objects",
+            f"changed_objects_{self.alternate_name}.csv",
+            "CSV Files (*.csv)"
+        )
+
+        if not filename:
+            return
+
+        try:
+            with open(filename, 'w', newline='') as f:
+                writer = csv.writer(f)
+
+                # Header
+                header = ['Designation', 'Class']
+                for col_key, display_name, fmt in self.COMPARE_COLUMNS:
+                    header.extend([f'{display_name}_Primary', f'{display_name}_Alternate', f'{display_name}_Delta'])
+                writer.writerow(header)
+
+                # Data
+                for obj in self.changed_objects:
+                    row = [obj['designation'], obj.get('orbit_class', '')]
+                    for col_key, display_name, fmt in self.COMPARE_COLUMNS:
+                        if col_key in obj['changes']:
+                            pri_val, alt_val, delta = obj['changes'][col_key]
+                            row.extend([pri_val, alt_val, delta])
+                        else:
+                            row.extend(['', '', ''])
+                    writer.writerow(row)
+
+            self.info_label.setText(f"Exported {len(self.changed_objects)} objects to {filename}")
+        except Exception as e:
+            self.info_label.setText(f"Export error: {e}")
+
+    def closeEvent(self, event):
+        """Save geometry before closing"""
+        ChangedObjectsDialog.last_geometry = self.geometry()
+        event.accept()
+
+
 class CollapsiblePanel(QWidget):
     """A panel with a clickable header that can collapse/expand its content"""
     
@@ -6049,13 +6321,23 @@ class ControlsPanel(QWidget):
             # Sync statusbar button if it exists
             if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
                 self.parent_window.statusbar_play_btn.setText("▶ Play")
+            # Re-enable blink button when animation stops
+            if self.parent_window and hasattr(self.parent_window, 'blink_btn'):
+                self.parent_window.blink_btn.setEnabled(True)
         else:
             # STARTING or RESUMING
             # Check if we're resuming from pause
             is_resuming = False
             if self.parent_window and hasattr(self.parent_window, 'canvas'):
                 is_resuming = getattr(self.parent_window.canvas, 'animation_paused', False)
-            
+
+            # Mutual exclusion: stop blinking if active and disable blink button
+            if self.parent_window and hasattr(self.parent_window, 'blink_btn'):
+                if self.parent_window.blink_timer.isActive():
+                    self.parent_window.blink_btn.setChecked(False)
+                    self.parent_window.toggle_blink(False)
+                self.parent_window.blink_btn.setEnabled(False)
+
             if self.annual_step_check.isChecked():
                 # Annual step mode: timer interval = |seconds per year| * 1000
                 # Sign determines direction in advance_time, abs value is the delay
@@ -9106,7 +9388,8 @@ class SettingsDialog(QDialog):
     def setup_ui(self):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(450)
-        self.setMinimumHeight(400)
+        self.setMinimumHeight(500)  # Increased for Alternate Catalogs section
+        self._default_height = 500  # Store for collapse reset
         # No maximum height - allow dialog to expand as needed
 
         # Force light theme to protect against system dark mode
@@ -10109,6 +10392,77 @@ class SettingsDialog(QDialog):
         self._script_recording = False
         self._script_buffer = []  # List of JD values
 
+        # Alternate Catalogs section
+        altcat_group = CollapsibleGroupBox("Alternate Catalogs")
+        altcat_layout = QVBoxLayout()
+        altcat_layout.setSpacing(3)
+
+        # Diff mode controls
+        diff_label = QLabel("Diff Mode:")
+        diff_label.setStyleSheet("font-weight: bold;")
+        altcat_layout.addWidget(diff_label)
+
+        # Enable diff checkbox
+        self.diff_enable_check = QCheckBox("Show only differences")
+        self.diff_enable_check.setChecked(False)
+        self.diff_enable_check.setToolTip("Display only objects that differ between primary and alternate catalog")
+        self.diff_enable_check.stateChanged.connect(self.on_diff_settings_changed)
+        altcat_layout.addWidget(self.diff_enable_check)
+
+        # Catalog selector for diff
+        diff_cat_row = QHBoxLayout()
+        diff_cat_row.addWidget(QLabel("Compare with:"))
+        self.diff_catalog_combo = QComboBox()
+        self.diff_catalog_combo.setToolTip("Select alternate catalog to compare against primary")
+        self.diff_catalog_combo.currentIndexChanged.connect(self.on_diff_settings_changed)
+        diff_cat_row.addWidget(self.diff_catalog_combo)
+        diff_cat_row.addStretch()
+        altcat_layout.addLayout(diff_cat_row)
+
+        # Diff type selector
+        diff_type_row = QHBoxLayout()
+        diff_type_row.addWidget(QLabel("Show:"))
+        self.diff_type_combo = QComboBox()
+        self.diff_type_combo.addItem("All differences", "all")
+        self.diff_type_combo.addItem("Only in Primary", "primary_only")
+        self.diff_type_combo.addItem("Only in Alternate", "alternate_only")
+        self.diff_type_combo.setToolTip("Filter which differences to display")
+        self.diff_type_combo.currentIndexChanged.connect(self.on_diff_settings_changed)
+        diff_type_row.addWidget(self.diff_type_combo)
+        diff_type_row.addStretch()
+        altcat_layout.addLayout(diff_type_row)
+
+        # Diff stats label
+        self.diff_stats_label = QLabel("")
+        self.diff_stats_label.setStyleSheet("color: #666; font-style: italic;")
+        altcat_layout.addWidget(self.diff_stats_label)
+
+        # Separator
+        altcat_layout.addSpacing(8)
+
+        # Element changes comparison
+        changes_label = QLabel("Element Changes:")
+        changes_label.setStyleSheet("font-weight: bold;")
+        altcat_layout.addWidget(changes_label)
+
+        # Show changed objects button
+        changes_btn_row = QHBoxLayout()
+        self.show_changes_btn = QPushButton("Show Changed Objects")
+        self.show_changes_btn.setToolTip("Show table of objects with changed orbital elements between catalogs")
+        self.show_changes_btn.clicked.connect(self.on_show_changed_objects)
+        changes_btn_row.addWidget(self.show_changes_btn)
+        changes_btn_row.addStretch()
+        altcat_layout.addLayout(changes_btn_row)
+
+        # Changes stats label
+        self.changes_stats_label = QLabel("")
+        self.changes_stats_label.setStyleSheet("color: #666; font-style: italic;")
+        altcat_layout.addWidget(self.changes_stats_label)
+
+        altcat_group.setLayout(altcat_layout)
+        self._layout.addWidget(altcat_group)
+        self.collapsible_sections.append(altcat_group)
+
         # Advanced Controls section (keyboard navigation)
         advanced_group = CollapsibleGroupBox("Advanced Controls")
         advanced_layout = QVBoxLayout()
@@ -10331,27 +10685,31 @@ class SettingsDialog(QDialog):
         for section in self.collapsible_sections:
             if hasattr(section, 'collapsed') and section.collapsed:
                 section.toggle()
-        
-        # Resize dialog to fit all expanded content (up to screen height)
+
+        # Resize dialog to fit all expanded content (up to 90% of screen height)
         QApplication.processEvents()  # Let layout update
         content_height = self.scroll_area.widget().sizeHint().height()
         button_height = 50  # Approximate button row height
         margins = 20  # Dialog margins
         desired_height = content_height + button_height + margins
-        
-        # Limit to screen height minus some margin for taskbar etc.
+
+        # Allow up to 90% of screen height for expanded view
         screen = QApplication.primaryScreen()
         if screen:
-            available_height = screen.availableGeometry().height() - 50
+            available_height = int(screen.availableGeometry().height() * 0.9)
             desired_height = min(desired_height, available_height)
-        
+
         self.resize(self.width(), desired_height)
-    
+
     def close_all_sections(self):
-        """Collapse all collapsible sections"""
+        """Collapse all collapsible sections and shrink to default size"""
         for section in self.collapsible_sections:
             if hasattr(section, 'collapsed') and not section.collapsed:
                 section.toggle()
+
+        # Shrink back to default height
+        QApplication.processEvents()  # Let layout update
+        self.resize(self.width(), self._default_height)
     
     def _initialize_control_states(self):
         """Set initial enabled/disabled states for all dependent controls"""
@@ -10770,6 +11128,75 @@ class SettingsDialog(QDialog):
             'enabled': self.fast_animation_check.isChecked(),
             'decimation': self.decimate_spin.value()
         }
+
+    def get_diff_settings(self):
+        """Return diff mode settings"""
+        catalog_id = self.diff_catalog_combo.currentData()
+        diff_type = self.diff_type_combo.currentData()
+        return {
+            'enabled': self.diff_enable_check.isChecked(),
+            'catalog_id': catalog_id,
+            'diff_type': diff_type  # 'all', 'primary_only', 'alternate_only'
+        }
+
+    def refresh_diff_catalogs(self):
+        """Refresh the diff catalog dropdown from database"""
+        parent = self.parent()
+        if not parent or not hasattr(parent, 'db'):
+            return
+
+        current_data = self.diff_catalog_combo.currentData()
+        self.diff_catalog_combo.blockSignals(True)
+        self.diff_catalog_combo.clear()
+
+        try:
+            catalogs = parent.db.list_catalogs()
+            for cat in catalogs:
+                self.diff_catalog_combo.addItem(cat['name'], cat['id'])
+        except Exception as e:
+            logger.warning(f"Could not load catalogs for diff: {e}")
+
+        # Restore selection if possible
+        if current_data is not None:
+            for i in range(self.diff_catalog_combo.count()):
+                if self.diff_catalog_combo.itemData(i) == current_data:
+                    self.diff_catalog_combo.setCurrentIndex(i)
+                    break
+
+        self.diff_catalog_combo.blockSignals(False)
+
+        # Update enabled state
+        has_catalogs = self.diff_catalog_combo.count() > 0
+        self.diff_enable_check.setEnabled(has_catalogs)
+        self.diff_catalog_combo.setEnabled(has_catalogs and self.diff_enable_check.isChecked())
+        self.diff_type_combo.setEnabled(has_catalogs and self.diff_enable_check.isChecked())
+
+        if not has_catalogs:
+            self.diff_stats_label.setText("No alternate catalogs loaded")
+        else:
+            self.diff_stats_label.setText("")
+
+    def on_diff_settings_changed(self):
+        """Handle changes to diff settings"""
+        enabled = self.diff_enable_check.isChecked()
+        self.diff_catalog_combo.setEnabled(enabled)
+        self.diff_type_combo.setEnabled(enabled)
+
+        # Notify parent to update display
+        parent = self.parent()
+        if parent and hasattr(parent, 'on_diff_settings_changed'):
+            parent.on_diff_settings_changed()
+
+    def on_show_changed_objects(self):
+        """Show table of objects with changed orbital elements between catalogs"""
+        parent = self.parent()
+        if parent and hasattr(parent, 'show_changed_objects_table'):
+            # Get selected catalog for comparison
+            catalog_id = self.diff_catalog_combo.currentData()
+            if catalog_id is None:
+                self.changes_stats_label.setText("Select an alternate catalog first")
+                return
+            parent.show_changed_objects_table(catalog_id)
 
     def on_trailing_changed(self):
         """Handle changes to trailing settings"""
@@ -11729,7 +12156,35 @@ class NEOVisualizer(QMainWindow):
         self.catalog_combo.currentIndexChanged.connect(self.on_catalog_changed)
         toolbar_row_layout.addWidget(self.catalog_combo)
 
-        # Vertical separator after catalog selector
+        # Blink controls (for rapid alternation between catalogs)
+        self.blink_btn = QPushButton("Blink")
+        self.blink_btn.setCheckable(True)
+        self.blink_btn.setMaximumWidth(55)
+        self.blink_btn.setToolTip("Toggle rapid blinking between Primary and selected alternate catalog")
+        self.blink_btn.clicked.connect(self.toggle_blink)
+        self.blink_btn.setEnabled(False)  # Disabled until alternate catalog exists
+        toolbar_row_layout.addWidget(self.blink_btn)
+
+        self.blink_rate_spin = QDoubleSpinBox()
+        self.blink_rate_spin.setRange(0.25, 5.0)
+        self.blink_rate_spin.setValue(0.5)
+        self.blink_rate_spin.setSingleStep(0.25)
+        self.blink_rate_spin.setSuffix(" s")
+        self.blink_rate_spin.setMaximumWidth(70)
+        self.blink_rate_spin.setToolTip("Blink interval in seconds")
+        self.blink_rate_spin.valueChanged.connect(self.on_blink_rate_changed)
+        toolbar_row_layout.addWidget(self.blink_rate_spin)
+
+        # Blink timer (created but not started)
+        self.blink_timer = QTimer(self)
+        self.blink_timer.timeout.connect(self.do_blink)
+        self.blink_state = False  # False = showing primary, True = showing alternate
+        # Pre-computed positions for fast blinking
+        self.blink_primary_positions = None
+        self.blink_alternate_positions = None
+        self.blink_cached_jd = None
+
+        # Vertical separator after catalog/blink controls
         vbar_catalog = QFrame()
         vbar_catalog.setFrameShape(QFrame.Shape.VLine)
         vbar_catalog.setFrameShadow(QFrame.Shadow.Sunken)
@@ -11853,10 +12308,19 @@ class NEOVisualizer(QMainWindow):
             # Populate scripts dropdown now that settings_dialog exists with recordings path
             if hasattr(self, 'controls_panel'):
                 self.controls_panel.refresh_scripts()
+            # Populate diff catalogs dropdown
+            if hasattr(self.settings_dialog, 'refresh_diff_catalogs'):
+                self.settings_dialog.refresh_diff_catalogs()
 
         if self.settings_dialog.isVisible():
             self.settings_dialog.hide()
         else:
+            # Refresh diff catalogs when showing (in case catalogs changed)
+            if hasattr(self.settings_dialog, 'refresh_diff_catalogs'):
+                self.settings_dialog.refresh_diff_catalogs()
+            # Position to the right of main window
+            main_geom = self.geometry()
+            self.settings_dialog.move(main_geom.right() + 10, main_geom.top())
             self.settings_dialog.show()
             self.settings_dialog.raise_()  # Bring to front
     
@@ -12025,6 +12489,203 @@ class NEOVisualizer(QMainWindow):
         # Force redraw to show cleared trails
         if hasattr(self.canvas, 'draw'):
             self.canvas.draw()
+
+    def on_diff_settings_changed(self):
+        """Handle changes to diff settings - update display with diff filter"""
+        if not self.settings_dialog:
+            return
+
+        settings = self.settings_dialog.get_diff_settings()
+        if settings['enabled'] and settings['catalog_id'] is not None:
+            # Compute diff and cache it
+            self._compute_diff_cache(settings['catalog_id'])
+            # Update stats label
+            if hasattr(self, '_diff_cache'):
+                primary_only = len(self._diff_cache.get('primary_only', set()))
+                alternate_only = len(self._diff_cache.get('alternate_only', set()))
+                self.settings_dialog.diff_stats_label.setText(
+                    f"Diff: {primary_only} only in Primary, {alternate_only} only in Alternate"
+                )
+        else:
+            self._diff_cache = None
+            self.settings_dialog.diff_stats_label.setText("")
+
+        # Force cache refresh and redraw
+        self.cached_asteroids = None
+        self.cached_filter_state = None
+        self.update_display()
+
+    def _compute_diff_cache(self, alternate_catalog_id):
+        """Compute which objects differ between primary and alternate catalog"""
+        try:
+            # Get designations from primary catalog
+            primary_asteroids = self.db.get_asteroids(neo_only=True)
+            primary_designations = {a['designation'] for a in primary_asteroids}
+
+            # Get designations from alternate catalog
+            alternate_asteroids = self.db.get_alternate_asteroids(alternate_catalog_id)
+            alternate_designations = {a['designation'] for a in alternate_asteroids}
+
+            # Compute differences
+            primary_only = primary_designations - alternate_designations
+            alternate_only = alternate_designations - primary_designations
+            # For now, 'both' means objects in both catalogs (could extend to check element changes)
+            both = primary_designations & alternate_designations
+
+            self._diff_cache = {
+                'catalog_id': alternate_catalog_id,
+                'primary_only': primary_only,
+                'alternate_only': alternate_only,
+                'both': both,
+                'primary_designations': primary_designations,
+                'alternate_designations': alternate_designations
+            }
+            logger.info(f"Diff computed: {len(primary_only)} primary-only, {len(alternate_only)} alternate-only")
+        except Exception as e:
+            logger.error(f"Error computing diff: {e}")
+            self._diff_cache = None
+
+    def get_diff_filtered_asteroids(self, asteroids, diff_type='all'):
+        """Filter asteroids based on diff settings
+
+        Parameters:
+        -----------
+        asteroids : list
+            List of asteroid dicts to filter
+        diff_type : str
+            'all' - all differences (primary_only + alternate_only)
+            'primary_only' - objects only in primary
+            'alternate_only' - objects only in alternate (requires alternate asteroids)
+
+        Returns filtered list of asteroids
+        """
+        if not hasattr(self, '_diff_cache') or self._diff_cache is None:
+            return asteroids
+
+        if diff_type == 'primary_only':
+            # Show only objects that are in primary but not in alternate
+            return [a for a in asteroids if a['designation'] in self._diff_cache['primary_only']]
+        elif diff_type == 'alternate_only':
+            # This case is special - we need to return alternate catalog objects
+            # The caller should handle this case separately
+            return [a for a in asteroids if a['designation'] in self._diff_cache['alternate_only']]
+        else:  # 'all'
+            # Show objects that are in primary_only (when viewing primary)
+            # or alternate_only (when viewing alternate)
+            all_diff = self._diff_cache['primary_only'] | self._diff_cache['alternate_only']
+            return [a for a in asteroids if a['designation'] in all_diff]
+
+    def show_changed_objects_table(self, alternate_catalog_id):
+        """Show table of objects with changed orbital elements between primary and alternate catalog"""
+        try:
+            # Get all objects from both catalogs
+            primary_asteroids = self.db.get_asteroids(neo_only=True)
+            alternate_asteroids = self.db.get_alternate_asteroids(alternate_catalog_id)
+
+            # Build lookup by designation
+            primary_by_des = {a['designation']: a for a in primary_asteroids}
+            alternate_by_des = {a['designation']: a for a in alternate_asteroids}
+
+            # Find common designations
+            common_designations = set(primary_by_des.keys()) & set(alternate_by_des.keys())
+
+            # Columns to compare (from NEA.txt)
+            compare_cols = ['H', 'G', 'epoch_jd', 'M', 'arg_peri', 'node', 'i', 'e', 'n', 'a',
+                           'n_obs', 'n_opp', 'arc_length', 'last_obs']
+
+            # Find objects with changes
+            changed_objects = []
+            all_changed_columns = set()
+
+            for des in common_designations:
+                pri = primary_by_des[des]
+                alt = alternate_by_des[des]
+
+                changes = {}
+                for col in compare_cols:
+                    pri_val = pri.get(col)
+                    alt_val = alt.get(col)
+
+                    # Skip if both are None
+                    if pri_val is None and alt_val is None:
+                        continue
+
+                    # Check for differences
+                    is_different = False
+                    delta = None
+
+                    if col == 'last_obs':
+                        # String comparison
+                        is_different = (pri_val != alt_val)
+                    elif pri_val is None or alt_val is None:
+                        # One is None, one is not
+                        is_different = True
+                    else:
+                        # Numeric comparison with tolerance
+                        try:
+                            pri_float = float(pri_val)
+                            alt_float = float(alt_val)
+                            # Use relative tolerance for large values, absolute for small
+                            if abs(pri_float) > 1e-6:
+                                is_different = abs(pri_float - alt_float) / abs(pri_float) > 1e-9
+                            else:
+                                is_different = abs(pri_float - alt_float) > 1e-12
+                            if is_different:
+                                delta = alt_float - pri_float
+                        except (ValueError, TypeError):
+                            is_different = (pri_val != alt_val)
+
+                    if is_different:
+                        changes[col] = (pri_val, alt_val, delta)
+                        all_changed_columns.add(col)
+
+                if changes:
+                    changed_objects.append({
+                        'designation': des,
+                        'readable_designation': pri.get('readable_designation') or alt.get('readable_designation'),
+                        'orbit_class': pri.get('orbit_class') or alt.get('orbit_class'),
+                        'primary': pri,
+                        'alternate': alt,
+                        'changes': changes
+                    })
+
+            # Sort by designation
+            changed_objects.sort(key=lambda x: x['designation'])
+
+            # Order changed columns by our preferred order
+            ordered_columns = [col for col in compare_cols if col in all_changed_columns]
+
+            # Get catalog names
+            catalog_info = self.db.get_catalog_by_id(alternate_catalog_id)
+            alternate_name = catalog_info['name'] if catalog_info else f"Catalog {alternate_catalog_id}"
+
+            # Update stats label in settings dialog
+            if self.settings_dialog:
+                n_common = len(common_designations)
+                n_changed = len(changed_objects)
+                self.settings_dialog.changes_stats_label.setText(
+                    f"{n_changed} of {n_common} common objects have changes"
+                )
+
+            # Show dialog
+            if not hasattr(self, '_changed_objects_dialog') or self._changed_objects_dialog is None:
+                self._changed_objects_dialog = ChangedObjectsDialog(self)
+
+            self._changed_objects_dialog.set_data(
+                changed_objects, "Primary", alternate_name, ordered_columns
+            )
+            self._changed_objects_dialog.show()
+            self._changed_objects_dialog.raise_()
+            self._changed_objects_dialog.activateWindow()
+
+            logger.info(f"Changed objects: {len(changed_objects)} of {len(common_designations)} common objects")
+
+        except Exception as e:
+            logger.error(f"Error showing changed objects: {e}")
+            import traceback
+            traceback.print_exc()
+            if self.settings_dialog:
+                self.settings_dialog.changes_stats_label.setText(f"Error: {e}")
 
     def play_script(self, time_points, loop=False, script_name=""):
         """Play back a list of JD time points as a script"""
@@ -12416,9 +13077,7 @@ class NEOVisualizer(QMainWindow):
         try:
             catalogs = self.db.list_catalogs()
             for cat in catalogs:
-                # Show name with object count
-                label = f"{cat['name']} ({cat['object_count']:,})"
-                self.catalog_combo.addItem(label, cat['id'])
+                self.catalog_combo.addItem(cat['name'], cat['id'])
         except Exception as e:
             logger.warning(f"Could not load alternate catalogs: {e}")
 
@@ -12432,6 +13091,17 @@ class NEOVisualizer(QMainWindow):
             self.catalog_combo.setCurrentIndex(0)
 
         self.catalog_combo.blockSignals(False)
+
+        # Enable/disable blink button based on whether alternates exist
+        if hasattr(self, 'blink_btn'):
+            has_alternates = self.catalog_combo.count() > 1
+            self.blink_btn.setEnabled(has_alternates)
+            if not has_alternates:
+                self.blink_btn.setChecked(False)
+
+        # Also refresh diff catalogs in settings dialog if it exists
+        if self.settings_dialog and hasattr(self.settings_dialog, 'refresh_diff_catalogs'):
+            self.settings_dialog.refresh_diff_catalogs()
 
     def on_catalog_changed(self, index):
         """Handle catalog selection change"""
@@ -12579,6 +13249,255 @@ class NEOVisualizer(QMainWindow):
                 filtered.append(ast)
 
             return filtered
+
+    def toggle_blink(self, checked):
+        """Toggle blinking between primary and alternate catalogs"""
+        if checked:
+            # Start blinking
+            if self.catalog_combo.count() < 2:
+                self.blink_btn.setChecked(False)
+                self.status_label.setText("No alternate catalog to blink with")
+                return
+
+            # Mutual exclusion: stop animation if running
+            if self.time_panel.animation_timer.isActive():
+                self.controls_panel.toggle_play()  # This will stop animation
+
+            # Disable play button during blink
+            self.controls_panel.play_btn.setEnabled(False)
+            if hasattr(self, 'statusbar_play_btn'):
+                self.statusbar_play_btn.setEnabled(False)
+
+            # Determine which catalog to blink between
+            # If currently on primary, blink to first alternate
+            # If currently on alternate, blink between primary and current alternate
+            if self.current_catalog_id is None:
+                # On primary - need an alternate to blink to
+                self.blink_alternate_index = 1  # First alternate
+            else:
+                # On alternate - remember current for blinking
+                self.blink_alternate_index = self.catalog_combo.currentIndex()
+
+            # Get alternate catalog info
+            alt_catalog_id = self.catalog_combo.itemData(self.blink_alternate_index)
+            self.blink_alternate_info = self.db.get_catalog_by_id(alt_catalog_id)
+
+            # Pre-cache data for both catalogs for fast blinking
+            self.status_label.setText("Preparing blink data...")
+            QApplication.processEvents()
+            self._prepare_blink_caches()
+
+            self.blink_state = False  # Start showing primary
+            interval_ms = int(self.blink_rate_spin.value() * 1000)
+            self.blink_timer.start(interval_ms)
+            self.blink_btn.setStyleSheet("QPushButton { background-color: #90EE90; }")
+            self.status_label.setText(f"Blinking at {self.blink_rate_spin.value():.2f}s interval")
+            logger.info(f"Started blinking at {interval_ms}ms interval")
+        else:
+            # Stop blinking
+            self.blink_timer.stop()
+            self.blink_btn.setStyleSheet("")
+            # Clear blink caches
+            self.blink_primary_asteroids = None
+            self.blink_alternate_asteroids = None
+            self.blink_primary_classes = None
+            self.blink_alternate_classes = None
+            self.blink_primary_positions = None
+            self.blink_alternate_positions = None
+            self.blink_cached_jd = None
+            # Re-enable play button
+            self.controls_panel.play_btn.setEnabled(True)
+            if hasattr(self, 'statusbar_play_btn'):
+                self.statusbar_play_btn.setEnabled(True)
+
+            # Reset to Primary catalog (consistent state after blink stops)
+            self.catalog_combo.blockSignals(True)
+            self.catalog_combo.setCurrentIndex(0)
+            self.catalog_combo.blockSignals(False)
+            self.current_catalog_id = None
+            self.current_catalog_info = None
+            self._update_catalog_indicator()
+            self._update_filter_availability()
+
+            # Clear cached asteroids so they get refreshed
+            self.cached_asteroids = None
+            self.cached_filter_state = None
+
+            self.status_label.setText("Blink stopped")
+            logger.info("Stopped blinking")
+
+            # Refresh display with current state
+            self.update_display()
+
+    def _prepare_blink_caches(self):
+        """Pre-cache asteroid data AND positions for both catalogs to enable fast blinking"""
+        # Get current filter settings to apply to both catalogs
+        h_min, h_max = self.magnitude_panel.get_h_limits()
+        moid_enabled, moid_min, moid_max = self.neo_classes_panel.get_moid_filter()
+        selected_classes = self.neo_classes_panel.get_selected_classes()
+
+        moid_min_param = moid_min if moid_enabled else None
+        moid_max_param = moid_max if moid_enabled else None
+
+        # Cache primary catalog asteroids
+        logger.info("Pre-caching primary catalog for blink...")
+        primary_asteroids = []
+        for cls in (selected_classes or []):
+            if cls == 'Amor, q≤1.15':
+                all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
+                                                  moid_min=moid_min_param, moid_max=moid_max_param)
+                primary_asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) <= 1.15])
+            elif cls == 'Amor, q>1.15':
+                all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
+                                                  moid_min=moid_min_param, moid_max=moid_max_param)
+                primary_asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) > 1.15])
+            else:
+                primary_asteroids.extend(self.db.get_asteroids(orbit_class=cls, h_min=h_min, h_max=h_max,
+                                                               moid_min=moid_min_param, moid_max=moid_max_param))
+        self.blink_primary_asteroids = primary_asteroids
+        self.blink_primary_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in primary_asteroids}
+
+        # Cache alternate catalog asteroids
+        alt_catalog_id = self.catalog_combo.itemData(self.blink_alternate_index)
+        logger.info(f"Pre-caching alternate catalog {alt_catalog_id} for blink...")
+        alt_asteroids = []
+        all_alt = self.db.get_alternate_asteroids(alt_catalog_id)
+        for ast in all_alt:
+            # Apply same filters
+            if selected_classes and ast.get('orbit_class') not in selected_classes:
+                # Handle Amor subclasses
+                if ast.get('orbit_class') == 'Amor':
+                    q = ast['a'] * (1 - ast['e'])
+                    if 'Amor, q≤1.15' in selected_classes and q <= 1.15:
+                        pass  # Include
+                    elif 'Amor, q>1.15' in selected_classes and q > 1.15:
+                        pass  # Include
+                    else:
+                        continue
+                else:
+                    continue
+            if h_min is not None and ast.get('H') is not None and ast['H'] < h_min:
+                continue
+            if h_max is not None and ast.get('H') is not None and ast['H'] > h_max:
+                continue
+            if moid_min_param is not None:
+                if ast.get('earth_moid') is None or ast['earth_moid'] < moid_min_param:
+                    continue
+            if moid_max_param is not None:
+                if ast.get('earth_moid') is None or ast['earth_moid'] > moid_max_param:
+                    continue
+            alt_asteroids.append(ast)
+        self.blink_alternate_asteroids = alt_asteroids
+        self.blink_alternate_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in alt_asteroids}
+
+        # PRE-COMPUTE POSITIONS for both catalogs at current JD (the key optimization)
+        jd = self.time_panel.current_jd
+        self.blink_cached_jd = jd
+
+        logger.info(f"Pre-computing positions for {len(primary_asteroids)} primary asteroids...")
+        if primary_asteroids:
+            self.blink_primary_positions = self.calculator.calculate_batch(primary_asteroids, jd)
+        else:
+            self.blink_primary_positions = np.array([]).reshape(0, 5)
+
+        logger.info(f"Pre-computing positions for {len(alt_asteroids)} alternate asteroids...")
+        if alt_asteroids:
+            self.blink_alternate_positions = self.calculator.calculate_batch(alt_asteroids, jd)
+        else:
+            self.blink_alternate_positions = np.array([]).reshape(0, 5)
+
+        logger.info(f"Blink caches ready: {len(self.blink_primary_asteroids)} primary, {len(self.blink_alternate_asteroids)} alternate")
+
+    def on_blink_rate_changed(self, value):
+        """Handle blink rate change"""
+        if self.blink_timer.isActive():
+            # Update timer interval while running
+            interval_ms = int(value * 1000)
+            self.blink_timer.setInterval(interval_ms)
+            self.status_label.setText(f"Blink rate: {value:.2f}s")
+
+    def do_blink(self):
+        """Execute one blink cycle - alternate between catalogs (optimized with pre-computed positions)"""
+        self.blink_state = not self.blink_state
+
+        # Check if JD has changed since we cached positions
+        current_jd = self.time_panel.current_jd
+        if self.blink_cached_jd is not None and abs(current_jd - self.blink_cached_jd) > 0.0001:
+            # JD changed - recompute positions
+            logger.debug(f"Blink: JD changed from {self.blink_cached_jd:.4f} to {current_jd:.4f}, recomputing")
+            if self.blink_primary_asteroids:
+                self.blink_primary_positions = self.calculator.calculate_batch(self.blink_primary_asteroids, current_jd)
+            if self.blink_alternate_asteroids:
+                self.blink_alternate_positions = self.calculator.calculate_batch(self.blink_alternate_asteroids, current_jd)
+            self.blink_cached_jd = current_jd
+
+        if self.blink_state:
+            # Show alternate catalog
+            self.catalog_combo.blockSignals(True)
+            self.catalog_combo.setCurrentIndex(self.blink_alternate_index)
+            self.catalog_combo.blockSignals(False)
+
+            self.current_catalog_id = self.catalog_combo.currentData()
+            self.current_catalog_info = self.blink_alternate_info
+
+            # Use pre-computed alternate data
+            positions = self.blink_alternate_positions
+            asteroids = self.blink_alternate_asteroids
+            self.asteroid_classes = self.blink_alternate_classes
+        else:
+            # Show primary catalog
+            self.catalog_combo.blockSignals(True)
+            self.catalog_combo.setCurrentIndex(0)
+            self.catalog_combo.blockSignals(False)
+
+            self.current_catalog_id = None
+            self.current_catalog_info = None
+
+            # Use pre-computed primary data
+            positions = self.blink_primary_positions
+            asteroids = self.blink_primary_asteroids
+            self.asteroid_classes = self.blink_primary_classes
+
+        # Update visual indicator
+        self._update_catalog_indicator()
+
+        # Fast path: directly update canvas with pre-computed positions
+        # Get current display settings (these are lightweight operations)
+        mag_min, mag_max = self.magnitude_panel.get_magnitude_limits()
+        h_min, h_max = self.magnitude_panel.get_h_limits()
+        moid_enabled, moid_min, moid_max = self.neo_classes_panel.get_moid_filter()
+        selected_classes = self.neo_classes_panel.get_selected_classes()
+        orb_filters = self.orbital_panel.get_orbital_filters()
+        size_settings = self.colorbar_panel.get_size_settings()
+        color_by = self.colorbar_panel.get_color_by()
+        show_legend = self.colorbar_panel.get_show_legend()
+
+        # Get overlay settings
+        galactic_settings = self.settings_dialog.get_galactic_settings() if self.settings_dialog else {'enabled': False}
+        opposition_settings = self.settings_dialog.get_opposition_settings() if self.settings_dialog else {'enabled': False}
+        site_filter = self.settings_dialog.get_site_filter_settings() if self.settings_dialog else {'whitelist_enabled': False, 'blacklist_enabled': False}
+        misc_filter = self.settings_dialog.get_misc_filter_settings() if self.settings_dialog else {'hide_numbered': False}
+
+        hide_before_discovery = self.neo_classes_panel.hide_before_discovery_check.isChecked()
+        discovery_settings = self.settings_dialog.get_discovery_settings() if self.settings_dialog else {'hide_missing': False}
+        hide_missing_discovery = discovery_settings.get('hide_missing', False)
+
+        # Direct canvas update with pre-computed positions
+        self.canvas.update_plot(
+            positions, mag_min, mag_max, current_jd,
+            self.neo_classes_panel.show_hollow_check.isChecked(),
+            h_min, h_max, selected_classes, moid_enabled, moid_min, moid_max, orb_filters,
+            asteroids=asteroids, size_settings=size_settings,
+            galactic_settings=galactic_settings, opposition_settings=opposition_settings,
+            hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
+            color_by=color_by, show_legend=show_legend, site_filter=site_filter,
+            misc_filter=misc_filter
+        )
+
+        # Update status
+        catalog_name = "Alternate" if self.blink_state else "Primary"
+        n_objects = len(asteroids) if asteroids else 0
+        self.status_label.setText(f"Blinking: {catalog_name} ({n_objects} objects)")
 
     def toggle_play_from_statusbar(self):
         """Toggle animation from statusbar button"""
@@ -13009,20 +13928,39 @@ class NEOVisualizer(QMainWindow):
                 try:
                     # Use precise CLN calculation (changes at actual Full Moon)
                     current_cln, _ = jd_to_cln(jd)
-                    
+
                     # Fast filter using precomputed discovery_cln
                     # Note: discovery_cln uses average method, so there may be ~1 day
                     # discrepancy near Full Moon boundaries
-                    filtered_asteroids = [ast for ast in asteroids 
+                    filtered_asteroids = [ast for ast in asteroids
                                          if ast.get('discovery_cln') == current_cln]
-                    
+
                     n_with_cln = sum(1 for ast in asteroids if ast.get('discovery_cln') is not None)
                     logger.debug(f"Lunation filter: CLN {current_cln}, {n_with_cln}/{len(asteroids)} have discovery_cln, {len(filtered_asteroids)} match")
                     asteroids = filtered_asteroids
                 except Exception as e:
                     logger.error(f"Lunation filter error: {e}")
                     pass  # Keep all if CLN calculation fails
-            
+
+            # Apply diff filter (show only differences between primary and alternate)
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_diff_settings'):
+                diff_settings = self.settings_dialog.get_diff_settings()
+                if diff_settings['enabled'] and hasattr(self, '_diff_cache') and self._diff_cache is not None:
+                    diff_type = diff_settings['diff_type']
+                    if diff_type == 'alternate_only':
+                        # Special case: need to show objects from alternate catalog
+                        # Replace asteroids with alternate-only objects from alternate catalog
+                        alt_catalog_id = diff_settings['catalog_id']
+                        if alt_catalog_id:
+                            alt_asteroids = self.db.get_alternate_asteroids(alt_catalog_id)
+                            asteroids = [a for a in alt_asteroids
+                                        if a['designation'] in self._diff_cache['alternate_only']]
+                            logger.debug(f"Diff filter (alternate_only): {len(asteroids)} objects")
+                    else:
+                        # primary_only or all - filter current asteroids
+                        asteroids = self.get_diff_filtered_asteroids(asteroids, diff_type)
+                        logger.debug(f"Diff filter ({diff_type}): {len(asteroids)} objects")
+
             if not asteroids:
                 self.canvas.update_plot(None, mag_min, mag_max, jd, self.neo_classes_panel.show_hollow_check.isChecked(),
                                        h_min, h_max, selected_classes, moid_enabled, moid_min, moid_max, orb_filters,
@@ -13198,7 +14136,7 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.05</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version 3.06</b> - Near-Earth Object sky position visualization and analysis tool</p>
         <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
@@ -13212,7 +14150,30 @@ class NEOVisualizer(QMainWindow):
         <li><b>MOID filtering:</b> Show only PHAs or specific MOID ranges</li>
         <li><b>Time controls:</b> Animate, jump by day/month/year/lunation</li>
         <li><b>Scripted playback:</b> Record and replay time sequences with full state</li>
+        <li><b>Catalog comparison:</b> Load alternate catalogs and blink between them</li>
         </ul>
+
+        <h3>New in v3.06</h3>
+        <ul>
+        <li><b>Alternate catalogs:</b> Load and compare multiple NEA catalog versions</li>
+        <li><b>Catalog blinking:</b> Rapidly toggle between primary and alternate catalogs</li>
+        <li><b>Catalog selector:</b> Dropdown in toolbar to switch between catalogs</li>
+        <li><b>Stale object tracking:</b> Mark objects missing from updated catalogs</li>
+        <li><b>Provenance tracking:</b> Record catalog source and update timestamps</li>
+        </ul>
+
+        <h3>Alternate Catalogs</h3>
+        <p>Load historical or comparison catalogs to visualize catalog changes over time:</p>
+        <ul>
+        <li><b>Catalog dropdown:</b> Select "Primary" or any loaded alternate catalog</li>
+        <li><b>Blink button:</b> Toggle rapidly between primary and selected alternate</li>
+        <li><b>Blink rate:</b> Adjust toggle speed (0.25s - 5.0s intervals)</li>
+        <li><b>Visual indicator:</b> Yellow background when viewing alternate catalog</li>
+        <li><b>Filter inheritance:</b> Most filters apply to both catalogs; MOID/discovery filters
+            are disabled for alternates without that data</li>
+        </ul>
+        <p><i>Note: Blinking and animation are mutually exclusive for clarity.</i></p>
+        <p>Load alternates via command line: <code>scripts/load_alt_catalog.py</code></p>
 
         <h3>New in v3.05</h3>
         <ul>
@@ -13494,12 +14455,35 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.star_color_edit.setText("#FF99FF")
                 self.settings_dialog.star_size_spin.setValue(5)
 
+                # Alternate Catalogs / Diff Mode
+                self.settings_dialog.diff_enable_check.setChecked(False)
+                self.settings_dialog.diff_type_combo.setCurrentIndex(0)  # "All differences"
+                # Refresh catalog list but don't select any
+                if hasattr(self.settings_dialog, 'refresh_diff_catalogs'):
+                    self.settings_dialog.refresh_diff_catalogs()
+
                 # Clear any existing trails
                 self.clear_trails()
-                
+
                 # Update control states
                 self.settings_dialog._initialize_control_states()
-            
+
+            # Clear diff cache
+            self._diff_cache = None
+
+            # Stop blinking if active and reset catalog to Primary
+            if hasattr(self, 'blink_timer') and self.blink_timer.isActive():
+                self.blink_btn.setChecked(False)
+                self.toggle_blink(False)
+
+            # Reset to Primary catalog
+            if hasattr(self, 'catalog_combo'):
+                self.catalog_combo.setCurrentIndex(0)
+                self.current_catalog_id = None
+                self.current_catalog_info = None
+                self._update_catalog_indicator()
+                self._update_filter_availability()
+
             # Disable drawer mode
             self.drawer_bar.hide()
             self.top_content.show()
@@ -13524,7 +14508,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.05',
+                'version': '3.06',
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
@@ -13732,6 +14716,13 @@ class NEOVisualizer(QMainWindow):
                     'mag_limit': self.settings_dialog.star_mag_limit_spin.value(),
                     'color': self.settings_dialog.star_color_edit.text(),
                     'size': self.settings_dialog.star_size_spin.value()
+                }
+
+                # Alternate Catalogs / Diff Mode
+                settings['alternate_catalogs'] = {
+                    'diff_enabled': self.settings_dialog.diff_enable_check.isChecked(),
+                    'diff_catalog_name': self.settings_dialog.diff_catalog_combo.currentText() if self.settings_dialog.diff_catalog_combo.count() > 0 else None,
+                    'diff_type': self.settings_dialog.diff_type_combo.currentData()
                 }
 
             with open(self._get_settings_path(), 'w') as f:
@@ -13986,6 +14977,28 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
                     self.settings_dialog.star_color_edit.setText(s.get('color', '#FFFFFF'))
                     self.settings_dialog.star_size_spin.setValue(s.get('size', 5))
+
+                # Alternate Catalogs / Diff Mode
+                if 'alternate_catalogs' in settings:
+                    ac = settings['alternate_catalogs']
+                    # First refresh available catalogs
+                    if hasattr(self.settings_dialog, 'refresh_diff_catalogs'):
+                        self.settings_dialog.refresh_diff_catalogs()
+                    # Find and select saved catalog by name
+                    saved_name = ac.get('diff_catalog_name')
+                    if saved_name:
+                        for i in range(self.settings_dialog.diff_catalog_combo.count()):
+                            if self.settings_dialog.diff_catalog_combo.itemText(i) == saved_name:
+                                self.settings_dialog.diff_catalog_combo.setCurrentIndex(i)
+                                break
+                    # Restore diff type
+                    diff_type = ac.get('diff_type', 'all')
+                    for i in range(self.settings_dialog.diff_type_combo.count()):
+                        if self.settings_dialog.diff_type_combo.itemData(i) == diff_type:
+                            self.settings_dialog.diff_type_combo.setCurrentIndex(i)
+                            break
+                    # Restore enabled state last (triggers update)
+                    self.settings_dialog.diff_enable_check.setChecked(ac.get('diff_enabled', False))
 
                 # Update control states
                 self.settings_dialog._initialize_control_states()

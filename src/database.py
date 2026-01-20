@@ -115,13 +115,16 @@ class Asteroid(Base):
 
 
 class Catalog(Base):
-    """Registry of alternate catalogs for comparison"""
+    """Registry of catalogs (primary and alternates) for comparison and provenance"""
     __tablename__ = 'catalogs'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(50), unique=True, nullable=False, index=True)  # User-friendly name
-    source_file = Column(String(255), nullable=True)  # Original filename
+    source_file = Column(String(255), nullable=True)  # Original filename or URL
     description = Column(Text, nullable=True)  # Optional description
+
+    # Primary catalog flag (only one should be True)
+    is_primary = Column(Boolean, default=False, index=True)
 
     # Statistics
     object_count = Column(Integer, default=0)
@@ -132,6 +135,10 @@ class Catalog(Base):
 
     # Cache information
     cache_file = Column(String(255), nullable=True)  # Path to cache file if built
+
+    # Provenance tracking
+    download_url = Column(String(500), nullable=True)  # Source URL if downloaded
+    last_updated = Column(DateTime, nullable=True)  # When catalog data was last refreshed
 
     # Timestamps
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -731,6 +738,18 @@ class DatabaseManager:
                     conn.commit()
                 logger.info("Migration complete: stale tracking columns added")
 
+            # Migration: Add catalog provenance columns if catalogs table exists
+            if 'catalogs' in inspector.get_table_names():
+                catalog_columns = [c['name'] for c in inspector.get_columns('catalogs')]
+                if 'is_primary' not in catalog_columns:
+                    logger.info("Migrating database: adding catalog provenance columns...")
+                    with self.engine.connect() as conn:
+                        conn.execute(text("ALTER TABLE catalogs ADD COLUMN is_primary BOOLEAN DEFAULT 0"))
+                        conn.execute(text("ALTER TABLE catalogs ADD COLUMN download_url VARCHAR(500)"))
+                        conn.execute(text("ALTER TABLE catalogs ADD COLUMN last_updated DATETIME"))
+                        conn.commit()
+                    logger.info("Migration complete: catalog provenance columns added")
+
         except Exception as e:
             logger.warning(f"Migration check failed: {e}")
     
@@ -1022,25 +1041,97 @@ class DatabaseManager:
         finally:
             session.close()
 
-    # ==================== Alternate Catalog Methods ====================
+    # ==================== Catalog Methods (Primary and Alternate) ====================
 
-    def list_catalogs(self) -> List[Dict]:
-        """List all alternate catalogs"""
+    def _catalog_to_dict(self, c: Catalog) -> Dict:
+        """Convert Catalog ORM object to dictionary"""
+        return {
+            'id': c.id,
+            'name': c.name,
+            'source_file': c.source_file,
+            'description': c.description,
+            'is_primary': c.is_primary,
+            'object_count': c.object_count,
+            'has_moid': c.has_moid,
+            'has_discovery': c.has_discovery,
+            'cache_file': c.cache_file,
+            'download_url': c.download_url,
+            'last_updated': c.last_updated,
+            'created_at': c.created_at,
+            'updated_at': c.updated_at
+        }
+
+    def get_primary_catalog(self) -> Optional[Dict]:
+        """Get the primary catalog metadata"""
         session = self.get_session()
         try:
-            catalogs = session.query(Catalog).order_by(Catalog.name).all()
-            return [{
-                'id': c.id,
-                'name': c.name,
-                'source_file': c.source_file,
-                'description': c.description,
-                'object_count': c.object_count,
-                'has_moid': c.has_moid,
-                'has_discovery': c.has_discovery,
-                'cache_file': c.cache_file,
-                'created_at': c.created_at,
-                'updated_at': c.updated_at
-            } for c in catalogs]
+            c = session.query(Catalog).filter_by(is_primary=True).first()
+            return self._catalog_to_dict(c) if c else None
+        finally:
+            session.close()
+
+    def update_primary_catalog(self, source_file: str = None, description: str = None,
+                               download_url: str = None, object_count: int = None,
+                               has_moid: bool = None, has_discovery: bool = None,
+                               cache_file: str = None):
+        """Create or update the primary catalog metadata entry"""
+        session = self.get_session()
+        try:
+            # Find existing primary catalog entry
+            catalog = session.query(Catalog).filter_by(is_primary=True).first()
+
+            if catalog is None:
+                # Create new primary catalog entry
+                catalog = Catalog(
+                    name="Primary",
+                    is_primary=True,
+                    description=description or "Primary NEO catalog from MPC"
+                )
+                session.add(catalog)
+
+            # Update fields if provided
+            if source_file is not None:
+                catalog.source_file = source_file
+            if description is not None:
+                catalog.description = description
+            if download_url is not None:
+                catalog.download_url = download_url
+            if object_count is not None:
+                catalog.object_count = object_count
+            if has_moid is not None:
+                catalog.has_moid = has_moid
+            if has_discovery is not None:
+                catalog.has_discovery = has_discovery
+            if cache_file is not None:
+                catalog.cache_file = cache_file
+
+            catalog.last_updated = datetime.now(timezone.utc)
+            session.commit()
+
+            logger.info(f"Updated primary catalog metadata: {catalog.object_count} objects")
+            return catalog.id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating primary catalog: {e}")
+            raise
+        finally:
+            session.close()
+
+    def list_catalogs(self, include_primary: bool = False) -> List[Dict]:
+        """List catalogs
+
+        Parameters:
+        -----------
+        include_primary : bool
+            If True, include the primary catalog in the list
+        """
+        session = self.get_session()
+        try:
+            query = session.query(Catalog).order_by(Catalog.is_primary.desc(), Catalog.name)
+            if not include_primary:
+                query = query.filter(Catalog.is_primary == False)
+            catalogs = query.all()
+            return [self._catalog_to_dict(c) for c in catalogs]
         finally:
             session.close()
 
@@ -1049,20 +1140,7 @@ class DatabaseManager:
         session = self.get_session()
         try:
             c = session.query(Catalog).filter_by(name=name).first()
-            if c is None:
-                return None
-            return {
-                'id': c.id,
-                'name': c.name,
-                'source_file': c.source_file,
-                'description': c.description,
-                'object_count': c.object_count,
-                'has_moid': c.has_moid,
-                'has_discovery': c.has_discovery,
-                'cache_file': c.cache_file,
-                'created_at': c.created_at,
-                'updated_at': c.updated_at
-            }
+            return self._catalog_to_dict(c) if c else None
         finally:
             session.close()
 
@@ -1071,20 +1149,7 @@ class DatabaseManager:
         session = self.get_session()
         try:
             c = session.query(Catalog).filter_by(id=catalog_id).first()
-            if c is None:
-                return None
-            return {
-                'id': c.id,
-                'name': c.name,
-                'source_file': c.source_file,
-                'description': c.description,
-                'object_count': c.object_count,
-                'has_moid': c.has_moid,
-                'has_discovery': c.has_discovery,
-                'cache_file': c.cache_file,
-                'created_at': c.created_at,
-                'updated_at': c.updated_at
-            }
+            return self._catalog_to_dict(c) if c else None
         finally:
             session.close()
 
