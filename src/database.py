@@ -7,7 +7,7 @@ import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone
 import numpy as np
-from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index
+from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index, ForeignKey, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
@@ -111,6 +111,95 @@ class Asteroid(Base):
         Index('idx_earth_moid', 'earth_moid'),
         Index('idx_discovery_mjd', 'discovery_mjd'),
         Index('idx_discovery_cln', 'discovery_cln'),
+    )
+
+
+class Catalog(Base):
+    """Registry of alternate catalogs for comparison"""
+    __tablename__ = 'catalogs'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), unique=True, nullable=False, index=True)  # User-friendly name
+    source_file = Column(String(255), nullable=True)  # Original filename
+    description = Column(Text, nullable=True)  # Optional description
+
+    # Statistics
+    object_count = Column(Integer, default=0)
+
+    # Data availability flags
+    has_moid = Column(Boolean, default=False)  # Has Earth MOID data
+    has_discovery = Column(Boolean, default=False)  # Has discovery circumstance data
+
+    # Cache information
+    cache_file = Column(String(255), nullable=True)  # Path to cache file if built
+
+    # Timestamps
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+
+class AlternateAsteroid(Base):
+    """Asteroid data from alternate catalogs (for comparison/blinking)"""
+    __tablename__ = 'alternate_asteroids'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    catalog_id = Column(Integer, ForeignKey('catalogs.id', ondelete='CASCADE'), nullable=False, index=True)
+    designation = Column(String(20), index=True, nullable=False)
+
+    # Orbital elements (Keplerian) - same as primary Asteroid table
+    a = Column(Float, nullable=False)  # Semi-major axis (AU)
+    e = Column(Float, nullable=False)  # Eccentricity
+    i = Column(Float, nullable=False)  # Inclination (degrees)
+    node = Column(Float, nullable=False)  # Longitude of ascending node (degrees)
+    arg_peri = Column(Float, nullable=False)  # Argument of perihelion (degrees)
+    M = Column(Float, nullable=False)  # Mean anomaly at epoch (degrees)
+    epoch_jd = Column(Float, nullable=False)  # Epoch (Julian Date)
+    mean_motion = Column(Float, nullable=True)  # Mean daily motion (degrees/day)
+
+    # Physical parameters
+    H = Column(Float, nullable=True)  # Absolute magnitude
+    G = Column(Float, default=0.15)  # Slope parameter
+    earth_moid = Column(Float, nullable=True)  # Earth MOID (AU) - optional
+
+    # Classification
+    orbit_class = Column(String(20), index=True)
+    neo_flag = Column(Boolean, default=False, index=True)
+    pha_flag = Column(Boolean, default=False, index=True)
+
+    # Orbit quality parameters
+    uncertainty = Column(String(2), nullable=True)
+    rms_residual = Column(Float, nullable=True)
+
+    # Observation metadata
+    num_obs = Column(Integer)
+    num_oppositions = Column(Integer, nullable=True)
+    arc_span = Column(String(12), nullable=True)
+    arc_years = Column(Float)
+    last_obs = Column(String(10), nullable=True)
+
+    # Computation metadata
+    reference = Column(String(12), nullable=True)
+    computer = Column(String(12), nullable=True)
+    perturbers_coarse = Column(String(4), nullable=True)
+    perturbers_precise = Column(String(4), nullable=True)
+    hex_flags = Column(String(6), nullable=True)
+
+    # Human-readable designation
+    readable_designation = Column(String(30), nullable=True)
+
+    # Discovery tracklet data (optional - may not exist for alternate catalogs)
+    discovery_mjd = Column(Float, nullable=True)
+    discovery_cln = Column(Integer, nullable=True)
+    discovery_ra = Column(Float, nullable=True)
+    discovery_dec = Column(Float, nullable=True)
+    discovery_vmag = Column(Float, nullable=True)
+    discovery_site = Column(String(10), nullable=True)
+
+    # Indexes
+    __table_args__ = (
+        Index('idx_alt_catalog_designation', 'catalog_id', 'designation'),
+        Index('idx_alt_magnitude', 'H'),
+        Index('idx_alt_neo', 'neo_flag'),
     )
 
 
@@ -932,6 +1021,283 @@ class DatabaseManager:
             raise
         finally:
             session.close()
+
+    # ==================== Alternate Catalog Methods ====================
+
+    def list_catalogs(self) -> List[Dict]:
+        """List all alternate catalogs"""
+        session = self.get_session()
+        try:
+            catalogs = session.query(Catalog).order_by(Catalog.name).all()
+            return [{
+                'id': c.id,
+                'name': c.name,
+                'source_file': c.source_file,
+                'description': c.description,
+                'object_count': c.object_count,
+                'has_moid': c.has_moid,
+                'has_discovery': c.has_discovery,
+                'cache_file': c.cache_file,
+                'created_at': c.created_at,
+                'updated_at': c.updated_at
+            } for c in catalogs]
+        finally:
+            session.close()
+
+    def get_catalog(self, name: str) -> Optional[Dict]:
+        """Get a catalog by name"""
+        session = self.get_session()
+        try:
+            c = session.query(Catalog).filter_by(name=name).first()
+            if c is None:
+                return None
+            return {
+                'id': c.id,
+                'name': c.name,
+                'source_file': c.source_file,
+                'description': c.description,
+                'object_count': c.object_count,
+                'has_moid': c.has_moid,
+                'has_discovery': c.has_discovery,
+                'cache_file': c.cache_file,
+                'created_at': c.created_at,
+                'updated_at': c.updated_at
+            }
+        finally:
+            session.close()
+
+    def get_catalog_by_id(self, catalog_id: int) -> Optional[Dict]:
+        """Get a catalog by ID"""
+        session = self.get_session()
+        try:
+            c = session.query(Catalog).filter_by(id=catalog_id).first()
+            if c is None:
+                return None
+            return {
+                'id': c.id,
+                'name': c.name,
+                'source_file': c.source_file,
+                'description': c.description,
+                'object_count': c.object_count,
+                'has_moid': c.has_moid,
+                'has_discovery': c.has_discovery,
+                'cache_file': c.cache_file,
+                'created_at': c.created_at,
+                'updated_at': c.updated_at
+            }
+        finally:
+            session.close()
+
+    def create_catalog(self, name: str, source_file: str = None,
+                      description: str = None) -> int:
+        """Create a new alternate catalog entry
+
+        Returns:
+        --------
+        int : The catalog ID
+        """
+        session = self.get_session()
+        try:
+            catalog = Catalog(
+                name=name,
+                source_file=source_file,
+                description=description
+            )
+            session.add(catalog)
+            session.commit()
+            catalog_id = catalog.id
+            logger.info(f"Created alternate catalog '{name}' with ID {catalog_id}")
+            return catalog_id
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error creating catalog: {e}")
+            raise
+        finally:
+            session.close()
+
+    def update_catalog(self, catalog_id: int, **kwargs):
+        """Update catalog metadata"""
+        session = self.get_session()
+        try:
+            catalog = session.query(Catalog).filter_by(id=catalog_id).first()
+            if catalog is None:
+                raise ValueError(f"Catalog ID {catalog_id} not found")
+
+            for key, value in kwargs.items():
+                if hasattr(catalog, key):
+                    setattr(catalog, key, value)
+
+            session.commit()
+            logger.info(f"Updated catalog ID {catalog_id}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating catalog: {e}")
+            raise
+        finally:
+            session.close()
+
+    def delete_catalog(self, name: str) -> bool:
+        """Delete an alternate catalog and all its asteroids
+
+        Returns:
+        --------
+        bool : True if deleted, False if not found
+        """
+        session = self.get_session()
+        try:
+            catalog = session.query(Catalog).filter_by(name=name).first()
+            if catalog is None:
+                return False
+
+            # Delete all asteroids in this catalog (cascade should handle this,
+            # but be explicit for clarity)
+            deleted_count = session.query(AlternateAsteroid).filter_by(
+                catalog_id=catalog.id
+            ).delete()
+
+            # Delete the catalog entry
+            session.delete(catalog)
+            session.commit()
+
+            logger.info(f"Deleted catalog '{name}' with {deleted_count} asteroids")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting catalog: {e}")
+            raise
+        finally:
+            session.close()
+
+    def insert_alternate_asteroids(self, catalog_id: int, asteroids: List[Dict],
+                                   batch_size: int = 1000):
+        """Insert asteroids into an alternate catalog
+
+        Parameters:
+        -----------
+        catalog_id : int
+            The catalog ID to insert into
+        asteroids : list of dict
+            List of asteroid data dictionaries
+        batch_size : int
+            Number of records to insert per transaction
+        """
+        session = self.get_session()
+
+        try:
+            for i in range(0, len(asteroids), batch_size):
+                batch = asteroids[i:i + batch_size]
+
+                for ast_data in batch:
+                    # Add catalog_id to the data
+                    ast_data['catalog_id'] = catalog_id
+                    session.add(AlternateAsteroid(**ast_data))
+
+                session.commit()
+                logger.info(f"Inserted batch {i//batch_size + 1} ({len(batch)} objects)")
+
+            # Update object count in catalog
+            catalog = session.query(Catalog).filter_by(id=catalog_id).first()
+            if catalog:
+                catalog.object_count = session.query(AlternateAsteroid).filter_by(
+                    catalog_id=catalog_id
+                ).count()
+                session.commit()
+
+            logger.info(f"Successfully loaded {len(asteroids)} asteroids into catalog ID {catalog_id}")
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error inserting alternate asteroids: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_alternate_asteroids(self, catalog_id: int,
+                                neo_only: bool = False,
+                                limit: Optional[int] = None) -> List[Dict]:
+        """Get asteroids from an alternate catalog
+
+        Parameters:
+        -----------
+        catalog_id : int
+            The catalog ID to query
+        neo_only : bool
+            Return only NEOs
+        limit : int, optional
+            Maximum number of results
+
+        Returns:
+        --------
+        list of dict : Asteroid data as dictionaries
+        """
+        session = self.get_session()
+
+        try:
+            query = session.query(AlternateAsteroid).filter_by(catalog_id=catalog_id)
+
+            if neo_only:
+                query = query.filter(AlternateAsteroid.neo_flag == True)
+
+            if limit:
+                query = query.limit(limit)
+
+            results = query.all()
+            return [self._alternate_asteroid_to_dict(ast) for ast in results]
+
+        finally:
+            session.close()
+
+    def _alternate_asteroid_to_dict(self, ast: AlternateAsteroid) -> Dict:
+        """Convert AlternateAsteroid ORM object to dictionary"""
+        if ast is None:
+            return None
+
+        return {
+            'id': ast.id,
+            'catalog_id': ast.catalog_id,
+            'designation': ast.designation,
+            # Orbital elements
+            'a': ast.a,
+            'e': ast.e,
+            'i': ast.i,
+            'node': ast.node,
+            'arg_peri': ast.arg_peri,
+            'M': ast.M,
+            'epoch_jd': ast.epoch_jd,
+            'mean_motion': ast.mean_motion,
+            # Physical parameters
+            'H': ast.H,
+            'G': ast.G,
+            'earth_moid': ast.earth_moid,
+            # Classification
+            'orbit_class': ast.orbit_class,
+            'neo_flag': ast.neo_flag,
+            'pha_flag': ast.pha_flag,
+            # Orbit quality
+            'uncertainty': ast.uncertainty,
+            'rms_residual': ast.rms_residual,
+            # Observation metadata
+            'num_obs': ast.num_obs,
+            'num_oppositions': ast.num_oppositions,
+            'arc_span': ast.arc_span,
+            'arc_years': ast.arc_years,
+            'last_obs': ast.last_obs,
+            # Computation metadata
+            'reference': ast.reference,
+            'computer': ast.computer,
+            'perturbers_coarse': ast.perturbers_coarse,
+            'perturbers_precise': ast.perturbers_precise,
+            'hex_flags': ast.hex_flags,
+            # Human-readable designation
+            'readable_designation': ast.readable_designation,
+            # Discovery tracklet data
+            'discovery_mjd': ast.discovery_mjd,
+            'discovery_cln': ast.discovery_cln,
+            'discovery_ra': ast.discovery_ra,
+            'discovery_dec': ast.discovery_dec,
+            'discovery_vmag': ast.discovery_vmag,
+            'discovery_site': ast.discovery_site,
+        }
 
 
 # Import after Asteroid is defined

@@ -11522,10 +11522,15 @@ class NEOVisualizer(QMainWindow):
         self.use_cache = use_cache
         self.show_fps = show_fps
         self.asteroid_classes = {}
-        
+
+        # Alternate catalog support
+        self.current_catalog_id = None  # None = Primary catalog, int = alternate catalog ID
+        self.current_catalog_info = None  # Cached catalog metadata
+
         # Performance optimization: cache asteroid lists
         self.cached_asteroids = None
         self.cached_filter_state = None  # Track filter state
+        self.cached_catalog_id = None  # Track which catalog is cached
         
         # Performance: track last overlay JD to avoid unnecessary redraws
         self.last_overlay_jd = None
@@ -11711,6 +11716,24 @@ class NEOVisualizer(QMainWindow):
 
         # Stretch pushes NEOlyzer controls to the right
         toolbar_row_layout.addStretch()
+
+        # Catalog selector (for alternate catalog comparison/blinking)
+        catalog_label = QLabel("Catalog:")
+        toolbar_row_layout.addWidget(catalog_label)
+
+        self.catalog_combo = QComboBox()
+        self.catalog_combo.setMinimumWidth(120)
+        self.catalog_combo.setMaximumWidth(180)
+        self.catalog_combo.setToolTip("Select catalog to display (Primary or alternate)")
+        self.catalog_combo.addItem("Primary", None)  # None = primary catalog
+        self.catalog_combo.currentIndexChanged.connect(self.on_catalog_changed)
+        toolbar_row_layout.addWidget(self.catalog_combo)
+
+        # Vertical separator after catalog selector
+        vbar_catalog = QFrame()
+        vbar_catalog.setFrameShape(QFrame.Shape.VLine)
+        vbar_catalog.setFrameShadow(QFrame.Shadow.Sunken)
+        toolbar_row_layout.addWidget(vbar_catalog)
 
         # Search controls (first, before Table/Charts)
         search_label = QLabel("Search:")
@@ -12373,7 +12396,190 @@ class NEOVisualizer(QMainWindow):
         self.search_input.clear()
         self.canvas.clear_highlight()
         self.status_label.setText("Highlight cleared")
-    
+
+    def refresh_catalog_list(self):
+        """Refresh the catalog selector combobox with available catalogs"""
+        if not hasattr(self, 'catalog_combo'):
+            return
+
+        # Remember current selection
+        current_data = self.catalog_combo.currentData()
+
+        # Block signals during update
+        self.catalog_combo.blockSignals(True)
+        self.catalog_combo.clear()
+
+        # Always have Primary as first option
+        self.catalog_combo.addItem("Primary", None)
+
+        # Add alternate catalogs from database
+        try:
+            catalogs = self.db.list_catalogs()
+            for cat in catalogs:
+                # Show name with object count
+                label = f"{cat['name']} ({cat['object_count']:,})"
+                self.catalog_combo.addItem(label, cat['id'])
+        except Exception as e:
+            logger.warning(f"Could not load alternate catalogs: {e}")
+
+        # Restore selection if it still exists
+        if current_data is not None:
+            for i in range(self.catalog_combo.count()):
+                if self.catalog_combo.itemData(i) == current_data:
+                    self.catalog_combo.setCurrentIndex(i)
+                    break
+        else:
+            self.catalog_combo.setCurrentIndex(0)
+
+        self.catalog_combo.blockSignals(False)
+
+    def on_catalog_changed(self, index):
+        """Handle catalog selection change"""
+        catalog_id = self.catalog_combo.currentData()
+        old_catalog_id = self.current_catalog_id
+
+        if catalog_id == old_catalog_id:
+            return  # No change
+
+        self.current_catalog_id = catalog_id
+
+        # Get catalog info for alternate catalogs
+        if catalog_id is not None:
+            self.current_catalog_info = self.db.get_catalog_by_id(catalog_id)
+            catalog_name = self.current_catalog_info['name'] if self.current_catalog_info else 'Unknown'
+            logger.info(f"Switched to alternate catalog: {catalog_name}")
+        else:
+            self.current_catalog_info = None
+            logger.info("Switched to Primary catalog")
+
+        # Clear cached asteroids to force reload
+        self.cached_asteroids = None
+        self.cached_filter_state = None
+        self.cached_catalog_id = None
+
+        # Rebuild asteroid class lookup for the new catalog
+        self._rebuild_asteroid_classes()
+
+        # Update visual indicator
+        self._update_catalog_indicator()
+
+        # Update filter availability (some filters may not apply to alternate catalogs)
+        self._update_filter_availability()
+
+        # Force redraw
+        self.update_display()
+
+    def _rebuild_asteroid_classes(self):
+        """Rebuild the asteroid class lookup dictionary for the current catalog"""
+        self.asteroid_classes.clear()
+
+        try:
+            if self.current_catalog_id is None:
+                # Primary catalog
+                all_ast = self.db.get_asteroids()
+            else:
+                # Alternate catalog
+                all_ast = self.db.get_alternate_asteroids(self.current_catalog_id)
+
+            for ast in all_ast:
+                self.asteroid_classes[int(ast['id'])] = ast.get('orbit_class', 'Other')
+
+            logger.debug(f"Rebuilt asteroid classes: {len(self.asteroid_classes)} objects")
+        except Exception as e:
+            logger.error(f"Error rebuilding asteroid classes: {e}")
+
+    def _update_catalog_indicator(self):
+        """Update visual indicator to show current catalog"""
+        if self.current_catalog_id is None:
+            # Primary catalog - normal appearance
+            self.catalog_combo.setStyleSheet("")
+            if hasattr(self, 'catalog_indicator_label'):
+                self.catalog_indicator_label.hide()
+        else:
+            # Alternate catalog - highlight to make it obvious
+            self.catalog_combo.setStyleSheet(
+                "QComboBox { background-color: #FFE4B5; font-weight: bold; }"  # Moccasin color
+            )
+            # Update status bar or other indicator
+            if self.current_catalog_info:
+                cat_name = self.current_catalog_info['name']
+                self.status_label.setText(f"Viewing alternate catalog: {cat_name}")
+
+    def _update_filter_availability(self):
+        """Enable/disable filters based on data availability in current catalog"""
+        if not hasattr(self, 'settings_dialog') or self.settings_dialog is None:
+            return
+
+        if self.current_catalog_id is None:
+            # Primary catalog - all filters available
+            has_moid = True
+            has_discovery = True
+        else:
+            # Alternate catalog - check what data is available
+            info = self.current_catalog_info
+            has_moid = info.get('has_moid', False) if info else False
+            has_discovery = info.get('has_discovery', False) if info else False
+
+        # Update MOID filter availability
+        if hasattr(self, 'magnitude_panel'):
+            moid_widgets = [
+                getattr(self.magnitude_panel, 'moid_enabled', None),
+                getattr(self.magnitude_panel, 'moid_min_spin', None),
+                getattr(self.magnitude_panel, 'moid_max_spin', None),
+            ]
+            for widget in moid_widgets:
+                if widget:
+                    widget.setEnabled(has_moid)
+                    if not has_moid:
+                        widget.setToolTip("MOID data not available for this catalog")
+
+        # Update discovery filter availability in settings dialog
+        if self.settings_dialog:
+            discovery_widgets = [
+                getattr(self.settings_dialog, 'hide_missing_discovery_check', None),
+            ]
+            for widget in discovery_widgets:
+                if widget:
+                    widget.setEnabled(has_discovery)
+                    if not has_discovery:
+                        widget.setToolTip("Discovery data not available for this catalog")
+
+    def get_asteroids_for_current_catalog(self, orbit_class=None, h_min=None, h_max=None,
+                                          moid_min=None, moid_max=None):
+        """Get asteroids from the current catalog (primary or alternate)"""
+        if self.current_catalog_id is None:
+            # Primary catalog - use existing method
+            return self.db.get_asteroids(
+                orbit_class=orbit_class,
+                h_min=h_min,
+                h_max=h_max,
+                moid_min=moid_min,
+                moid_max=moid_max
+            )
+        else:
+            # Alternate catalog - get all and filter in Python
+            # (AlternateAsteroid doesn't have all the same query options)
+            asteroids = self.db.get_alternate_asteroids(self.current_catalog_id)
+
+            # Apply filters
+            filtered = []
+            for ast in asteroids:
+                if orbit_class and ast.get('orbit_class') != orbit_class:
+                    continue
+                if h_min is not None and ast.get('H') is not None and ast['H'] < h_min:
+                    continue
+                if h_max is not None and ast.get('H') is not None and ast['H'] > h_max:
+                    continue
+                if moid_min is not None:
+                    if ast.get('earth_moid') is None or ast['earth_moid'] < moid_min:
+                        continue
+                if moid_max is not None:
+                    if ast.get('earth_moid') is None or ast['earth_moid'] > moid_max:
+                        continue
+                filtered.append(ast)
+
+            return filtered
+
     def toggle_play_from_statusbar(self):
         """Toggle animation from statusbar button"""
         self.controls_panel.toggle_play()
@@ -12456,17 +12662,19 @@ class NEOVisualizer(QMainWindow):
             self.db = DatabaseManager(use_sqlite=True)
             self.cache = PositionCache() if self.use_cache else None
             self.calculator = FastOrbitCalculator()
-            
+
+            # Populate alternate catalogs dropdown
+            self.refresh_catalog_list()
+
             stats = self.db.get_statistics()
             if stats['total'] == 0:
                 self.status_label.setText("No data")
                 return
-            
-            # Build class lookup
-            all_ast = self.db.get_asteroids()
-            for ast in all_ast:
-                self.asteroid_classes[int(ast['id'])] = ast.get('orbit_class', 'Other')
-            
+
+            # Build class lookup for primary catalog
+            self._rebuild_asteroid_classes()
+            all_ast = self.db.get_asteroids()  # For orbital element ranges
+
             # Calculate orbital element ranges from data
             if all_ast:
                 periods = [ast['a'] ** 1.5 for ast in all_ast if ast['a'] > 0]
@@ -12725,40 +12933,44 @@ class NEOVisualizer(QMainWindow):
                 return
             
             # Performance optimization: Check if filters changed
-            # Include MOID and orbital element filters in cache key
+            # Include MOID, orbital element filters, and catalog ID in cache key
             current_filter_state = (tuple(sorted(selected_classes)), h_min, h_max, moid_enabled, moid_min, moid_max,
                                   orb_filters['period_enabled'], orb_filters['period_min'], orb_filters['period_max'],
                                   orb_filters['ecc_enabled'], orb_filters['ecc_min'], orb_filters['ecc_max'],
-                                  orb_filters['inc_enabled'], orb_filters['inc_min'], orb_filters['inc_max'])
+                                  orb_filters['inc_enabled'], orb_filters['inc_min'], orb_filters['inc_max'],
+                                  self.current_catalog_id)  # Include catalog ID in cache key
             filters_changed = (self.cached_filter_state != current_filter_state)
-            
+
             # Determine moid parameters for database query
             moid_min_param = moid_min if moid_enabled else None
             moid_max_param = moid_max if moid_enabled else None
-            
+
             # Only query database if filters changed
             if filters_changed or self.cached_asteroids is None:
-                logger.debug(f"Filters changed, querying database...")
-                # Get asteroids for selected classes with SQL filtering
+                logger.debug(f"Filters changed, querying database (catalog_id={self.current_catalog_id})...")
+                # Get asteroids for selected classes with filtering
                 asteroids = []
                 for cls in selected_classes:
                     if cls == 'Amor, q≤1.15':
                         # Get all Amors with H and MOID filters, then filter by q in Python
-                        all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max, 
-                                                          moid_min=moid_min_param, moid_max=moid_max_param)
+                        all_amors = self.get_asteroids_for_current_catalog(
+                            orbit_class='Amor', h_min=h_min, h_max=h_max,
+                            moid_min=moid_min_param, moid_max=moid_max_param)
                         filtered = [ast for ast in all_amors if ast['a'] * (1 - ast['e']) <= 1.15]
                         asteroids.extend(filtered)
                     elif cls == 'Amor, q>1.15':
                         # Get all Amors with H and MOID filters, then filter by q in Python
-                        all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
-                                                          moid_min=moid_min_param, moid_max=moid_max_param)
+                        all_amors = self.get_asteroids_for_current_catalog(
+                            orbit_class='Amor', h_min=h_min, h_max=h_max,
+                            moid_min=moid_min_param, moid_max=moid_max_param)
                         filtered = [ast for ast in all_amors if ast['a'] * (1 - ast['e']) > 1.15]
                         asteroids.extend(filtered)
                     else:
-                        # Regular class - use SQL H and MOID filtering
-                        asteroids.extend(self.db.get_asteroids(orbit_class=cls, h_min=h_min, h_max=h_max,
-                                                               moid_min=moid_min_param, moid_max=moid_max_param))
-                
+                        # Regular class - use filtering
+                        asteroids.extend(self.get_asteroids_for_current_catalog(
+                            orbit_class=cls, h_min=h_min, h_max=h_max,
+                            moid_min=moid_min_param, moid_max=moid_max_param))
+
                 # Cache the results
                 self.cached_asteroids = asteroids
                 self.cached_filter_state = current_filter_state
