@@ -5,7 +5,7 @@ Supports both PostgreSQL (full installation) and SQLite (lightweight/RPi)
 
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import numpy as np
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index
 from sqlalchemy.ext.declarative import declarative_base
@@ -94,9 +94,14 @@ class Asteroid(Base):
     discovery_site = Column(String(10), nullable=True)  # MPC observatory code
     
     # Update tracking
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Catalog staleness tracking (for objects that disappear from MPC catalog)
+    is_stale = Column(Boolean, default=False, index=True)  # Object missing from current catalog
+    stale_detected_at = Column(DateTime, nullable=True)  # When staleness was first detected
+    last_seen_in_catalog = Column(DateTime, nullable=True)  # Last time object was in MPC download
+
     # Indexes for common queries
     __table_args__ = (
         Index('idx_magnitude', 'H'),
@@ -615,17 +620,28 @@ class DatabaseManager:
             from sqlalchemy import inspect, text
             inspector = inspect(self.engine)
             columns = [c['name'] for c in inspector.get_columns('asteroids')]
-            
+
             # Migration: Add discovery_cln column if missing
             if 'discovery_cln' not in columns:
                 logger.info("Migrating database: adding discovery_cln column...")
                 with self.engine.connect() as conn:
                     conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_cln INTEGER"))
                     conn.commit()
-                
+
                 # Populate discovery_cln from discovery_mjd
                 self._populate_discovery_cln()
                 logger.info("Migration complete: discovery_cln column added")
+
+            # Migration: Add stale tracking columns if missing
+            if 'is_stale' not in columns:
+                logger.info("Migrating database: adding stale tracking columns...")
+                with self.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN is_stale BOOLEAN DEFAULT 0"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN stale_detected_at DATETIME"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN last_seen_in_catalog DATETIME"))
+                    conn.commit()
+                logger.info("Migration complete: stale tracking columns added")
+
         except Exception as e:
             logger.warning(f"Migration check failed: {e}")
     

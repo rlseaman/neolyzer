@@ -6,7 +6,7 @@ Implements variable precision: daily within ±1 year, weekly outside
 
 import h5py
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, List, Dict
 import logging
 from pathlib import Path
@@ -84,7 +84,7 @@ class PositionCache:
                 
                 # Set reference date to J2000.0
                 f['metadata'].attrs['reference_jd'] = 2451545.0
-                f['metadata'].attrs['created'] = datetime.utcnow().isoformat()
+                f['metadata'].attrs['created'] = datetime.now(timezone.utc).isoformat()
     
     def set_reference_date(self, jd: float):
         """Set the reference date for cache (typically current date)
@@ -298,15 +298,28 @@ class PositionCache:
         
         return stats
     
-    def clear_cache(self):
-        """Clear all cached positions (keeps structure)"""
+    def clear_cache(self, groups: list = None):
+        """Clear cached positions (keeps structure)
+
+        Parameters:
+        -----------
+        groups : list, optional
+            List of precision groups to clear: ['high_precision', 'medium_precision', 'low_precision']
+            If None, clears all groups.
+        """
+        if groups is None:
+            groups = ['high_precision', 'medium_precision', 'low_precision']
+
         with h5py.File(self.cache_file, 'a') as f:
-            for group in ['high_precision', 'medium_precision', 'low_precision']:
+            for group in groups:
                 if group in f:
                     del f[group]
                     f.create_group(group)
-        
-        logger.info("Cache cleared")
+
+        if len(groups) == 3:
+            logger.info("Cache cleared (all precision tiers)")
+        else:
+            logger.info(f"Cache cleared: {', '.join(groups)}")
     
     def optimize_cache(self):
         """Repack HDF5 file to reclaim space"""
