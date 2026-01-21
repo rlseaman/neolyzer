@@ -36,6 +36,27 @@ SKYFIELD_DATA_DIR.mkdir(parents=True, exist_ok=True)
 # The global loader instance (for timescale, etc.)
 skyfield_load = Loader(str(SKYFIELD_DATA_DIR))
 
+# Cached timescale to avoid repeated file opens
+# skyfield_load.timescale() opens data files each time; cache to prevent file handle exhaustion
+_cached_timescale = None
+
+def get_timescale():
+    """
+    Get a cached Skyfield timescale object.
+
+    This avoids repeated calls to skyfield_load.timescale() which can open
+    file handles that accumulate over time, especially during rapid updates
+    like blink mode.
+
+    Returns:
+    --------
+    Timescale : Skyfield timescale object
+    """
+    global _cached_timescale
+    if _cached_timescale is None:
+        _cached_timescale = skyfield_load.timescale()
+    return _cached_timescale
+
 
 def get_current_ephemeris() -> str:
     """

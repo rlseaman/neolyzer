@@ -72,24 +72,40 @@ def get_available_ephemerides() -> Dict[str, Dict]:
     return EPHEMERIS_DATA
 
 
+# Cache for configured ephemeris to avoid repeated file reads
+_cached_ephemeris = None
+
 def get_configured_ephemeris() -> str:
     """
     Get the currently configured ephemeris filename.
     Returns default if no config exists.
+    Result is cached after first read to prevent file handle exhaustion.
     """
+    global _cached_ephemeris
+    if _cached_ephemeris is not None:
+        return _cached_ephemeris
+
     try:
         if CONFIG_FILE.exists():
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 filename = config.get('ephemeris', DEFAULT_EPHEMERIS)
                 if filename in EPHEMERIS_DATA:
+                    _cached_ephemeris = filename
                     return filename
                 else:
                     logger.warning(f"Unknown ephemeris in config: {filename}, using default")
     except Exception as e:
         logger.warning(f"Error reading ephemeris config: {e}")
 
+    _cached_ephemeris = DEFAULT_EPHEMERIS
     return DEFAULT_EPHEMERIS
+
+
+def clear_ephemeris_cache():
+    """Clear the cached ephemeris setting (call after changing config)."""
+    global _cached_ephemeris
+    _cached_ephemeris = None
 
 
 def set_configured_ephemeris(filename: str) -> bool:
@@ -105,6 +121,8 @@ def set_configured_ephemeris(filename: str) -> bool:
     --------
     bool : True if successful
     """
+    global _cached_ephemeris
+
     if filename not in EPHEMERIS_DATA:
         logger.error(f"Unknown ephemeris: {filename}")
         return False
@@ -126,6 +144,9 @@ def set_configured_ephemeris(filename: str) -> bool:
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config, f, indent=2)
 
+        # Clear cache so next read gets the new value
+        _cached_ephemeris = filename
+
         logger.info(f"Ephemeris set to: {filename}")
         return True
     except Exception as e:
@@ -133,15 +154,23 @@ def set_configured_ephemeris(filename: str) -> bool:
         return False
 
 
+# Cache for ephemeris bounds
+_cached_bounds = None
+
 def get_ephemeris_bounds() -> Tuple[float, float]:
     """
     Get the JD bounds for the currently configured ephemeris.
     Includes a 10-day safety buffer on each end.
+    Result is cached after first calculation.
 
     Returns:
     --------
     Tuple[float, float] : (jd_min, jd_max) with safety buffers
     """
+    global _cached_bounds
+    if _cached_bounds is not None:
+        return _cached_bounds
+
     filename = get_configured_ephemeris()
     info = get_ephemeris_info(filename)
 
@@ -149,7 +178,8 @@ def get_ephemeris_bounds() -> Tuple[float, float]:
     jd_min = info['jd_min'] + 10
     jd_max = info['jd_max'] - 10
 
-    return (jd_min, jd_max)
+    _cached_bounds = (jd_min, jd_max)
+    return _cached_bounds
 
 
 def get_ephemeris_year_range() -> Tuple[int, int]:

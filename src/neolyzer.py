@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.05 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.06 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -118,7 +118,7 @@ import matplotlib.pyplot as plt
 from orbit_calculator import FastOrbitCalculator
 from database import DatabaseManager
 from cache_manager import PositionCache
-from skyfield_loader import skyfield_load, ensure_ephemeris, load_ephemeris
+from skyfield_loader import skyfield_load, ensure_ephemeris, load_ephemeris, get_timescale
 from skyfield.api import utc
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,7 @@ def compute_moon_phase(jd):
         return None
     
     try:
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         t = ts.tt_jd(jd)
         eph = load_ephemeris()
         
@@ -1301,7 +1301,7 @@ class SkyMapCanvas(FigureCanvas):
         opp_offset = 0
         if self.coord_system == 'opposition':
             try:
-                ts = skyfield_load.timescale()
+                ts = get_timescale()
                 t = ts.tt_jd(jd)
                 ensure_ephemeris()
                 eph = load_ephemeris()
@@ -1670,7 +1670,7 @@ class SkyMapCanvas(FigureCanvas):
         # Calculate and draw Sun position (save for distance calculations)
         self.sun_position = None  # Store for NEO marker calculations
         try:
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             t = ts.tt_jd(jd)
             ensure_ephemeris()
             eph = load_ephemeris()
@@ -3443,8 +3443,8 @@ class SkyMapCanvas(FigureCanvas):
         
         # Enhanced Stats
         if len(mag) > 0:
-            # Date and time
-            ts = skyfield_load.timescale()
+            # Date and time - use cached timescale to avoid file handle exhaustion
+            ts = get_timescale()
             t = ts.tt_jd(jd) if jd is not None else ts.now()
             dt = t.utc_datetime()
             
@@ -4360,7 +4360,7 @@ class NEOInfoDialog(QDialog):
     def _is_behind_sun(self, ra, dec, dist, jd):
         """Check if object is on far side of Sun (heliocentric distance > geocentric)"""
         try:
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             t = ts.tt_jd(jd)
             
             eph = load_ephemeris()
@@ -4435,7 +4435,7 @@ class NEOInfoDialog(QDialog):
         MAX_JD = EPHEMERIS_MAX_JD
         COARSE_STEP = 30  # days
         
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         
         def binary_search_fade(jd_visible, jd_invisible):
             """Find last day visible before fading. jd_visible < jd_invisible."""
@@ -4542,7 +4542,7 @@ class NEOInfoDialog(QDialog):
         if discovery_mjd is None:
             return '<span style="color: gray; font-style: italic;">Unknown</span>'
         
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         discovery_jd = discovery_mjd + 2400000.5
         date = ts.tt_jd(discovery_jd).utc_datetime().strftime('%Y-%m-%d')
         
@@ -4626,7 +4626,7 @@ class NEOInfoDialog(QDialog):
         helio_dist = None
         if jd:
             try:
-                ts = skyfield_load.timescale()
+                ts = get_timescale()
                 t = ts.tt_jd(jd)
                 date_str = t.utc_datetime().strftime('%Y-%m-%d %H:%M')
                 
@@ -4743,7 +4743,7 @@ class NEOInfoDialog(QDialog):
             if current_mjd < discovery_mjd:
                 is_before_discovery = True
                 # Convert discovery MJD to date string
-                ts = skyfield_load.timescale()
+                ts = get_timescale()
                 discovery_jd = discovery_mjd + 2400000.5
                 discovery_date = ts.tt_jd(discovery_jd).utc_datetime().strftime('%Y-%m-%d')
                 discovery_status_line = f'<br><span style="color: #6666CC; font-size: 9pt;">Not yet discovered (disc. {discovery_date})</span>'
@@ -5002,7 +5002,7 @@ class NEOTableDialog(QDialog):
         from skyfield.api import load as skyfield_load
         
         # Get current date for display
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         current_date = ts.tt_jd(jd).utc_datetime().strftime('%Y-%m-%d') if jd else ""
         
         # Apply filter if set
@@ -5912,7 +5912,7 @@ class TimeControlPanel(QWidget):
         self.animation_timer = QTimer()
         # Connection to advance_time made in ControlsPanel
         
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         self.current_jd = ts.now().tt
         
         self.setup_ui()
@@ -6011,7 +6011,7 @@ class TimeControlPanel(QWidget):
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=utc)
 
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         t = ts.from_datetime(dt)
         new_jd = t.tt
 
@@ -6051,7 +6051,7 @@ class TimeControlPanel(QWidget):
 
         # Update datetime edit without triggering on_datetime_changed
         self._updating_from_cln = True
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         t = ts.tt_jd(new_jd)
         dt = t.utc_datetime()
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(dt))
@@ -6134,7 +6134,7 @@ class TimeControlPanel(QWidget):
         elif widget_cant_display:
             # Light blue tint when widget can't display the actual date
             self.datetime_edit.setStyleSheet("QDateTimeEdit { background-color: #B0E0E6; }")  # Powder blue
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             t = ts.tt_jd(self.current_jd)
             actual_date = t.utc_datetime().strftime('%Y-%m-%d')
             self.datetime_edit.setToolTip(f"Actual date: {actual_date}\n(Widget cannot display pre-1752 dates)")
@@ -6148,7 +6148,7 @@ class TimeControlPanel(QWidget):
     
     def set_jd(self, jd):
         """Set the datetime from a Julian Date"""
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         t = ts.tt_jd(jd)
         dt = t.utc_datetime()
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(dt))
@@ -6158,7 +6158,7 @@ class TimeControlPanel(QWidget):
         new_jd = self.current_jd + days
         clamped, new_jd = self._clamp_to_ephemeris_range(new_jd)
         self.current_jd = new_jd
-        ts = skyfield_load.timescale()
+        ts = get_timescale()
         t = ts.tt_jd(new_jd)
         self._updating_from_cln = True
         self.datetime_edit.setDateTime(python_datetime_to_utc_qdatetime(t.utc_datetime()))
@@ -7238,7 +7238,7 @@ class ControlsPanel(QWidget):
         try:
             ensure_ephemeris()
             eph = load_ephemeris()
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             earth = eph['earth']
             moon = eph['moon']
             sun = eph['sun']
@@ -7691,7 +7691,7 @@ class HelicentricChartDialog(QDialog):
         
         # Get Sun position and store for calculations
         try:
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             t = ts.tt_jd(jd)
             eph = load_ephemeris()
             earth = eph['earth']
@@ -7857,7 +7857,7 @@ class HelicentricChartDialog(QDialog):
         
         # Get date string
         try:
-            ts = skyfield_load.timescale()
+            ts = get_timescale()
             t = ts.tt_jd(self.current_jd)
             date_str = t.utc_datetime().strftime('%Y-%m-%d %H:%M UTC')
         except:
@@ -11530,7 +11530,7 @@ class SettingsDialog(QDialog):
             all_points = existing_points + self._script_buffer
 
             script_data = {
-                'version': '3.05',
+                'version': '3.06',
                 'loop': loop_enabled,
                 'state': state,
                 'time_points': all_points
@@ -11970,7 +11970,7 @@ class NEOVisualizer(QMainWindow):
         # Auto-equalize on first data load for better default symbol sizes
         self._auto_equalize_pending = True
 
-        self.setWindowTitle("NEOlyzer v3.05")
+        self.setWindowTitle("NEOlyzer v3.06")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -12172,10 +12172,22 @@ class NEOVisualizer(QMainWindow):
         self.blink_btn = QPushButton("Blink")
         self.blink_btn.setCheckable(True)
         self.blink_btn.setMaximumWidth(55)
-        self.blink_btn.setToolTip("Toggle rapid blinking between Primary and selected alternate catalog")
+        self.blink_btn.setToolTip("Toggle blinking between selected catalog and 'Blink with' catalog")
         self.blink_btn.clicked.connect(self.toggle_blink)
         self.blink_btn.setEnabled(False)  # Disabled until alternate catalog exists
         toolbar_row_layout.addWidget(self.blink_btn)
+
+        # "Blink with" selector - choose which catalog to blink against
+        blink_with_label = QLabel("with:")
+        toolbar_row_layout.addWidget(blink_with_label)
+
+        self.blink_with_combo = QComboBox()
+        self.blink_with_combo.setMinimumWidth(100)
+        self.blink_with_combo.setMaximumWidth(150)
+        self.blink_with_combo.setToolTip("Select catalog to blink against the currently selected catalog")
+        self.blink_with_combo.addItem("Primary", None)
+        self.blink_with_combo.currentIndexChanged.connect(self._update_catalog_indicator)
+        toolbar_row_layout.addWidget(self.blink_with_combo)
 
         self.blink_rate_spin = QDoubleSpinBox()
         self.blink_rate_spin.setRange(0.25, 5.0)
@@ -13104,7 +13116,26 @@ class NEOVisualizer(QMainWindow):
 
         self.catalog_combo.blockSignals(False)
 
-        # Enable/disable blink button based on whether alternates exist
+        # Also update the "Blink with" combo
+        if hasattr(self, 'blink_with_combo'):
+            blink_with_current = self.blink_with_combo.currentData()
+            self.blink_with_combo.blockSignals(True)
+            self.blink_with_combo.clear()
+            self.blink_with_combo.addItem("Primary", None)
+            try:
+                for cat in catalogs:
+                    self.blink_with_combo.addItem(cat['name'], cat['id'])
+            except:
+                pass
+            # Restore selection
+            if blink_with_current is not None:
+                for i in range(self.blink_with_combo.count()):
+                    if self.blink_with_combo.itemData(i) == blink_with_current:
+                        self.blink_with_combo.setCurrentIndex(i)
+                        break
+            self.blink_with_combo.blockSignals(False)
+
+        # Enable/disable blink button based on whether we have at least 2 catalogs total
         if hasattr(self, 'blink_btn'):
             has_alternates = self.catalog_combo.count() > 1
             self.blink_btn.setEnabled(has_alternates)
@@ -13171,21 +13202,87 @@ class NEOVisualizer(QMainWindow):
             logger.error(f"Error rebuilding asteroid classes: {e}")
 
     def _update_catalog_indicator(self):
-        """Update visual indicator to show current catalog"""
-        if self.current_catalog_id is None:
-            # Primary catalog - normal appearance
-            self.catalog_combo.setStyleSheet("")
-            if hasattr(self, 'catalog_indicator_label'):
-                self.catalog_indicator_label.hide()
+        """Update visual indicator to show current catalog and blink state"""
+        is_blinking = self.blink_timer.isActive() if hasattr(self, 'blink_timer') else False
+
+        # Define colors
+        # Catalog A (main dropdown): yellow/moccasin tones
+        color_a_normal = "#FFE4B5"      # Moccasin - alternate selected but not active
+        color_a_active = "#FFD700"      # Gold - currently displaying this catalog
+        # Catalog B (with: dropdown): blue tones
+        color_b_normal = "#B0C4DE"      # Light steel blue - alternate selected but not active
+        color_b_active = "#87CEEB"      # Sky blue - currently displaying this catalog
+
+        if is_blinking:
+            # During blink: emphasize the currently displayed catalog
+            # blink_state: False = showing catalog A, True = showing catalog B
+            showing_b = getattr(self, 'blink_state', False)
+
+            # Style catalog A dropdown (main catalog selector)
+            if showing_b:
+                # Catalog A is not currently displayed - dimmed
+                if getattr(self, 'blink_catalog_a_id', None) is None:
+                    self.catalog_combo.setStyleSheet("")  # Primary - no highlight
+                else:
+                    self.catalog_combo.setStyleSheet(
+                        f"QComboBox {{ background-color: {color_a_normal}; }}"
+                    )
+            else:
+                # Catalog A IS currently displayed - emphasized
+                if getattr(self, 'blink_catalog_a_id', None) is None:
+                    self.catalog_combo.setStyleSheet(
+                        "QComboBox { background-color: #FFFACD; border: 2px solid #FFD700; font-weight: bold; }"  # Lemon chiffon with gold border
+                    )
+                else:
+                    self.catalog_combo.setStyleSheet(
+                        f"QComboBox {{ background-color: {color_a_active}; border: 2px solid #FFA500; font-weight: bold; }}"
+                    )
+
+            # Style catalog B dropdown (blink with: selector)
+            if hasattr(self, 'blink_with_combo'):
+                if showing_b:
+                    # Catalog B IS currently displayed - emphasized
+                    if getattr(self, 'blink_catalog_b_id', None) is None:
+                        self.blink_with_combo.setStyleSheet(
+                            "QComboBox { background-color: #E0FFFF; border: 2px solid #87CEEB; font-weight: bold; }"  # Light cyan with sky blue border
+                        )
+                    else:
+                        self.blink_with_combo.setStyleSheet(
+                            f"QComboBox {{ background-color: {color_b_active}; border: 2px solid #4682B4; font-weight: bold; }}"
+                        )
+                else:
+                    # Catalog B is not currently displayed - dimmed
+                    if getattr(self, 'blink_catalog_b_id', None) is None:
+                        self.blink_with_combo.setStyleSheet("")  # Primary - no highlight
+                    else:
+                        self.blink_with_combo.setStyleSheet(
+                            f"QComboBox {{ background-color: {color_b_normal}; }}"
+                        )
         else:
-            # Alternate catalog - highlight to make it obvious
-            self.catalog_combo.setStyleSheet(
-                "QComboBox { background-color: #FFE4B5; font-weight: bold; }"  # Moccasin color
-            )
-            # Update status bar or other indicator
-            if self.current_catalog_info:
-                cat_name = self.current_catalog_info['name']
-                self.status_label.setText(f"Viewing alternate catalog: {cat_name}")
+            # Not blinking - normal catalog indicator behavior
+            if self.current_catalog_id is None:
+                # Primary catalog - normal appearance
+                self.catalog_combo.setStyleSheet("")
+                if hasattr(self, 'catalog_indicator_label'):
+                    self.catalog_indicator_label.hide()
+            else:
+                # Alternate catalog - highlight to make it obvious
+                self.catalog_combo.setStyleSheet(
+                    f"QComboBox {{ background-color: {color_a_normal}; font-weight: bold; }}"
+                )
+                # Update status bar or other indicator
+                if self.current_catalog_info:
+                    cat_name = self.current_catalog_info['name']
+                    self.status_label.setText(f"Viewing alternate catalog: {cat_name}")
+
+            # Style blink_with_combo based on its selection (not blinking)
+            if hasattr(self, 'blink_with_combo'):
+                if self.blink_with_combo.currentData() is None:
+                    self.blink_with_combo.setStyleSheet("")  # Primary selected - no highlight
+                else:
+                    self.blink_with_combo.setStyleSheet(
+                        f"QComboBox {{ background-color: {color_b_normal}; }}"
+                    )
 
     def _update_filter_availability(self):
         """Enable/disable filters based on data availability in current catalog"""
@@ -13263,12 +13360,16 @@ class NEOVisualizer(QMainWindow):
             return filtered
 
     def toggle_blink(self, checked):
-        """Toggle blinking between primary and alternate catalogs"""
+        """Toggle blinking between two catalogs (selected catalog and 'blink with' catalog)"""
         if checked:
-            # Start blinking
-            if self.catalog_combo.count() < 2:
+            # Get the two catalogs to blink between
+            catalog_a_id = self.catalog_combo.currentData()  # Currently selected
+            catalog_b_id = self.blink_with_combo.currentData()  # "Blink with" selection
+
+            # Can't blink a catalog with itself
+            if catalog_a_id == catalog_b_id:
                 self.blink_btn.setChecked(False)
-                self.status_label.setText("No alternate catalog to blink with")
+                self.status_label.setText("Select different catalogs to blink between")
                 return
 
             # Mutual exclusion: stop animation if running
@@ -13280,54 +13381,65 @@ class NEOVisualizer(QMainWindow):
             if hasattr(self, 'statusbar_play_btn'):
                 self.statusbar_play_btn.setEnabled(False)
 
-            # Determine which catalog to blink between
-            # If currently on primary, blink to first alternate
-            # If currently on alternate, blink between primary and current alternate
-            if self.current_catalog_id is None:
-                # On primary - need an alternate to blink to
-                self.blink_alternate_index = 1  # First alternate
-            else:
-                # On alternate - remember current for blinking
-                self.blink_alternate_index = self.catalog_combo.currentIndex()
+            # Store both catalog IDs and info for blinking
+            self.blink_catalog_a_id = catalog_a_id
+            self.blink_catalog_b_id = catalog_b_id
+            self.blink_catalog_a_index = self.catalog_combo.currentIndex()
+            self.blink_catalog_b_index = self.blink_with_combo.currentIndex()
 
-            # Get alternate catalog info
-            alt_catalog_id = self.catalog_combo.itemData(self.blink_alternate_index)
-            self.blink_alternate_info = self.db.get_catalog_by_id(alt_catalog_id)
+            # Get catalog info for display
+            if catalog_a_id is None:
+                self.blink_catalog_a_info = None
+                self.blink_catalog_a_name = "Primary"
+            else:
+                self.blink_catalog_a_info = self.db.get_catalog_by_id(catalog_a_id)
+                self.blink_catalog_a_name = self.blink_catalog_a_info['name'] if self.blink_catalog_a_info else f"Catalog {catalog_a_id}"
+
+            if catalog_b_id is None:
+                self.blink_catalog_b_info = None
+                self.blink_catalog_b_name = "Primary"
+            else:
+                self.blink_catalog_b_info = self.db.get_catalog_by_id(catalog_b_id)
+                self.blink_catalog_b_name = self.blink_catalog_b_info['name'] if self.blink_catalog_b_info else f"Catalog {catalog_b_id}"
 
             # Pre-cache data for both catalogs for fast blinking
             self.status_label.setText("Preparing blink data...")
             QApplication.processEvents()
             self._prepare_blink_caches()
 
-            self.blink_state = False  # Start showing primary
+            self.blink_state = False  # Start showing catalog A
             interval_ms = int(self.blink_rate_spin.value() * 1000)
             self.blink_timer.start(interval_ms)
             self.blink_btn.setStyleSheet("QPushButton { background-color: #90EE90; }")
-            self.status_label.setText(f"Blinking at {self.blink_rate_spin.value():.2f}s interval")
-            logger.info(f"Started blinking at {interval_ms}ms interval")
+            self.status_label.setText(f"Blinking {self.blink_catalog_a_name} ↔ {self.blink_catalog_b_name}")
+            logger.info(f"Started blinking {self.blink_catalog_a_name} vs {self.blink_catalog_b_name} at {interval_ms}ms")
         else:
             # Stop blinking
             self.blink_timer.stop()
             self.blink_btn.setStyleSheet("")
             # Clear blink caches
-            self.blink_primary_asteroids = None
-            self.blink_alternate_asteroids = None
-            self.blink_primary_classes = None
-            self.blink_alternate_classes = None
-            self.blink_primary_positions = None
-            self.blink_alternate_positions = None
+            self.blink_catalog_a_asteroids = None
+            self.blink_catalog_b_asteroids = None
+            self.blink_catalog_a_classes = None
+            self.blink_catalog_b_classes = None
+            self.blink_catalog_a_positions = None
+            self.blink_catalog_b_positions = None
             self.blink_cached_jd = None
             # Re-enable play button
             self.controls_panel.play_btn.setEnabled(True)
             if hasattr(self, 'statusbar_play_btn'):
                 self.statusbar_play_btn.setEnabled(True)
 
-            # Reset to Primary catalog (consistent state after blink stops)
+            # Reset to catalog A (the originally selected catalog before blink)
+            restore_index = getattr(self, 'blink_catalog_a_index', 0)
             self.catalog_combo.blockSignals(True)
-            self.catalog_combo.setCurrentIndex(0)
+            self.catalog_combo.setCurrentIndex(restore_index)
             self.catalog_combo.blockSignals(False)
-            self.current_catalog_id = None
-            self.current_catalog_info = None
+            self.current_catalog_id = self.catalog_combo.currentData()
+            if self.current_catalog_id is None:
+                self.current_catalog_info = None
+            else:
+                self.current_catalog_info = self.db.get_catalog_by_id(self.current_catalog_id)
             self._update_catalog_indicator()
             self._update_filter_availability()
 
@@ -13344,81 +13456,104 @@ class NEOVisualizer(QMainWindow):
     def _prepare_blink_caches(self):
         """Pre-cache asteroid data AND positions for both catalogs to enable fast blinking"""
         # Get current filter settings to apply to both catalogs
+        show_all_neos = self.magnitude_panel.get_show_all_neos()
         h_min, h_max = self.magnitude_panel.get_h_limits()
         moid_enabled, moid_min, moid_max = self.neo_classes_panel.get_moid_filter()
         selected_classes = self.neo_classes_panel.get_selected_classes()
 
+        # If "Show all NEOs" is checked, don't apply H magnitude limits
+        if show_all_neos:
+            h_min, h_max = None, None
+
         moid_min_param = moid_min if moid_enabled else None
         moid_max_param = moid_max if moid_enabled else None
 
-        # Cache primary catalog asteroids
-        logger.info("Pre-caching primary catalog for blink...")
-        primary_asteroids = []
-        for cls in (selected_classes or []):
-            if cls == 'Amor, q≤1.15':
-                all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
-                                                  moid_min=moid_min_param, moid_max=moid_max_param)
-                primary_asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) <= 1.15])
-            elif cls == 'Amor, q>1.15':
-                all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
-                                                  moid_min=moid_min_param, moid_max=moid_max_param)
-                primary_asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) > 1.15])
-            else:
-                primary_asteroids.extend(self.db.get_asteroids(orbit_class=cls, h_min=h_min, h_max=h_max,
-                                                               moid_min=moid_min_param, moid_max=moid_max_param))
-        self.blink_primary_asteroids = primary_asteroids
-        self.blink_primary_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in primary_asteroids}
-
-        # Cache alternate catalog asteroids
-        alt_catalog_id = self.catalog_combo.itemData(self.blink_alternate_index)
-        logger.info(f"Pre-caching alternate catalog {alt_catalog_id} for blink...")
-        alt_asteroids = []
-        all_alt = self.db.get_alternate_asteroids(alt_catalog_id)
-        for ast in all_alt:
-            # Apply same filters
-            if selected_classes and ast.get('orbit_class') not in selected_classes:
-                # Handle Amor subclasses
-                if ast.get('orbit_class') == 'Amor':
-                    q = ast['a'] * (1 - ast['e'])
-                    if 'Amor, q≤1.15' in selected_classes and q <= 1.15:
-                        pass  # Include
-                    elif 'Amor, q>1.15' in selected_classes and q > 1.15:
-                        pass  # Include
+        def get_catalog_asteroids(catalog_id, catalog_name):
+            """Get filtered asteroids from either primary (None) or alternate catalog"""
+            if catalog_id is None:
+                # Primary catalog
+                asteroids = []
+                for cls in (selected_classes or []):
+                    if cls == 'Amor, q≤1.15':
+                        all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
+                                                          moid_min=moid_min_param, moid_max=moid_max_param)
+                        asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) <= 1.15])
+                    elif cls == 'Amor, q>1.15':
+                        all_amors = self.db.get_asteroids(orbit_class='Amor', h_min=h_min, h_max=h_max,
+                                                          moid_min=moid_min_param, moid_max=moid_max_param)
+                        asteroids.extend([a for a in all_amors if a['a'] * (1 - a['e']) > 1.15])
                     else:
+                        asteroids.extend(self.db.get_asteroids(orbit_class=cls, h_min=h_min, h_max=h_max,
+                                                               moid_min=moid_min_param, moid_max=moid_max_param))
+            else:
+                # Alternate catalog - apply filters manually
+                asteroids = []
+                all_alt = self.db.get_alternate_asteroids(catalog_id)
+                for ast in all_alt:
+                    if selected_classes and ast.get('orbit_class') not in selected_classes:
+                        if ast.get('orbit_class') == 'Amor':
+                            q = ast['a'] * (1 - ast['e'])
+                            if 'Amor, q≤1.15' in selected_classes and q <= 1.15:
+                                pass
+                            elif 'Amor, q>1.15' in selected_classes and q > 1.15:
+                                pass
+                            else:
+                                continue
+                        else:
+                            continue
+                    if h_min is not None and ast.get('H') is not None and ast['H'] < h_min:
                         continue
-                else:
-                    continue
-            if h_min is not None and ast.get('H') is not None and ast['H'] < h_min:
-                continue
-            if h_max is not None and ast.get('H') is not None and ast['H'] > h_max:
-                continue
-            if moid_min_param is not None:
-                if ast.get('earth_moid') is None or ast['earth_moid'] < moid_min_param:
-                    continue
-            if moid_max_param is not None:
-                if ast.get('earth_moid') is None or ast['earth_moid'] > moid_max_param:
-                    continue
-            alt_asteroids.append(ast)
-        self.blink_alternate_asteroids = alt_asteroids
-        self.blink_alternate_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in alt_asteroids}
+                    if h_max is not None and ast.get('H') is not None and ast['H'] > h_max:
+                        continue
+                    if moid_min_param is not None:
+                        if ast.get('earth_moid') is None or ast['earth_moid'] < moid_min_param:
+                            continue
+                    if moid_max_param is not None:
+                        if ast.get('earth_moid') is None or ast['earth_moid'] > moid_max_param:
+                            continue
+                    asteroids.append(ast)
+            logger.info(f"Pre-caching {catalog_name}: {len(asteroids)} asteroids")
+            return asteroids
 
-        # PRE-COMPUTE POSITIONS for both catalogs at current JD (the key optimization)
+        # Cache catalog A asteroids
+        catalog_a_asteroids = get_catalog_asteroids(self.blink_catalog_a_id, self.blink_catalog_a_name)
+        self.blink_catalog_a_asteroids = catalog_a_asteroids
+        self.blink_catalog_a_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in catalog_a_asteroids}
+
+        # Cache catalog B asteroids
+        catalog_b_asteroids = get_catalog_asteroids(self.blink_catalog_b_id, self.blink_catalog_b_name)
+        self.blink_catalog_b_asteroids = catalog_b_asteroids
+        self.blink_catalog_b_classes = {int(a['id']): a.get('orbit_class', 'Other') for a in catalog_b_asteroids}
+
+        # PRE-COMPUTE POSITIONS for both catalogs at current JD
         jd = self.time_panel.current_jd
         self.blink_cached_jd = jd
 
-        logger.info(f"Pre-computing positions for {len(primary_asteroids)} primary asteroids...")
-        if primary_asteroids:
-            self.blink_primary_positions = self.calculator.calculate_batch(primary_asteroids, jd)
+        logger.info(f"Pre-computing positions for {len(catalog_a_asteroids)} {self.blink_catalog_a_name} asteroids...")
+        if catalog_a_asteroids:
+            self.blink_catalog_a_positions = self.calculator.calculate_batch(catalog_a_asteroids, jd)
         else:
-            self.blink_primary_positions = np.array([]).reshape(0, 5)
+            self.blink_catalog_a_positions = np.array([]).reshape(0, 5)
 
-        logger.info(f"Pre-computing positions for {len(alt_asteroids)} alternate asteroids...")
-        if alt_asteroids:
-            self.blink_alternate_positions = self.calculator.calculate_batch(alt_asteroids, jd)
+        logger.info(f"Pre-computing positions for {len(catalog_b_asteroids)} {self.blink_catalog_b_name} asteroids...")
+        if catalog_b_asteroids:
+            self.blink_catalog_b_positions = self.calculator.calculate_batch(catalog_b_asteroids, jd)
         else:
-            self.blink_alternate_positions = np.array([]).reshape(0, 5)
+            self.blink_catalog_b_positions = np.array([]).reshape(0, 5)
 
-        logger.info(f"Blink caches ready: {len(self.blink_primary_asteroids)} primary, {len(self.blink_alternate_asteroids)} alternate")
+        logger.info(f"Blink caches ready: {len(catalog_a_asteroids)} {self.blink_catalog_a_name}, {len(catalog_b_asteroids)} {self.blink_catalog_b_name}")
+
+        # Store the filter state used for these caches so we can detect changes
+        # Round floats to avoid floating point precision issues causing spurious rebuilds
+        self.blink_cached_filter_state = (
+            tuple(sorted(selected_classes)) if selected_classes else (),
+            round(h_min, 4) if h_min is not None else None,
+            round(h_max, 4) if h_max is not None else None,
+            moid_enabled,
+            round(moid_min, 6) if moid_min is not None else None,
+            round(moid_max, 6) if moid_max is not None else None,
+            show_all_neos
+        )
 
     def on_blink_rate_changed(self, value):
         """Handle blink rate change"""
@@ -13429,46 +13564,72 @@ class NEOVisualizer(QMainWindow):
             self.status_label.setText(f"Blink rate: {value:.2f}s")
 
     def do_blink(self):
-        """Execute one blink cycle - alternate between catalogs (optimized with pre-computed positions)"""
+        """Execute one blink cycle - alternate between two catalogs (optimized with pre-computed positions)"""
         self.blink_state = not self.blink_state
+
+        # Check if filter state has changed since we cached asteroids (NEO class buttons, MOID, etc.)
+        show_all_neos = self.magnitude_panel.get_show_all_neos()
+        h_min, h_max = self.magnitude_panel.get_h_limits()
+        if show_all_neos:
+            h_min, h_max = None, None
+        moid_enabled, moid_min, moid_max = self.neo_classes_panel.get_moid_filter()
+        selected_classes = self.neo_classes_panel.get_selected_classes()
+
+        # Round floats to match how they're stored in blink_cached_filter_state
+        current_filter_state = (
+            tuple(sorted(selected_classes)) if selected_classes else (),
+            round(h_min, 4) if h_min is not None else None,
+            round(h_max, 4) if h_max is not None else None,
+            moid_enabled,
+            round(moid_min, 6) if moid_min is not None else None,
+            round(moid_max, 6) if moid_max is not None else None,
+            show_all_neos
+        )
+
+        if hasattr(self, 'blink_cached_filter_state') and self.blink_cached_filter_state != current_filter_state:
+            # Filters changed - rebuild caches with new filters
+            # Add cooldown to prevent rapid rebuilds (min 2 seconds between rebuilds)
+            now = time.time()
+            last_rebuild = getattr(self, '_blink_last_cache_rebuild', 0)
+            if now - last_rebuild >= 2.0:
+                logger.info(f"Blink: Filter state changed, rebuilding caches")
+                self._prepare_blink_caches()
+                self._blink_last_cache_rebuild = now
+                # Force garbage collection to release file handles
+                import gc
+                gc.collect()
 
         # Check if JD has changed since we cached positions
         current_jd = self.time_panel.current_jd
         if self.blink_cached_jd is not None and abs(current_jd - self.blink_cached_jd) > 0.0001:
             # JD changed - recompute positions
             logger.debug(f"Blink: JD changed from {self.blink_cached_jd:.4f} to {current_jd:.4f}, recomputing")
-            if self.blink_primary_asteroids:
-                self.blink_primary_positions = self.calculator.calculate_batch(self.blink_primary_asteroids, current_jd)
-            if self.blink_alternate_asteroids:
-                self.blink_alternate_positions = self.calculator.calculate_batch(self.blink_alternate_asteroids, current_jd)
+            if self.blink_catalog_a_asteroids:
+                self.blink_catalog_a_positions = self.calculator.calculate_batch(self.blink_catalog_a_asteroids, current_jd)
+            if self.blink_catalog_b_asteroids:
+                self.blink_catalog_b_positions = self.calculator.calculate_batch(self.blink_catalog_b_asteroids, current_jd)
             self.blink_cached_jd = current_jd
 
         if self.blink_state:
-            # Show alternate catalog
-            self.catalog_combo.blockSignals(True)
-            self.catalog_combo.setCurrentIndex(self.blink_alternate_index)
-            self.catalog_combo.blockSignals(False)
+            # Show catalog B
+            self.current_catalog_id = self.blink_catalog_b_id
+            self.current_catalog_info = self.blink_catalog_b_info
+            current_name = self.blink_catalog_b_name
 
-            self.current_catalog_id = self.catalog_combo.currentData()
-            self.current_catalog_info = self.blink_alternate_info
-
-            # Use pre-computed alternate data
-            positions = self.blink_alternate_positions
-            asteroids = self.blink_alternate_asteroids
-            self.asteroid_classes = self.blink_alternate_classes
+            # Use pre-computed catalog B data
+            positions = self.blink_catalog_b_positions
+            asteroids = self.blink_catalog_b_asteroids
+            self.asteroid_classes = self.blink_catalog_b_classes
         else:
-            # Show primary catalog
-            self.catalog_combo.blockSignals(True)
-            self.catalog_combo.setCurrentIndex(0)
-            self.catalog_combo.blockSignals(False)
+            # Show catalog A
+            self.current_catalog_id = self.blink_catalog_a_id
+            self.current_catalog_info = self.blink_catalog_a_info
+            current_name = self.blink_catalog_a_name
 
-            self.current_catalog_id = None
-            self.current_catalog_info = None
-
-            # Use pre-computed primary data
-            positions = self.blink_primary_positions
-            asteroids = self.blink_primary_asteroids
-            self.asteroid_classes = self.blink_primary_classes
+            # Use pre-computed catalog A data
+            positions = self.blink_catalog_a_positions
+            asteroids = self.blink_catalog_a_asteroids
+            self.asteroid_classes = self.blink_catalog_a_classes
 
         # Update visual indicator
         self._update_catalog_indicator()
@@ -13477,6 +13638,13 @@ class NEOVisualizer(QMainWindow):
         # Get current display settings (these are lightweight operations)
         mag_min, mag_max = self.magnitude_panel.get_magnitude_limits()
         h_min, h_max = self.magnitude_panel.get_h_limits()
+        show_all_neos = self.magnitude_panel.get_show_all_neos()
+
+        # If "Show all NEOs" is checked, use extreme ranges to include everything
+        if show_all_neos:
+            mag_min, mag_max = -100.0, 200.0
+            h_min, h_max = None, None
+
         moid_enabled, moid_min, moid_max = self.neo_classes_panel.get_moid_filter()
         selected_classes = self.neo_classes_panel.get_selected_classes()
         orb_filters = self.orbital_panel.get_orbital_filters()
@@ -13507,9 +13675,8 @@ class NEOVisualizer(QMainWindow):
         )
 
         # Update status
-        catalog_name = "Alternate" if self.blink_state else "Primary"
         n_objects = len(asteroids) if asteroids else 0
-        self.status_label.setText(f"Blinking: {catalog_name} ({n_objects} objects)")
+        self.status_label.setText(f"Blinking: {current_name} ({n_objects} objects)")
 
     def toggle_play_from_statusbar(self):
         """Toggle animation from statusbar button"""
@@ -14186,6 +14353,15 @@ class NEOVisualizer(QMainWindow):
         </ul>
         <p><i>Note: Blinking and animation are mutually exclusive for clarity.</i></p>
         <p>Load alternates via command line: <code>scripts/load_alt_catalog.py</code></p>
+
+        <h3>New in v3.06</h3>
+        <ul>
+        <li><b>Catalog comparison:</b> Blink between any two catalogs (primary or alternate)</li>
+        <li><b>Changed objects table:</b> View orbital element differences between catalogs</li>
+        <li><b>Diff mode:</b> Highlight objects unique to primary, alternate, or both</li>
+        <li><b>Dynamic blink filters:</b> NEO class buttons now work during blink mode</li>
+        <li><b>Visual blink indicator:</b> Color-coded dropdowns show active catalog</li>
+        </ul>
 
         <h3>New in v3.05</h3>
         <ul>
