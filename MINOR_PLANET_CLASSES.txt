@@ -1,0 +1,123 @@
+# Minor Planet Classification Scheme for MPCORB.DAT Partitioning
+# NEOlyzer Project - Catalina Sky Survey, University of Arizona
+#
+# This file documents the classification criteria used to partition
+# MPCORB.DAT into separate catalog files by dynamical class.
+#
+# Script: scripts/partition_mpcorb.py
+# Source: https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz
+#
+# USAGE
+# =============================================================================
+# ./venv/bin/python scripts/partition_mpcorb.py [--clobber]
+#
+# Downloads MPCORB.DAT.gz, decompresses, and partitions into class files.
+# Output directory: data/MPC/
+# Use --clobber to overwrite existing files (otherwise exits if files exist).
+#
+# CLASSIFICATION ORDER (applied top-first, each object assigned to ONE class)
+# =============================================================================
+#
+# Special Objects (identified by designation pattern):
+#   INT - Interstellar objects (I/ designations, e.g., 1I/'Oumuamua, 2I/Borisov)
+#   ART - A/ designations (comet-like asteroids or reclassified)
+#   SAT - Planetary satellites (if present in MPCORB.DAT)
+#
+# Comets (identified by designation pattern - P/, C/, D/, X/):
+#   NEC - Near-Earth Comets: q < 1.3 au AND P < 200 years (orbital period)
+#   COM - All other comets
+#
+# Asteroids (classified by orbital elements):
+#
+# ORBITAL ELEMENT DEFINITIONS:
+#   q = perihelion distance (au) = a * (1 - e)
+#   Q = aphelion distance (au) = a * (1 + e)
+#   a = semi-major axis (au)
+#   e = eccentricity
+#   i = inclination (degrees)
+#   P = orbital period (years) = a^1.5 (Kepler's third law)
+#
+# Mars orbital parameters (for Mars Crosser definition):
+#   Mars perihelion: ~1.38 au
+#   Mars aphelion: ~1.67 au
+#
+# -----------------------------------------------------------------------------
+# CLASS   SHORT  CRITERIA                                    NOTES
+# -----------------------------------------------------------------------------
+#
+# Near-Earth Object
+#   NEO    q < 1.3 au                                       Includes Atira, Aten,
+#                                                           Apollo, Amor subclasses
+#
+# Hungaria family (inner edge of main belt, high inclination)
+#   HUN    1.78 < a < 2.0 au                                Named for (434) Hungaria
+#          e <= 0.18                                        4:1 resonance with Jupiter
+#          16 <= i <= 34 deg                                Isolated by resonances
+#
+# Phocaea family (inner main belt, high inclination)
+#   PHO    q >= 1.5 au                                      Named for (25) Phocaea
+#          2.2 < a < 2.45 au                                High-i family in inner belt
+#          20 <= i <= 27 deg
+#
+# Mars Crosser (orbits cross Mars but not Earth-crossing)
+#   MCA    1.3 <= q < 1.67 au                               Perihelion in Mars-crossing
+#          Q > 1.58 au                                      zone; no upper bound on a
+#
+# Inner Main Belt (catch-all after NEO, HUN, PHO, MCA)
+#   MB1    a < 2.5 au                                       Interior to 3:1 resonance
+#                                                           No lower bound (catch-all)
+#
+# Middle Main Belt
+#   MB2    2.5 <= a < 2.8 au                                Between 3:1 and 5:2
+#                                                           resonances with Jupiter
+#
+# Outer Main Belt
+#   MB3    2.8 <= a < 3.25 au                               Between 5:2 and 2:1
+#                                                           resonances
+#
+# Hilda group (3:2 resonance with Jupiter)
+#   HIL    3.9 < a < 4.02 au                                Named for (153) Hilda
+#          e <= 0.4                                         Stable 3:2 resonance
+#          i <= 18 deg
+#
+# Jupiter Trojan (1:1 resonance with Jupiter, L4/L5 points)
+#   JTR    5.05 < a < 5.35 au                               Greek/Trojan camps
+#          e <= 0.22                                        at L4 and L5
+#          i <= 38 deg
+#
+# Outer Solar System (catch-all for a >= 3.25)
+#   OUT    a >= 3.25 au                                     Includes: Cybeles, Thules,
+#                                                           Centaurs, TNOs, SDOs
+#                                                           (not separately classified)
+#
+# Unclassified
+#   UNC    Objects not matching any above criteria          Should be rare/none
+#
+# -----------------------------------------------------------------------------
+# OUTPUT FILES
+# -----------------------------------------------------------------------------
+# Directory: data/MPC/
+# Format: {CLASS}_MPC.txt (e.g., NEO_MPC.txt, MB1_MPC.txt)
+# Content: Verbatim lines from MPCORB.DAT (no header lines)
+# Statistics: MPC_partition_stats.txt
+#
+# -----------------------------------------------------------------------------
+# NOTES ON CLASSIFICATION
+# -----------------------------------------------------------------------------
+# - Classes applied in order listed above; first match wins
+# - Mars Crossers may have any semi-major axis (high-e distant objects included)
+# - Main Belt classes (MB1, MB2, MB3) are catch-alls for their a ranges
+# - "Outer" intentionally broad (includes Cybeles through TNOs)
+# - Community definitions vary; this scheme prioritizes planetary defense utility
+# - NEO subclasses (Atira, Aten, Apollo, Amor) handled separately in NEOlyzer
+#
+# -----------------------------------------------------------------------------
+# REFERENCES
+# -----------------------------------------------------------------------------
+# MPC Orbit Format: https://minorplanetcenter.net/iau/info/MPOrbitFormat.html
+# MPCORB.DAT: https://minorplanetcenter.net/iau/MPCORB/MPCORB.DAT.gz
+#
+# -----------------------------------------------------------------------------
+# REVISION HISTORY
+# -----------------------------------------------------------------------------
+# 2025-01-21  Initial version for NEOlyzer v3.06
