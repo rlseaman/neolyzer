@@ -685,14 +685,16 @@ class SkyMapCanvas(FigureCanvas):
         self.ax.set_title(title, fontsize=11, fontweight='bold', pad=4)
 
         # Custom coordinate formatter to limit decimal places
+        # Use math.degrees to avoid closure issues with numpy in Python 3.12+
+        import math
         if self.projection == 'rectilinear':
             def format_coord(x, y):
                 return f'{x:.4f}°, {y:.4f}°'
         else:
             def format_coord(x, y):
                 # Projected coordinates are in radians
-                lon_deg = np.degrees(x)
-                lat_deg = np.degrees(y)
+                lon_deg = math.degrees(x)
+                lat_deg = math.degrees(y)
                 return f'{lon_deg:.4f}°, {lat_deg:.4f}°'
         self.ax.format_coord = format_coord
 
@@ -12128,6 +12130,16 @@ class NEOVisualizer(QMainWindow):
         
         self.canvas = SkyMapCanvas(show_fps=self.show_fps)
         self.toolbar = NavigationToolbar(self.canvas, self)
+
+        # Fix coordinate display width to prevent layout shifting
+        # The NavigationToolbar has a locLabel QLabel that shows cursor coordinates
+        # Setting a minimum width prevents it from causing layout reflows
+        if hasattr(self.toolbar, 'locLabel'):
+            self.toolbar.locLabel.setMinimumWidth(180)
+            # Use monospace font for consistent character width
+            font = self.toolbar.locLabel.font()
+            font.setStyleHint(QFont.StyleHint.Monospace)
+            self.toolbar.locLabel.setFont(font)
 
         # Connect canvas click to toggle animation
         self.canvas.mpl_connect('button_press_event', self.on_canvas_click)
