@@ -4101,14 +4101,43 @@ class SkyMapCanvas(FigureCanvas):
     def start_selection(self, mode='rectangle'):
         """Start selection mode for lasso selection of objects"""
         from matplotlib.widgets import RectangleSelector, EllipseSelector
-        
+
+        # Create safe wrapper classes that handle None events (matplotlib bug workaround)
+        class SafeRectangleSelector(RectangleSelector):
+            def _get_data(self, event):
+                if event is None:
+                    return None, None
+                return super()._get_data(event)
+
+            def press(self, event):
+                if event is None:
+                    return
+                try:
+                    super().press(event)
+                except AttributeError:
+                    pass  # Ignore None event errors
+
+        class SafeEllipseSelector(EllipseSelector):
+            def _get_data(self, event):
+                if event is None:
+                    return None, None
+                return super()._get_data(event)
+
+            def press(self, event):
+                if event is None:
+                    return
+                try:
+                    super().press(event)
+                except AttributeError:
+                    pass  # Ignore None event errors
+
         # Clear any existing selector first
         self.clear_selection()
-        
+
         self.selection_mode = mode
-        
+
         if mode == 'rectangle':
-            self.selector = RectangleSelector(
+            self.selector = SafeRectangleSelector(
                 self.ax, self._on_select,
                 useblit=True,
                 button=[1],  # Left button only
@@ -4118,7 +4147,7 @@ class SkyMapCanvas(FigureCanvas):
                 props=dict(facecolor='cyan', edgecolor='blue', alpha=0.3, linewidth=2)
             )
         elif mode == 'ellipse':
-            self.selector = EllipseSelector(
+            self.selector = SafeEllipseSelector(
                 self.ax, self._on_select,
                 useblit=True,
                 button=[1],
@@ -4127,7 +4156,7 @@ class SkyMapCanvas(FigureCanvas):
                 interactive=True,
                 props=dict(facecolor='cyan', edgecolor='blue', alpha=0.3, linewidth=2)
             )
-        
+
         self.draw_idle()
         return True
     
