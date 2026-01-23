@@ -4,8 +4,10 @@ venv/
 # Cache and data files
 cache/
 data/
+alt_data/
 diagnostics/
 recordings/
+logs/
 *.bsp
 
 # Local config
