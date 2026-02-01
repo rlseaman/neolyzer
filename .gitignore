@@ -32,3 +32,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# Office temp files
+~$*
