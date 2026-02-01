@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""
+Create NEOlyzer demo presentation
+"""
+
+from pptx import Presentation
+from pptx.util import Inches, Pt
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml.ns import nsmap
+from pptx.oxml import parse_xml
+from pptx.dml.color import RGBColor as RgbColor
+import os
+
+# Paths
+SCRIPT_DIR = os.path.dirname(__file__)
+PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
+CSS_LOGO_PATH = os.path.join(PROJECT_DIR, 'assets', 'CSS_logo_transparent.png')
+
+# Create presentation with widescreen dimensions
+prs = Presentation()
+prs.slide_width = Inches(13.333)
+prs.slide_height = Inches(7.5)
+
+# Colors for professional theme
+DARK_BLUE = RgbColor(0x1a, 0x23, 0x5b)  # Deep navy
+MEDIUM_BLUE = RgbColor(0x2d, 0x3e, 0x83)  # Accent blue
+LIGHT_BLUE = RgbColor(0x4a, 0x6f, 0xa5)  # Highlight
+WHITE = RgbColor(0xff, 0xff, 0xff)
+GOLD = RgbColor(0xff, 0xc1, 0x07)  # Accent for highlights
+
+
+def add_background(slide, color=DARK_BLUE):
+    """Add solid background color to slide"""
+    background = slide.background
+    fill = background.fill
+    fill.solid()
+    fill.fore_color.rgb = color
+
+
+def add_title_text(slide, text, top, font_size=44, bold=True, color=WHITE):
+    """Add a title text box"""
+    left = Inches(0.5)
+    width = Inches(12.333)
+    height = Inches(1.2)
+
+    txBox = slide.shapes.add_textbox(left, top, width, height)
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = text
+    p.font.size = Pt(font_size)
+    p.font.bold = bold
+    p.font.color.rgb = color
+    p.alignment = PP_ALIGN.CENTER
+    return txBox
+
+
+def add_body_text(slide, text, top, font_size=24, color=WHITE, left=0.75, width=11.833):
+    """Add body text box"""
+    txBox = slide.shapes.add_textbox(Inches(left), top, Inches(width), Inches(5))
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.text = text
+    p.font.size = Pt(font_size)
+    p.font.color.rgb = color
+    return txBox
+
+
+def add_bullet_points(slide, items, top, font_size=24, color=WHITE, left=0.75):
+    """Add bulleted list"""
+    txBox = slide.shapes.add_textbox(Inches(left), top, Inches(11.5), Inches(5))
+    tf = txBox.text_frame
+    tf.word_wrap = True
+
+    for i, item in enumerate(items):
+        if i == 0:
+            p = tf.paragraphs[0]
+        else:
+            p = tf.add_paragraph()
+        p.text = f"  {item}"
+        p.font.size = Pt(font_size)
+        p.font.color.rgb = color
+        p.level = 0
+    return txBox
+
+
+def add_decorative_line(slide, top, color=GOLD):
+    """Add a decorative accent line"""
+    line = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE,
+        Inches(4), top,
+        Inches(5.333), Pt(4)
+    )
+    line.fill.solid()
+    line.fill.fore_color.rgb = color
+    line.line.fill.background()
+
+
+# =============================================================================
+# SLIDE 1: Title Slide
+# =============================================================================
+slide_layout = prs.slide_layouts[6]  # Blank layout
+title_slide = prs.slides.add_slide(slide_layout)
+slide = title_slide  # Keep 'slide' reference for compatibility
+add_background(slide)
+
+# Main title
+add_title_text(slide, "NEOlyzer", Inches(2), font_size=72, bold=True)
+
+# Subtitle
+add_title_text(slide, "A New Visualization Tool for Near-Earth Objects",
+               Inches(3.2), font_size=36, bold=False, color=LIGHT_BLUE)
+
+# Decorative line
+add_decorative_line(slide, Inches(4.2))
+
+# Authors
+add_title_text(slide, "Rob Seaman", Inches(4.8), font_size=28, bold=True)
+add_title_text(slide, "Catalina Sky Survey", Inches(5.3), font_size=22, bold=False, color=LIGHT_BLUE)
+
+add_title_text(slide, "Claude (Anthropic)", Inches(5.9), font_size=28, bold=True)
+add_title_text(slide, "AI Implementation Partner", Inches(6.4), font_size=22, bold=False, color=LIGHT_BLUE)
+
+
+# =============================================================================
+# SLIDE 2: The Prompt (Good morning...)
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide, MEDIUM_BLUE)
+
+add_title_text(slide, "How This Presentation Was Made", Inches(0.4), font_size=40)
+add_decorative_line(slide, Inches(1.1))
+
+prompt_text = '''Good morning. It's been a few days since I worked on this. I need to create
+a demo of NEOlyzer. Perhaps you can remind me - and yourself - of its high
+points. Hmm. For that matter, I have both Powerpoint and Keynote on this
+computer. Can you directly create a presentation while I kibitz?'''
+
+txBox = slide.shapes.add_textbox(Inches(1), Inches(1.8), Inches(11.333), Inches(3))
+tf = txBox.text_frame
+tf.word_wrap = True
+p = tf.paragraphs[0]
+p.text = prompt_text
+p.font.size = Pt(26)
+p.font.color.rgb = WHITE
+p.font.italic = True
+
+# Add context
+add_body_text(slide,
+    "This presentation was generated by Claude Code from a conversational prompt.\n\n"
+    "NEOlyzer itself was developed through AI-assisted programming,\n"
+    "achieving a Minimum Viable Product in under 2 weeks.",
+    Inches(4.8), font_size=22, color=LIGHT_BLUE)
+
+
+# =============================================================================
+# SLIDE 3: What is NEOlyzer?
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "What is NEOlyzer?", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+bullets = [
+    "Interactive visualization of the Near-Earth Object catalog",
+    "Supports Planetary Defense research and observation planning",
+    "Displays 40,000+ NEOs with smooth real-time animation",
+    "Time range spanning 1550-2650 (using JPL DE440 ephemeris)",
+    "Cross-platform: macOS, Linux, Windows (via WSL)",
+    "Built with Python, PyQt6, matplotlib, Skyfield, SQLite"
+]
+add_bullet_points(slide, bullets, Inches(1.5), font_size=28)
+
+
+# =============================================================================
+# SLIDE 4: Core Visualization
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "Core Visualization Features", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+# Left column
+left_title = slide.shapes.add_textbox(Inches(0.75), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = left_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Map Projections"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+left_bullets = ["Rectangular (RA/Dec grid)", "Hammer (equal-area)",
+                "Aitoff (azimuthal)", "Mollweide (pseudo-cylindrical)"]
+add_bullet_points(slide, left_bullets, Inches(2.0), font_size=22, left=0.75)
+
+# Right column
+right_title = slide.shapes.add_textbox(Inches(7), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = right_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Coordinate Systems"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+right_bullets = ["Equatorial (standard obs)", "Ecliptic (orbital reference)",
+                 "Galactic coordinates", "Opposition-centered"]
+add_bullet_points(slide, right_bullets, Inches(2.0), font_size=22, left=7)
+
+# Animation section
+anim_title = slide.shapes.add_textbox(Inches(0.75), Inches(4.5), Inches(11.5), Inches(0.6))
+tf = anim_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Real-Time Animation"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+anim_text = "Variable playback rates (hours/days/months per second)  |  Forward and backward playback  |  ~10 FPS with 40,000+ objects"
+add_body_text(slide, anim_text, Inches(5.1), font_size=22, color=LIGHT_BLUE)
+
+
+# =============================================================================
+# SLIDE 5: Data Encoding
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "Multi-Dimensional Data Encoding", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+# Color encoding
+color_title = slide.shapes.add_textbox(Inches(0.75), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = color_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Color Encodes:"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+color_bullets = ["V Magnitude (visual brightness)", "H Magnitude (intrinsic brightness)",
+                 "CNEOS Discovery Site (observatory)"]
+add_bullet_points(slide, color_bullets, Inches(2.0), font_size=22, left=0.75)
+
+# Size encoding
+size_title = slide.shapes.add_textbox(Inches(7), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = size_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Size Encodes:"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+size_bullets = ["V or H Magnitude", "Distance from Earth",
+                "Earth MOID", "Orbital Period", "Eccentricity"]
+add_bullet_points(slide, size_bullets, Inches(2.0), font_size=22, left=7)
+
+# Filtering
+filter_title = slide.shapes.add_textbox(Inches(0.75), Inches(4.3), Inches(11.5), Inches(0.6))
+tf = filter_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Filtering Options"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+filter_bullets = ["Dual magnitude limits (V and H, min and max)",
+                  "NEO orbital classes (Atira, Aten, Apollo, Amor)",
+                  "Earth MOID range filter",
+                  "Hide objects before discovery date (lunation-based)"]
+add_bullet_points(slide, filter_bullets, Inches(4.9), font_size=22)
+
+
+# =============================================================================
+# SLIDE 6: Analysis Tools
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "Built-In Analysis Tools", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+tools = [
+    "MOID vs H Magnitude - Visualize Potentially Hazardous Asteroids",
+    "NEO Discovery Timeline - Catalog growth through history",
+    "Solar Elongation vs Distance - Observability planning",
+    "Orbital Element Space (a vs e) - Classification view",
+    "Lunar Phases Calendar - CLN tracking for observation scheduling",
+    "Heliocentric Polar Chart - Sun-centered ecliptic view"
+]
+add_bullet_points(slide, tools, Inches(1.5), font_size=26)
+
+
+# =============================================================================
+# SLIDE 7: Advanced Features
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "Advanced Features", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+# Overlays
+overlay_title = slide.shapes.add_textbox(Inches(0.75), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = overlay_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Astronomical Overlays"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+overlay_bullets = ["IAU constellation boundaries", "Hipparcos bright star catalog",
+                   "Ecliptic and Galactic planes", "Observer horizon & twilight"]
+add_bullet_points(slide, overlay_bullets, Inches(2.0), font_size=22, left=0.75)
+
+# Catalog comparison
+catalog_title = slide.shapes.add_textbox(Inches(7), Inches(1.4), Inches(5.5), Inches(0.6))
+tf = catalog_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Catalog Comparison"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+catalog_bullets = ["Load alternate catalog versions", "Blink between catalogs",
+                   "View new/deleted/changed objects", "Pre-computed position cache"]
+add_bullet_points(slide, catalog_bullets, Inches(2.0), font_size=22, left=7)
+
+# Interactive features
+interact_title = slide.shapes.add_textbox(Inches(0.75), Inches(4.5), Inches(11.5), Inches(0.6))
+tf = interact_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Interactive Features"
+p.font.size = Pt(28)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+interact_text = "Click any NEO for detailed orbital elements and discovery info  |  Shift+Click for constellation ID  |  Sortable data tables with CSV export"
+add_body_text(slide, interact_text, Inches(5.1), font_size=22, color=LIGHT_BLUE)
+
+
+# =============================================================================
+# SLIDE 8: Performance & Architecture
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide)
+
+add_title_text(slide, "Performance Architecture", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+perf_bullets = [
+    "HDF5 position cache with variable precision tiers",
+    "   - High precision (daily) for current year",
+    "   - Medium precision (weekly) for ±5 years",
+    "   - Low precision (monthly) for extended range",
+    "~10 FPS sustained for 40,000+ objects",
+    "Magnitude hysteresis reduces visual twinkling",
+    "Efficient LineCollection for boundary rendering",
+    "SQLite database via SQLAlchemy ORM"
+]
+add_bullet_points(slide, perf_bullets, Inches(1.5), font_size=24)
+
+
+# =============================================================================
+# SLIDE 9: Demo Highlights
+# =============================================================================
+slide = prs.slides.add_slide(slide_layout)
+add_background(slide, MEDIUM_BLUE)
+
+add_title_text(slide, "Live Demo", Inches(2.5), font_size=60)
+add_decorative_line(slide, Inches(3.4))
+
+demo_points = "Animation  |  Projections  |  Filtering  |  Analysis Charts  |  Catalog Blinking"
+add_body_text(slide, demo_points, Inches(4.2), font_size=28, color=LIGHT_BLUE)
+
+
+# =============================================================================
+# SLIDE 10: Future Directions
+# =============================================================================
+last_slide = prs.slides.add_slide(slide_layout)
+slide = last_slide  # Keep 'slide' reference for compatibility
+add_background(slide)
+
+add_title_text(slide, "Future Directions", Inches(0.3), font_size=44)
+add_decorative_line(slide, Inches(1.0))
+
+future_bullets = [
+    "Performance optimization for 100,000+ NEOs (catalog growing rapidly)",
+    "Database schema normalization as features expand",
+    "Additional observational planning modes",
+    "Enhanced scripted playback for demonstrations",
+    "Community feedback and feature requests welcome"
+]
+add_bullet_points(slide, future_bullets, Inches(1.5), font_size=26)
+
+# Contact
+contact_title = slide.shapes.add_textbox(Inches(0.75), Inches(5.2), Inches(11.5), Inches(0.6))
+tf = contact_title.text_frame
+p = tf.paragraphs[0]
+p.text = "Contact: rseaman@arizona.edu"
+p.font.size = Pt(24)
+p.font.bold = True
+p.font.color.rgb = GOLD
+
+
+# =============================================================================
+# Add CSS Logo to Title and Last Slides
+# =============================================================================
+def add_logo_with_circle(slide, logo_path, left, top, logo_size):
+    """Add logo centered on a white circle background"""
+    circle_size = logo_size * 1.15  # Circle slightly larger than logo
+    circle_offset = (circle_size - logo_size) / 2
+
+    # Add white circle first (so it's behind the logo)
+    circle = slide.shapes.add_shape(
+        MSO_SHAPE.OVAL,
+        Inches(left), Inches(top),
+        Inches(circle_size), Inches(circle_size)
+    )
+    circle.fill.solid()
+    circle.fill.fore_color.rgb = WHITE
+    circle.line.fill.background()  # No border
+
+    # Add logo centered on circle
+    slide.shapes.add_picture(
+        logo_path,
+        Inches(left + circle_offset), Inches(top + circle_offset),
+        height=Inches(logo_size), width=Inches(logo_size)
+    )
+
+if os.path.exists(CSS_LOGO_PATH):
+    # Title slide: larger logo, centered between left edge and "Claude" name
+    # Claude name is centered text, so visually around x=6.67 (slide center)
+    # Center logo between 0 and 6.67 = 3.33
+    title_logo_size = 2.2  # Larger on title slide
+    title_circle_size = title_logo_size * 1.15
+    title_center_x = 2.33
+    title_left = title_center_x - (title_circle_size / 2)
+    title_top = 7.5 - 0.5 - title_circle_size  # 0.5 margin from bottom
+    add_logo_with_circle(title_slide, CSS_LOGO_PATH, title_left, title_top, title_logo_size)
+
+    # Last slide: current size, centered between email and right edge
+    # Email text starts at 0.75, roughly 4 inches wide, so ends ~4.75
+    # Center between 5.0 and 13.333 = 9.17
+    # Vertically align middle of logo with email (email at top=5.2, height=0.6, middle=5.5)
+    last_logo_size = 1.8
+    last_circle_size = last_logo_size * 1.15
+    last_center_x = 11.0  # Between email end and right edge
+    last_left = last_center_x - (last_circle_size / 2)
+    email_middle_y = 5.2 + 0.3  # Middle of email text box
+    last_top = email_middle_y - (last_circle_size / 2)
+    add_logo_with_circle(last_slide, CSS_LOGO_PATH, last_left, last_top, last_logo_size)
+
+    print(f"Added CSS logo with white circle from: {CSS_LOGO_PATH}")
+else:
+    print(f"Warning: CSS logo not found at {CSS_LOGO_PATH}")
+
+
+# =============================================================================
+# Save presentation
+# =============================================================================
+output_path = os.path.join(os.path.dirname(__file__), 'NEOlyzer_Demo.pptx')
+prs.save(output_path)
+print(f"Presentation saved to: {output_path}")
