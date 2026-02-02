@@ -40,6 +40,11 @@ skyfield_load = Loader(str(SKYFIELD_DATA_DIR))
 # skyfield_load.timescale() opens data files each time; cache to prevent file handle exhaustion
 _cached_timescale = None
 
+# Cached ephemeris to avoid repeated file opens
+# load_ephemeris() opens the .bsp file each time; cache to prevent file handle exhaustion
+_cached_ephemeris = None
+_cached_ephemeris_filename = None
+
 def get_timescale():
     """
     Get a cached Skyfield timescale object.
@@ -170,6 +175,8 @@ def load_ephemeris(filename=None):
 
     This function ensures the file is downloaded first (handling SSL issues),
     then loads it using a Loader pointed at the directory where the file exists.
+    The loaded ephemeris is cached to prevent file handle exhaustion from
+    repeated opens during animation/updates.
 
     Parameters:
     -----------
@@ -180,8 +187,14 @@ def load_ephemeris(filename=None):
     --------
     SpiceKernel : The loaded ephemeris
     """
+    global _cached_ephemeris, _cached_ephemeris_filename
+
     if filename is None:
         filename = get_current_ephemeris()
+
+    # Return cached ephemeris if same file
+    if _cached_ephemeris is not None and _cached_ephemeris_filename == filename:
+        return _cached_ephemeris
 
     # Make sure the file exists (downloads if needed with SSL fallback)
     eph_path = ensure_ephemeris(filename)
@@ -192,4 +205,14 @@ def load_ephemeris(filename=None):
     loader = Loader(str(eph_path.parent))
 
     # Load the file - since it exists, no download attempt will be made
-    return loader(filename)
+    _cached_ephemeris = loader(filename)
+    _cached_ephemeris_filename = filename
+
+    return _cached_ephemeris
+
+
+def clear_ephemeris_cache():
+    """Clear the cached ephemeris (call when switching ephemeris files)."""
+    global _cached_ephemeris, _cached_ephemeris_filename
+    _cached_ephemeris = None
+    _cached_ephemeris_filename = None
