@@ -441,7 +441,33 @@ class CoordinateTransformer:
         lambda_deg = np.where(lambda_deg < 0, lambda_deg + 360, lambda_deg)
         
         return lambda_deg, beta_deg
-    
+
+    @staticmethod
+    def ecliptic_to_equatorial(lambda_deg, beta_deg):
+        """Convert ecliptic (lambda/beta) to equatorial (RA/Dec)"""
+        # Obliquity of ecliptic
+        eps = np.radians(23.43928)
+
+        lambda_rad = np.radians(lambda_deg)
+        beta_rad = np.radians(beta_deg)
+
+        # Convert to equatorial
+        ra_rad = np.arctan2(
+            np.sin(lambda_rad) * np.cos(eps) - np.tan(beta_rad) * np.sin(eps),
+            np.cos(lambda_rad)
+        )
+        dec_rad = np.arcsin(
+            np.sin(beta_rad) * np.cos(eps) + np.cos(beta_rad) * np.sin(eps) * np.sin(lambda_rad)
+        )
+
+        ra_deg = np.degrees(ra_rad)
+        dec_deg = np.degrees(dec_rad)
+
+        # Wrap RA to 0-360
+        ra_deg = np.where(ra_deg < 0, ra_deg + 360, ra_deg)
+
+        return ra_deg, dec_deg
+
     @staticmethod
     def equatorial_to_galactic(ra, dec):
         """Convert equatorial (RA/Dec) to galactic (l/b)"""
@@ -528,6 +554,7 @@ class SkyMapCanvas(FigureCanvas):
         # Settings
         self.projection = 'hammer'  # Default to Hammer
         self.coord_system = 'equatorial'
+        self.grid_coord_system = None  # None means same as plot coords
         self.cbar_min = 19.0  # Default minimum magnitude
         self.cbar_max = 23.0
         self.cmap = 'viridis_r'  # Default colormap
@@ -565,6 +592,7 @@ class SkyMapCanvas(FigureCanvas):
         }
         self.trail_history = {}  # Dict: asteroid_id -> list of (jd, x, y) or None for breaks
         self.trail_lines = []    # List of matplotlib line objects
+        self.grid_lines = []     # List of transformed grid line artists
         self.animation_playing = False  # Track animation state
         self.animation_paused = False   # Track if paused (vs stopped)
 
@@ -610,6 +638,7 @@ class SkyMapCanvas(FigureCanvas):
         """Setup plot with current projection"""
         self.fig.clear()
         self.trail_lines = []  # Clear trail line references since fig.clear() removes them
+        self.grid_lines = []   # Clear grid line references since fig.clear() removes them
         
         # Use tight margins for all projections
         # Give more space on the right for colorbar labels
@@ -657,12 +686,23 @@ class SkyMapCanvas(FigureCanvas):
             self.ax.set_ylabel(ylabel, fontsize=9, fontweight='bold')
             self.ax.tick_params(labelsize=8)  # Smaller tick labels
         
+        # Determine effective grid coordinate system
+        effective_grid_coords = self.grid_coord_system if self.grid_coord_system else self.coord_system
+        needs_transformed_grid = (self.grid_coord_system is not None and
+                                  self.grid_coord_system != self.coord_system)
+
         if self.show_grid:
-            self.ax.grid(True, alpha=0.3, linestyle='--')
+            if needs_transformed_grid:
+                # Draw transformed grid manually
+                self.ax.grid(False)
+                self._draw_transformed_grid()
+            else:
+                # Use native matplotlib grid
+                self.ax.grid(True, alpha=0.3, linestyle='--')
         else:
             self.ax.grid(False)
-        
-        # Set grid spacing based on resolution settings
+
+        # Set grid spacing based on resolution settings (for native grid)
         if self.projection == 'rectangular':
             # For rectangular, use MultipleLocator for custom grid spacing
             from matplotlib.ticker import MultipleLocator
@@ -680,7 +720,7 @@ class SkyMapCanvas(FigureCanvas):
             lat_ticks = lat_ticks[(lat_ticks >= -np.pi/2) & (lat_ticks <= np.pi/2)]
             self.ax.set_xticks(lon_ticks)
             self.ax.set_yticks(lat_ticks)
-        
+
         title = f'NEO Sky Map ({self.coord_system.title()})'
         self.ax.set_title(title, fontsize=11, fontweight='bold', pad=4)
 
@@ -802,6 +842,140 @@ class SkyMapCanvas(FigureCanvas):
         # Don't use tight_layout - manual margins for maximum plot area
         self.draw()
 
+    def _clear_grid_lines(self):
+        """Remove all transformed grid line artists"""
+        for line in self.grid_lines:
+            try:
+                line.remove()
+            except (ValueError, AttributeError):
+                pass
+        self.grid_lines = []
+
+    def _draw_transformed_grid(self):
+        """Draw grid lines from a different coordinate system than the plot"""
+        # Clear any existing transformed grid lines
+        self._clear_grid_lines()
+
+        if not self.grid_coord_system or self.grid_coord_system == self.coord_system:
+            return
+
+        grid_system = self.grid_coord_system
+        plot_system = self.coord_system
+
+        # Generate grid lines at regular intervals in the grid coordinate system
+        lon_lines = np.arange(-180, 180, self.h_resolution)
+        lat_lines = np.arange(-90 + self.v_resolution, 90, self.v_resolution)
+
+        # Sample points along each line (more samples = smoother curves)
+        n_samples = 180
+
+        # Draw longitude lines (constant lon, varying lat)
+        for lon in lon_lines:
+            lats = np.linspace(-89.9, 89.9, n_samples)
+            lons = np.full_like(lats, lon)
+            self._draw_grid_line(lons, lats, grid_system, plot_system)
+
+        # Draw latitude lines (constant lat, varying lon)
+        for lat in lat_lines:
+            lons = np.linspace(-179.9, 179.9, n_samples)
+            lats = np.full_like(lons, lat)
+            self._draw_grid_line(lons, lats, grid_system, plot_system)
+
+    def _draw_grid_line(self, lons, lats, source_system, dest_system):
+        """Draw a single grid line, handling wrap-around discontinuities"""
+        # Transform from source coordinate system to destination
+        dest_lon, dest_lat = self._transform_grid_coords(lons, lats, source_system, dest_system)
+
+        # Convert to plot coordinates (radians for projection plots)
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            # Normalize to -180 to 180 range
+            dest_lon = np.where(dest_lon > 180, dest_lon - 360, dest_lon)
+            # Negate longitude for East-on-left convention (same as NEO scatter plots)
+            x = np.radians(-dest_lon)
+            y = np.radians(dest_lat)
+        else:
+            # Rectangular uses degrees (axis is already inverted for East-on-left)
+            x = dest_lon
+            y = dest_lat
+
+        # Split line at discontinuities (large jumps in longitude)
+        segments = []
+        current_seg_x = [x[0]]
+        current_seg_y = [y[0]]
+
+        for i in range(1, len(x)):
+            # Check for wrap-around (jump > 180 degrees, or ~3.14 radians)
+            jump = abs(x[i] - x[i-1])
+            if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                max_jump = np.pi  # radians
+            else:
+                max_jump = 180  # degrees
+
+            if jump > max_jump:
+                # End current segment, start new one
+                if len(current_seg_x) > 1:
+                    segments.append((np.array(current_seg_x), np.array(current_seg_y)))
+                current_seg_x = [x[i]]
+                current_seg_y = [y[i]]
+            else:
+                current_seg_x.append(x[i])
+                current_seg_y.append(y[i])
+
+        # Add final segment
+        if len(current_seg_x) > 1:
+            segments.append((np.array(current_seg_x), np.array(current_seg_y)))
+
+        # Draw each segment and store the line artists
+        for seg_x, seg_y in segments:
+            line, = self.ax.plot(seg_x, seg_y, color='gray', linestyle='--',
+                                 linewidth=0.5, alpha=0.3, zorder=1)
+            self.grid_lines.append(line)
+
+    def _transform_grid_coords(self, lon, lat, source_system, dest_system):
+        """Transform coordinates from source system to destination system"""
+        # First convert to equatorial (RA/Dec) as intermediate
+        if source_system == 'equatorial':
+            ra, dec = lon, lat
+        elif source_system == 'ecliptic':
+            ra, dec = CoordinateTransformer.ecliptic_to_equatorial(lon, lat)
+        elif source_system == 'galactic':
+            ra, dec = CoordinateTransformer.galactic_to_equatorial(lon, lat)
+        else:
+            ra, dec = lon, lat  # Unknown system, pass through
+
+        # Then convert from equatorial to destination
+        if dest_system == 'equatorial':
+            return ra, dec
+        elif dest_system == 'ecliptic':
+            return CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+        elif dest_system == 'galactic':
+            return CoordinateTransformer.equatorial_to_galactic(ra, dec)
+        elif dest_system == 'opposition':
+            # Opposition is time-varying - use current JD if available
+            # For now, transform to ecliptic first, then apply opposition offset
+            ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+            # Get sun position for opposition offset
+            if hasattr(self, 'current_jd') and self.current_jd:
+                ts = get_timescale()
+                t = ts.tt_jd(self.current_jd)
+                eph = load_ephemeris()
+                sun = eph['sun']
+                earth = eph['earth']
+                sun_pos = earth.at(t).observe(sun).apparent()
+                sun_ecl_lon = sun_pos.ecliptic_latlon()[1].degrees
+                # Opposition is 180° from Sun
+                opposition_lon = (sun_ecl_lon + 180) % 360
+                # Offset longitude so opposition is at center
+                opp_lon = ecl_lon - opposition_lon
+                # Wrap to -180 to 180
+                opp_lon = np.where(opp_lon > 180, opp_lon - 360, opp_lon)
+                opp_lon = np.where(opp_lon < -180, opp_lon + 360, opp_lon)
+                return opp_lon, ecl_lat
+            else:
+                return ecl_lon, ecl_lat
+        else:
+            return ra, dec  # Unknown system, pass through
+
     def set_projection(self, projection):
         """Change projection"""
         self.projection = projection
@@ -844,6 +1018,11 @@ class SkyMapCanvas(FigureCanvas):
     def set_grid_visible(self, visible):
         """Set grid visibility"""
         self.show_grid = visible
+        self.setup_plot()
+
+    def set_grid_coordinate_system(self, coord_system):
+        """Set grid coordinate system (None for same as plot)"""
+        self.grid_coord_system = coord_system
         self.setup_plot()
 
     def set_display_mode(self, mode):
@@ -2697,6 +2876,11 @@ class SkyMapCanvas(FigureCanvas):
             if not hasattr(self, 'last_jd') or self.last_jd is None or abs(jd - self.last_jd) > 0.01:
                 self.draw_celestial_overlays(jd)
                 self.last_jd = jd
+                # Redraw transformed grid if in opposition mode (time-varying)
+                if (self.show_grid and self.grid_coord_system and
+                    self.grid_coord_system != self.coord_system and
+                    self.coord_system == 'opposition'):
+                    self._draw_transformed_grid()
 
         if _profile:
             _times['overlays'] = time.time() - _t0
@@ -6349,9 +6533,6 @@ class ControlsPanel(QWidget):
                 self.parent_window.canvas._hysteresis_enabled = False  # Disable hysteresis
                 # Trigger redraw to restore display mode (density/contours)
                 self.parent_window.update_display()
-            # Sync statusbar button if it exists
-            if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
-                self.parent_window.statusbar_play_btn.setText("▶ Play")
             # Re-enable blink button when animation stops
             if self.parent_window and hasattr(self.parent_window, 'blink_btn'):
                 self.parent_window.blink_btn.setEnabled(True)
@@ -6410,10 +6591,7 @@ class ControlsPanel(QWidget):
                     logger.debug("TRAIL: Cleared for fresh animation start")
                 else:
                     logger.debug("TRAIL: Resuming from pause - preserving trails")
-            # Sync statusbar button if it exists
-            if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
-                self.parent_window.statusbar_play_btn.setText("⏸ Pause")
-    
+
     def on_annual_mode_changed(self, state):
         """Handle annual step mode toggle"""
         is_annual = (state == 2)  # Qt.Checked = 2
@@ -6444,9 +6622,6 @@ class ControlsPanel(QWidget):
             self.parent_window.canvas.animation_paused = False  # Not paused - fully stopped
             self.parent_window.canvas._hysteresis_enabled = False
             self.parent_window.canvas._visible_objects.clear()
-        # Sync statusbar button if it exists
-        if self.parent_window and hasattr(self.parent_window, 'statusbar_play_btn'):
-            self.parent_window.statusbar_play_btn.setText("▶ Play")
 
     def refresh_scripts(self):
         """Refresh the list of available recording scripts"""
@@ -8622,7 +8797,19 @@ class ProjectionPanel(QWidget):
         coord_row.addWidget(self.coord_combo)
         coord_row.addStretch()  # Left-justify
         proj_layout.addLayout(coord_row)
-        
+
+        # Grid coordinate system selector (left-justified)
+        grid_coord_row = QHBoxLayout()
+        grid_coord_row.addWidget(QLabel("Grid Coords:"))
+        self.grid_coord_combo = QComboBox()
+        self.grid_coord_combo.addItems(['Same as plot', 'Equatorial', 'Ecliptic', 'Galactic'])
+        self.grid_coord_combo.setToolTip("Coordinate system for grid overlay\n"
+                                         "(e.g., show equatorial grid on ecliptic plot)")
+        self.grid_coord_combo.currentTextChanged.connect(self.on_settings_changed)
+        grid_coord_row.addWidget(self.grid_coord_combo)
+        grid_coord_row.addStretch()  # Left-justify
+        proj_layout.addLayout(grid_coord_row)
+
         # Grid spacing options (horizontal and vertical in degrees)
         res_row = QHBoxLayout()
         self.show_grid_check = QCheckBox("Grid:")
@@ -8655,87 +8842,7 @@ class ProjectionPanel(QWidget):
         res_row.addWidget(self.v_resolution)
         res_row.addStretch()  # Left-justify
         proj_layout.addLayout(res_row)
-        
-        # Display mode selector with settings
-        display_row = QHBoxLayout()
-        display_row.addWidget(QLabel("Display:"))
-        self.display_mode = QComboBox()
-        self.display_mode.addItems(['Points', 'Density Map', 'Contours', 'Points + Contours'])
-        self.display_mode.setCurrentText('Points')
-        self.display_mode.setToolTip("How to visualize NEO positions:\n"
-                                     "Points: Individual symbols\n"
-                                     "Density Map: Heat map of clustering\n"
-                                     "Contours: Density contour lines\n"
-                                     "Points + Contours: Both overlaid")
-        self.display_mode.currentTextChanged.connect(self.on_settings_changed)
-        display_row.addWidget(self.display_mode)
-        
-        # Settings button for density/contour options
-        self.display_settings_btn = QPushButton("⚙")
-        self.display_settings_btn.setMaximumWidth(25)
-        self.display_settings_btn.setToolTip("Display mode settings")
-        display_settings_menu = QMenu(self)
-        
-        # Density map settings - flat menu with Grid Size submenu
-        density_menu = display_settings_menu.addMenu("Density Map")
-        
-        # Grid size (higher = finer detail)
-        self.density_gridsize_group = density_menu.addMenu("Resolution")
-        for size, label in [(50, "Fine (50)"), (35, "Medium (35)"), (25, "Coarse (25)"), (15, "Very Coarse (15)")]:
-            action = self.density_gridsize_group.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(size == 35)  # Default medium
-            action.triggered.connect(lambda checked, s=size: self.set_density_gridsize(s))
-        
-        # Colormap
-        self.density_cmap_group = density_menu.addMenu("Colormap")
-        for cmap, label in [('YlOrRd', 'Yellow-Orange-Red'), ('hot', 'Hot'), ('plasma', 'Plasma'), 
-                            ('viridis', 'Viridis'), ('Blues', 'Blues'), ('Greys', 'Greys')]:
-            action = self.density_cmap_group.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(cmap == 'YlOrRd')  # Default
-            action.triggered.connect(lambda checked, c=cmap: self.set_density_colormap(c))
-        
-        # Scale range - just Auto and Manual
-        self.density_scale_group = density_menu.addMenu("Scale Range")
-        self.density_scale_auto = self.density_scale_group.addAction("Auto")
-        self.density_scale_auto.setCheckable(True)
-        self.density_scale_auto.setChecked(True)
-        self.density_scale_auto.triggered.connect(lambda: self.set_density_scale('auto'))
-        
-        self.density_scale_manual = self.density_scale_group.addAction("Manual...")
-        self.density_scale_manual.setCheckable(True)
-        self.density_scale_manual.triggered.connect(self.show_density_scale_dialog)
-        
-        # Contour settings submenu
-        contour_menu = display_settings_menu.addMenu("Contours")
-        self.contour_levels_group = contour_menu.addMenu("Levels")
-        for levels, label in [(5, "Few (5)"), (8, "Medium (8)"), (12, "Many (12)"), (20, "Dense (20)")]:
-            action = self.contour_levels_group.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(levels == 8)  # Default
-            action.triggered.connect(lambda checked, l=levels: self.set_contour_levels(l))
-        
-        self.contour_smooth_group = contour_menu.addMenu("Smoothing")
-        for smooth, label in [(0.08, "Sharp"), (0.15, "Medium"), (0.25, "Smooth"), (0.4, "Very Smooth")]:
-            action = self.contour_smooth_group.addAction(label)
-            action.setCheckable(True)
-            action.setChecked(smooth == 0.15)  # Default
-            action.triggered.connect(lambda checked, s=smooth: self.set_contour_smoothing(s))
-        
-        self.display_settings_btn.setMenu(display_settings_menu)
-        display_row.addWidget(self.display_settings_btn)
-        
-        display_row.addStretch()
-        proj_layout.addLayout(display_row)
-        
-        # Initialize display settings
-        self.density_gridsize = 35
-        self.density_colormap = 'YlOrRd'
-        self.density_scale = 'auto'  # 'auto' or (min, max) tuple
-        self.contour_levels = 8
-        self.contour_smoothing = 0.15
-        
+
         proj_group.setLayout(proj_layout)
         layout.addWidget(proj_group)
         
@@ -8758,141 +8865,13 @@ class ProjectionPanel(QWidget):
         """Return whether grid should be visible"""
         return self.show_grid_check.isChecked()
 
-    def get_display_mode(self):
-        """Return display mode: 'points', 'density', 'contours', or 'points+contours'"""
-        mode = self.display_mode.currentText().lower()
-        if 'density' in mode:
-            return 'density'
-        elif '+' in mode:
-            return 'points+contours'
-        elif 'contour' in mode:
-            return 'contours'
-        return 'points'
-    
-    def get_display_settings(self):
-        """Return display settings dict"""
-        return {
-            'density_gridsize': getattr(self, 'density_gridsize', 35),
-            'density_colormap': getattr(self, 'density_colormap', 'YlOrRd'),
-            'density_scale': getattr(self, 'density_scale', 'auto'),
-            'contour_levels': getattr(self, 'contour_levels', 8),
-            'contour_smoothing': getattr(self, 'contour_smoothing', 0.15)
-        }
-    
-    def set_density_gridsize(self, size):
-        """Set density map grid size (higher = finer)"""
-        self.density_gridsize = size
-        # Update checkmarks
-        for action in self.density_gridsize_group.actions():
-            action.setChecked(str(size) in action.text())
-        self.on_settings_changed()
-    
-    def set_density_colormap(self, cmap):
-        """Set density map colormap"""
-        self.density_colormap = cmap
-        # Update checkmarks
-        for action in self.density_cmap_group.actions():
-            action.setChecked(cmap in action.text() or 
-                            (cmap == 'YlOrRd' and 'Yellow' in action.text()))
-        self.on_settings_changed()
-    
-    def set_density_scale(self, scale):
-        """Set density map scale range - 'auto' or (min, max) tuple"""
-        self.density_scale = scale
-        # Update checkmarks for Auto vs Manual
-        self.density_scale_auto.setChecked(scale == 'auto')
-        self.density_scale_manual.setChecked(scale != 'auto')
-        self.on_settings_changed()
-    
-    def show_density_scale_dialog(self):
-        """Show dialog for manual density scale range"""
-        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton
-        
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Manual Scale Range")
-        dialog.setModal(True)
-        
-        layout = QVBoxLayout()
-        
-        # Get current values - try to get from canvas data range if available
-        current = getattr(self, 'density_scale', 'auto')
-        if isinstance(current, tuple):
-            current_min, current_max = current
-        else:
-            # Try to get the auto range from the canvas
-            current_min, current_max = 1, 50  # Default fallback
-            try:
-                parent = self.parent()
-                while parent and not hasattr(parent, 'canvas'):
-                    parent = parent.parent()
-                if parent and hasattr(parent, 'canvas'):
-                    canvas = parent.canvas
-                    if hasattr(canvas, 'density_hexbin') and canvas.density_hexbin is not None:
-                        # Get the actual data range from the density plot
-                        array = canvas.density_hexbin.get_array()
-                        if array is not None and len(array) > 0:
-                            valid = array[array > 0]  # Exclude zeros
-                            if len(valid) > 0:
-                                current_min = int(valid.min())
-                                current_max = int(valid.max())
-            except:
-                pass
-        
-        # Info label
-        info_label = QLabel(f"Current data range: {current_min} - {current_max}")
-        info_label.setStyleSheet("color: gray; font-style: italic;")
-        layout.addWidget(info_label)
-        
-        # Min value
-        min_row = QHBoxLayout()
-        min_row.addWidget(QLabel("Minimum:"))
-        min_spin = QSpinBox()
-        min_spin.setRange(0, 10000)
-        min_spin.setValue(current_min)
-        min_row.addWidget(min_spin)
-        layout.addLayout(min_row)
-        
-        # Max value
-        max_row = QHBoxLayout()
-        max_row.addWidget(QLabel("Maximum:"))
-        max_spin = QSpinBox()
-        max_spin.setRange(1, 10000)
-        max_spin.setValue(current_max)
-        max_row.addWidget(max_spin)
-        layout.addLayout(max_row)
-        
-        # Buttons
-        btn_row = QHBoxLayout()
-        ok_btn = QPushButton("OK")
-        ok_btn.clicked.connect(dialog.accept)
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.clicked.connect(dialog.reject)
-        btn_row.addWidget(ok_btn)
-        btn_row.addWidget(cancel_btn)
-        layout.addLayout(btn_row)
-        
-        dialog.setLayout(layout)
-        
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            self.set_density_scale((min_spin.value(), max_spin.value()))
-    
-    def set_contour_levels(self, levels):
-        """Set number of contour levels"""
-        self.contour_levels = levels
-        # Update checkmarks
-        for action in self.contour_levels_group.actions():
-            action.setChecked(str(levels) in action.text())
-        self.on_settings_changed()
-    
-    def set_contour_smoothing(self, smoothing):
-        """Set contour smoothing (KDE bandwidth)"""
-        self.contour_smoothing = smoothing
-        # Update checkmarks
-        labels = {0.08: "Sharp", 0.15: "Medium", 0.25: "Smooth", 0.4: "Very Smooth"}
-        for action in self.contour_smooth_group.actions():
-            action.setChecked(labels.get(smoothing, "") in action.text())
-        self.on_settings_changed()
-    
+    def get_grid_coordinate_system(self):
+        """Return grid coordinate system (None for same as plot)"""
+        text = self.grid_coord_combo.currentText()
+        if text == 'Same as plot':
+            return None
+        return text.lower()
+
     def reset_defaults(self):
         """Reset to default values"""
         self.proj_combo.setCurrentText('Hammer')
@@ -8900,12 +8879,6 @@ class ProjectionPanel(QWidget):
         self.show_grid_check.setChecked(True)
         self.h_resolution.setValue(30)
         self.v_resolution.setValue(15)
-        self.display_mode.setCurrentText('Points')
-        self.density_gridsize = 35
-        self.density_colormap = 'YlOrRd'
-        self.density_scale = 'auto'
-        self.contour_levels = 8
-        self.contour_smoothing = 0.15
     
     def mousePressEvent(self, event):
         """Handle mouse clicks - cycle projections if click is in empty area"""
@@ -12185,50 +12158,7 @@ class NEOVisualizer(QMainWindow):
         # Stretch pushes NEOlyzer controls to the right
         toolbar_row_layout.addStretch()
 
-        # Catalog selector (for alternate catalog comparison/blinking)
-        catalog_label = QLabel("Catalog:")
-        toolbar_row_layout.addWidget(catalog_label)
-
-        self.catalog_combo = QComboBox()
-        self.catalog_combo.setMinimumWidth(120)
-        self.catalog_combo.setMaximumWidth(180)
-        self.catalog_combo.setToolTip("Select catalog to display (Primary or alternate)")
-        self.catalog_combo.addItem("Primary", None)  # None = primary catalog
-        self.catalog_combo.currentIndexChanged.connect(self.on_catalog_changed)
-        toolbar_row_layout.addWidget(self.catalog_combo)
-
-        # Blink controls (for rapid alternation between catalogs)
-        self.blink_btn = QPushButton("Blink")
-        self.blink_btn.setCheckable(True)
-        self.blink_btn.setMaximumWidth(55)
-        self.blink_btn.setToolTip("Toggle blinking between selected catalog and 'Blink with' catalog")
-        self.blink_btn.clicked.connect(self.toggle_blink)
-        self.blink_btn.setEnabled(False)  # Disabled until alternate catalog exists
-        toolbar_row_layout.addWidget(self.blink_btn)
-
-        # "Blink with" selector - choose which catalog to blink against
-        blink_with_label = QLabel("with:")
-        toolbar_row_layout.addWidget(blink_with_label)
-
-        self.blink_with_combo = QComboBox()
-        self.blink_with_combo.setMinimumWidth(100)
-        self.blink_with_combo.setMaximumWidth(150)
-        self.blink_with_combo.setToolTip("Select catalog to blink against the currently selected catalog")
-        self.blink_with_combo.addItem("Primary", None)
-        self.blink_with_combo.currentIndexChanged.connect(self._update_catalog_indicator)
-        toolbar_row_layout.addWidget(self.blink_with_combo)
-
-        self.blink_rate_spin = QDoubleSpinBox()
-        self.blink_rate_spin.setRange(0.25, 5.0)
-        self.blink_rate_spin.setValue(0.5)
-        self.blink_rate_spin.setSingleStep(0.25)
-        self.blink_rate_spin.setSuffix(" s")
-        self.blink_rate_spin.setMaximumWidth(70)
-        self.blink_rate_spin.setToolTip("Blink interval in seconds")
-        self.blink_rate_spin.valueChanged.connect(self.on_blink_rate_changed)
-        toolbar_row_layout.addWidget(self.blink_rate_spin)
-
-        # Blink timer (created but not started)
+        # Blink timer (created here, controls in status bar)
         self.blink_timer = QTimer(self)
         self.blink_timer.timeout.connect(self.do_blink)
         self.blink_state = False  # False = showing primary, True = showing alternate
@@ -12237,7 +12167,85 @@ class NEOVisualizer(QMainWindow):
         self.blink_alternate_positions = None
         self.blink_cached_jd = None
 
-        # Vertical separator after catalog/blink controls
+        # Display mode selector (moved from ProjectionPanel)
+        display_label = QLabel("Display:")
+        toolbar_row_layout.addWidget(display_label)
+
+        self.display_mode_combo = QComboBox()
+        self.display_mode_combo.addItems(['Points', 'Density Map', 'Contours', 'Points + Contours'])
+        self.display_mode_combo.setCurrentText('Points')
+        self.display_mode_combo.setToolTip("How to visualize NEO positions:\n"
+                                           "Points: Individual symbols\n"
+                                           "Density Map: Heat map of clustering\n"
+                                           "Contours: Density contour lines\n"
+                                           "Points + Contours: Both overlaid")
+        self.display_mode_combo.currentTextChanged.connect(self.on_display_mode_changed)
+        toolbar_row_layout.addWidget(self.display_mode_combo)
+
+        # Settings button for density/contour options
+        self.display_settings_btn = QPushButton("⚙")
+        self.display_settings_btn.setMaximumWidth(25)
+        self.display_settings_btn.setToolTip("Display mode settings")
+        self.display_settings_menu = QMenu(self)
+
+        # Density map settings - flat menu with Grid Size submenu
+        density_menu = self.display_settings_menu.addMenu("Density Map")
+
+        # Grid size (higher = finer detail)
+        self.density_gridsize_group = density_menu.addMenu("Resolution")
+        for size, label in [(50, "Fine (50)"), (35, "Medium (35)"), (25, "Coarse (25)"), (15, "Very Coarse (15)")]:
+            action = self.density_gridsize_group.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(size == 35)  # Default medium
+            action.triggered.connect(lambda checked, s=size: self.set_density_gridsize(s))
+
+        # Colormap
+        self.density_cmap_group = density_menu.addMenu("Colormap")
+        for cmap, label in [('YlOrRd', 'Yellow-Orange-Red'), ('hot', 'Hot'), ('plasma', 'Plasma'),
+                            ('viridis', 'Viridis'), ('Blues', 'Blues'), ('Greys', 'Greys')]:
+            action = self.density_cmap_group.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(cmap == 'YlOrRd')  # Default
+            action.triggered.connect(lambda checked, c=cmap: self.set_density_colormap(c))
+
+        # Scale range - just Auto and Manual
+        self.density_scale_group = density_menu.addMenu("Scale Range")
+        self.density_scale_auto = self.density_scale_group.addAction("Auto")
+        self.density_scale_auto.setCheckable(True)
+        self.density_scale_auto.setChecked(True)
+        self.density_scale_auto.triggered.connect(lambda: self.set_density_scale('auto'))
+
+        self.density_scale_manual = self.density_scale_group.addAction("Manual...")
+        self.density_scale_manual.setCheckable(True)
+        self.density_scale_manual.triggered.connect(self.show_density_scale_dialog)
+
+        # Contour settings submenu
+        contour_menu = self.display_settings_menu.addMenu("Contours")
+        self.contour_levels_group = contour_menu.addMenu("Levels")
+        for levels, label in [(5, "Few (5)"), (8, "Medium (8)"), (12, "Many (12)"), (20, "Dense (20)")]:
+            action = self.contour_levels_group.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(levels == 8)  # Default
+            action.triggered.connect(lambda checked, l=levels: self.set_contour_levels(l))
+
+        self.contour_smooth_group = contour_menu.addMenu("Smoothing")
+        for smooth, label in [(0.08, "Sharp"), (0.15, "Medium"), (0.25, "Smooth"), (0.4, "Very Smooth")]:
+            action = self.contour_smooth_group.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(smooth == 0.15)  # Default
+            action.triggered.connect(lambda checked, s=smooth: self.set_contour_smoothing(s))
+
+        self.display_settings_btn.setMenu(self.display_settings_menu)
+        toolbar_row_layout.addWidget(self.display_settings_btn)
+
+        # Initialize display settings
+        self.density_gridsize = 35
+        self.density_colormap = 'YlOrRd'
+        self.density_scale = 'auto'  # 'auto' or (min, max) tuple
+        self.contour_levels = 8
+        self.contour_smoothing = 0.15
+
+        # Vertical separator after display controls
         vbar_catalog = QFrame()
         vbar_catalog.setFrameShape(QFrame.Shape.VLine)
         vbar_catalog.setFrameShadow(QFrame.Shadow.Sunken)
@@ -13017,18 +13025,48 @@ class NEOVisualizer(QMainWindow):
         self._status_label_default_style = self.status_label.styleSheet()
         self.statusbar.addWidget(self.status_label, 1)  # Stretch factor 1
 
-        # Play/Pause button (duplicate of controls panel button for convenience)
-        self.statusbar_play_btn = QPushButton("▶ Play")
-        self.statusbar_play_btn.setMaximumWidth(70)
-        self.statusbar_play_btn.clicked.connect(self.toggle_play_from_statusbar)
-        self.statusbar.addPermanentWidget(self.statusbar_play_btn)
-        
-        # Now button (sets time to current date/time)
-        statusbar_now_btn = QPushButton("Now")
-        statusbar_now_btn.setMaximumWidth(45)
-        statusbar_now_btn.setToolTip("Set to current date and time")
-        statusbar_now_btn.clicked.connect(self.set_to_now_from_statusbar)
-        self.statusbar.addPermanentWidget(statusbar_now_btn)
+        # Catalog selector (for alternate catalog comparison/blinking)
+        catalog_label = QLabel("Catalog:")
+        self.statusbar.addPermanentWidget(catalog_label)
+
+        self.catalog_combo = QComboBox()
+        self.catalog_combo.setMinimumWidth(120)
+        self.catalog_combo.setMaximumWidth(180)
+        self.catalog_combo.setToolTip("Select catalog to display (Primary or alternate)")
+        self.catalog_combo.addItem("Primary", None)  # None = primary catalog
+        self.catalog_combo.currentIndexChanged.connect(self.on_catalog_changed)
+        self.statusbar.addPermanentWidget(self.catalog_combo)
+
+        # Blink controls (for rapid alternation between catalogs)
+        self.blink_btn = QPushButton("Blink")
+        self.blink_btn.setCheckable(True)
+        self.blink_btn.setMaximumWidth(55)
+        self.blink_btn.setToolTip("Toggle blinking between selected catalog and 'Blink with' catalog")
+        self.blink_btn.clicked.connect(self.toggle_blink)
+        self.blink_btn.setEnabled(False)  # Disabled until alternate catalog exists
+        self.statusbar.addPermanentWidget(self.blink_btn)
+
+        # "Blink with" selector - choose which catalog to blink against
+        blink_with_label = QLabel("with:")
+        self.statusbar.addPermanentWidget(blink_with_label)
+
+        self.blink_with_combo = QComboBox()
+        self.blink_with_combo.setMinimumWidth(100)
+        self.blink_with_combo.setMaximumWidth(150)
+        self.blink_with_combo.setToolTip("Select catalog to blink against the currently selected catalog")
+        self.blink_with_combo.addItem("Primary", None)
+        self.blink_with_combo.currentIndexChanged.connect(self._update_catalog_indicator)
+        self.statusbar.addPermanentWidget(self.blink_with_combo)
+
+        self.blink_rate_spin = QDoubleSpinBox()
+        self.blink_rate_spin.setRange(0.25, 5.0)
+        self.blink_rate_spin.setValue(0.5)
+        self.blink_rate_spin.setSingleStep(0.25)
+        self.blink_rate_spin.setSuffix(" s")
+        self.blink_rate_spin.setMaximumWidth(70)
+        self.blink_rate_spin.setToolTip("Blink interval in seconds")
+        self.blink_rate_spin.valueChanged.connect(self.on_blink_rate_changed)
+        self.statusbar.addPermanentWidget(self.blink_rate_spin)
 
         # Separator
         sep1 = QLabel("│")
@@ -13407,8 +13445,6 @@ class NEOVisualizer(QMainWindow):
 
             # Disable play button during blink
             self.controls_panel.play_btn.setEnabled(False)
-            if hasattr(self, 'statusbar_play_btn'):
-                self.statusbar_play_btn.setEnabled(False)
 
             # Store both catalog IDs and info for blinking
             self.blink_catalog_a_id = catalog_a_id
@@ -13456,8 +13492,6 @@ class NEOVisualizer(QMainWindow):
             self.blink_cached_jd = None
             # Re-enable play button
             self.controls_panel.play_btn.setEnabled(True)
-            if hasattr(self, 'statusbar_play_btn'):
-                self.statusbar_play_btn.setEnabled(True)
 
             # Reset to catalog A (the originally selected catalog before blink)
             restore_index = getattr(self, 'blink_catalog_a_index', 0)
@@ -13584,6 +13618,117 @@ class NEOVisualizer(QMainWindow):
             show_all_neos
         )
 
+    def on_display_mode_changed(self, mode_text):
+        """Handle display mode change from toolbar"""
+        self.update_projection()
+
+    def set_density_gridsize(self, size):
+        """Set density map grid size"""
+        self.density_gridsize = size
+        for action in self.density_gridsize_group.actions():
+            action.setChecked(str(size) in action.text())
+        self.update_projection()
+
+    def set_density_colormap(self, cmap):
+        """Set density map colormap"""
+        self.density_colormap = cmap
+        for action in self.density_cmap_group.actions():
+            action.setChecked(cmap in action.text() or
+                              (cmap == 'YlOrRd' and 'Yellow' in action.text()))
+        self.update_projection()
+
+    def set_density_scale(self, scale):
+        """Set density map scale range"""
+        self.density_scale = scale
+        self.density_scale_auto.setChecked(scale == 'auto')
+        self.density_scale_manual.setChecked(scale != 'auto')
+        self.update_projection()
+
+    def show_density_scale_dialog(self):
+        """Show dialog for manual density scale range"""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manual Scale Range")
+        dialog.setModal(True)
+
+        layout = QVBoxLayout()
+
+        current = getattr(self, 'density_scale', 'auto')
+        if isinstance(current, tuple):
+            min_val, max_val = current
+        else:
+            min_val, max_val = 1, 100
+
+        min_row = QHBoxLayout()
+        min_row.addWidget(QLabel("Min:"))
+        min_spin = QSpinBox()
+        min_spin.setRange(0, 1000)
+        min_spin.setValue(int(min_val))
+        min_row.addWidget(min_spin)
+        layout.addLayout(min_row)
+
+        max_row = QHBoxLayout()
+        max_row.addWidget(QLabel("Max:"))
+        max_spin = QSpinBox()
+        max_spin.setRange(1, 10000)
+        max_spin.setValue(int(max_val))
+        max_row.addWidget(max_spin)
+        layout.addLayout(max_row)
+
+        btn_row = QHBoxLayout()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(dialog.accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(dialog.reject)
+        btn_row.addWidget(ok_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+        dialog.setLayout(layout)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_density_scale((min_spin.value(), max_spin.value()))
+
+    def set_contour_levels(self, levels):
+        """Set contour levels"""
+        self.contour_levels = levels
+        for action in self.contour_levels_group.actions():
+            action.setChecked(str(levels) in action.text())
+        self.update_projection()
+
+    def set_contour_smoothing(self, smooth):
+        """Set contour smoothing"""
+        self.contour_smoothing = smooth
+        for action in self.contour_smooth_group.actions():
+            action.setChecked(str(smooth) in action.text() or
+                              (smooth == 0.08 and 'Sharp' in action.text()) or
+                              (smooth == 0.15 and 'Medium' in action.text()) or
+                              (smooth == 0.25 and 'Smooth' in action.text() and 'Very' not in action.text()) or
+                              (smooth == 0.4 and 'Very' in action.text()))
+        self.update_projection()
+
+    def get_display_mode(self):
+        """Return display mode from toolbar"""
+        mode = self.display_mode_combo.currentText().lower()
+        if 'density' in mode:
+            return 'density'
+        elif '+' in mode:
+            return 'points+contours'
+        elif 'contour' in mode:
+            return 'contours'
+        return 'points'
+
+    def get_display_settings(self):
+        """Return display settings dict"""
+        return {
+            'density_gridsize': getattr(self, 'density_gridsize', 35),
+            'density_colormap': getattr(self, 'density_colormap', 'YlOrRd'),
+            'density_scale': getattr(self, 'density_scale', 'auto'),
+            'contour_levels': getattr(self, 'contour_levels', 8),
+            'contour_smoothing': getattr(self, 'contour_smoothing', 0.15)
+        }
+
     def on_blink_rate_changed(self, value):
         """Handle blink rate change"""
         if self.blink_timer.isActive():
@@ -13707,16 +13852,6 @@ class NEOVisualizer(QMainWindow):
         n_objects = len(asteroids) if asteroids else 0
         self.status_label.setText(f"Blinking: {current_name} ({n_objects} objects)")
 
-    def toggle_play_from_statusbar(self):
-        """Toggle animation from statusbar button"""
-        self.controls_panel.toggle_play()
-        # Sync statusbar button text with controls panel button
-        self.statusbar_play_btn.setText(self.controls_panel.play_btn.text())
-    
-    def set_to_now_from_statusbar(self):
-        """Set time to now from statusbar button"""
-        self.time_panel.set_to_now()
-    
     def setup_keyboard_shortcuts(self):
         """Set up keyboard shortcuts for time navigation.
 
@@ -13874,16 +14009,19 @@ class NEOVisualizer(QMainWindow):
         coord = self.proj_panel.get_coordinate_system()
         cmap = self.colorbar_panel.get_colormap()
         h_res, v_res = self.proj_panel.get_resolution()
-        display_mode = self.proj_panel.get_display_mode()
+        display_mode = self.get_display_mode()
         show_grid = self.proj_panel.get_grid_visible()
+
+        grid_coord = self.proj_panel.get_grid_coordinate_system()
 
         self.canvas.set_projection(proj)
         self.canvas.set_coordinate_system(coord)
         self.canvas.set_colormap(cmap)
         self.canvas.set_resolution(h_res, v_res)
         self.canvas.set_grid_visible(show_grid)
+        self.canvas.set_grid_coordinate_system(grid_coord)
         self.canvas.set_display_mode(display_mode)
-        
+
         # Force overlay redraw on projection/coordinate change
         if hasattr(self.canvas, 'last_jd'):
             self.canvas.last_jd = None
@@ -13900,12 +14038,11 @@ class NEOVisualizer(QMainWindow):
             return
         
         try:
-            # Update display mode and settings from projection panel
-            if hasattr(self, 'proj_panel'):
-                display_mode = self.proj_panel.get_display_mode()
-                self.canvas.set_display_mode(display_mode)
-                display_settings = self.proj_panel.get_display_settings()
-                self.canvas.display_settings = display_settings
+            # Update display mode and settings
+            display_mode = self.get_display_mode()
+            self.canvas.set_display_mode(display_mode)
+            display_settings = self.get_display_settings()
+            self.canvas.display_settings = display_settings
             
             jd = self.time_panel.current_jd
             
@@ -14549,7 +14686,15 @@ class NEOVisualizer(QMainWindow):
             
             # Projection panel (map settings only)
             self.proj_panel.reset_defaults()
-            
+
+            # Display mode (now in toolbar)
+            self.display_mode_combo.setCurrentText('Points')
+            self.density_gridsize = 35
+            self.density_colormap = 'YlOrRd'
+            self.density_scale = 'auto'
+            self.contour_levels = 8
+            self.contour_smoothing = 0.15
+
             # Colorbar panel (colorbar and symbol size)
             self.colorbar_panel.reset_defaults()
             
