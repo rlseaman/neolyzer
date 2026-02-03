@@ -1936,7 +1936,8 @@ class SkyMapCanvas(FigureCanvas):
             
             # Get sun/moon display settings
             sunmoon_settings = getattr(self, 'sunmoon_settings', {'show_sun': True,
-                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
+                                    'solar_elongation_enabled': False, 'solar_radius_east': 45.0,
+                                    'solar_radius_west': 45.0,
                                     'solar_color': '#FFD700', 'solar_show_bounds': True,
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
@@ -1952,67 +1953,71 @@ class SkyMapCanvas(FigureCanvas):
                                          markeredgecolor='red', markeredgewidth=1.5, zorder=17)[0]
                 self.overlay_artists.append(sun_marker)
 
-            # Draw solar elongation exclusion circle if enabled
+            # Draw solar elongation exclusion boundary if enabled (asymmetric east/west)
             if sunmoon_settings.get('solar_elongation_enabled', False) and sunmoon_settings.get('solar_show_bounds', True):
                 try:
-                    solar_radius = sunmoon_settings.get('solar_radius', 45.0)
+                    # Get separate east and west limits (with legacy fallback)
+                    legacy_radius = sunmoon_settings.get('solar_radius', 45.0)
+                    solar_radius_east = sunmoon_settings.get('solar_radius_east', legacy_radius)
+                    solar_radius_west = sunmoon_settings.get('solar_radius_west', legacy_radius)
                     solar_color = sunmoon_settings.get('solar_color', '#FFD700')
 
+                    def draw_arc_segment(cx, cy, wrap_limit, is_radians=True):
+                        """Helper to draw arc with wrap-around handling"""
+                        if is_radians:
+                            cx_wrapped = np.where(cx < -np.pi, cx + 2*np.pi, cx)
+                            cx_wrapped = np.where(cx_wrapped > np.pi, cx_wrapped - 2*np.pi, cx_wrapped)
+                            jumps = np.abs(np.diff(cx_wrapped)) > np.pi
+                        else:
+                            cx_wrapped = np.where(cx < -180, cx + 360, cx)
+                            cx_wrapped = np.where(cx_wrapped > 180, cx_wrapped - 360, cx_wrapped)
+                            jumps = np.abs(np.diff(cx_wrapped)) > 180
+
+                        if np.any(jumps):
+                            jump_indices = np.where(jumps)[0] + 1
+                            segments_x = np.split(cx_wrapped, jump_indices)
+                            segments_y = np.split(cy, jump_indices)
+                            for seg_x, seg_y in zip(segments_x, segments_y):
+                                if len(seg_x) > 1:
+                                    line = self.ax.plot(seg_x, seg_y, '--', color=solar_color,
+                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
+                                    self.overlay_artists.append(line)
+                        else:
+                            line = self.ax.plot(cx_wrapped, cy, '--', color=solar_color,
+                                               linewidth=1.5, alpha=0.7, zorder=16)[0]
+                            self.overlay_artists.append(line)
+
                     if self.projection in ['hammer', 'aitoff', 'mollweide']:
-                        # Draw dashed circle in radians, handling wrap-around at ±π
-                        circle_theta = np.linspace(0, 2*np.pi, 144)
-                        radius_rad = np.radians(solar_radius)
-                        cx = lon_sun_rad + radius_rad * np.cos(circle_theta)
-                        cy = lat_sun_rad + radius_rad * np.sin(circle_theta)
+                        # Radians mode - east arc (left side: higher RA)
+                        # θ from -π/2 to π/2 gives cos(θ) > 0, which adds to longitude (east)
+                        theta_east = np.linspace(-np.pi/2, np.pi/2, 73)
+                        radius_east_rad = np.radians(solar_radius_east)
+                        cx_east = lon_sun_rad + radius_east_rad * np.cos(theta_east)
+                        cy_east = lat_sun_rad + radius_east_rad * np.sin(theta_east)
+                        draw_arc_segment(cx_east, cy_east, np.pi, is_radians=True)
 
-                        # Handle wrap-around: split into segments that don't cross ±π
-                        # Wrap longitudes to [-π, π] range
-                        cx_wrapped = np.where(cx < -np.pi, cx + 2*np.pi, cx)
-                        cx_wrapped = np.where(cx_wrapped > np.pi, cx_wrapped - 2*np.pi, cx_wrapped)
-
-                        # Find discontinuities (large jumps indicate wrap-around)
-                        jumps = np.abs(np.diff(cx_wrapped)) > np.pi
-                        if np.any(jumps):
-                            # Split at discontinuities and draw separate segments
-                            jump_indices = np.where(jumps)[0] + 1
-                            segments_x = np.split(cx_wrapped, jump_indices)
-                            segments_y = np.split(cy, jump_indices)
-                            for seg_x, seg_y in zip(segments_x, segments_y):
-                                if len(seg_x) > 1:
-                                    line = self.ax.plot(seg_x, seg_y, '--', color=solar_color,
-                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
-                                    self.overlay_artists.append(line)
-                        else:
-                            solar_circle = self.ax.plot(cx_wrapped, cy, '--', color=solar_color,
-                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
-                            self.overlay_artists.append(solar_circle)
+                        # West arc (right side: lower RA)
+                        # θ from π/2 to 3π/2 gives cos(θ) < 0, which subtracts from longitude (west)
+                        theta_west = np.linspace(np.pi/2, 3*np.pi/2, 73)
+                        radius_west_rad = np.radians(solar_radius_west)
+                        cx_west = lon_sun_rad + radius_west_rad * np.cos(theta_west)
+                        cy_west = lat_sun_rad + radius_west_rad * np.sin(theta_west)
+                        draw_arc_segment(cx_west, cy_west, np.pi, is_radians=True)
                     else:
-                        # Rectangular - use degrees, handle wrap-around at ±180
-                        circle_theta = np.linspace(0, 2*np.pi, 144)
-                        cx = lon_sun_rad + solar_radius * np.cos(circle_theta)
-                        cy = lat_sun_rad + solar_radius * np.sin(circle_theta)
+                        # Rectangular - degrees mode
+                        # East arc (left side in display)
+                        theta_east = np.linspace(-np.pi/2, np.pi/2, 73)
+                        cx_east = lon_sun_rad + solar_radius_east * np.cos(theta_east)
+                        cy_east = lat_sun_rad + solar_radius_east * np.sin(theta_east)
+                        draw_arc_segment(cx_east, cy_east, 180, is_radians=False)
 
-                        # Wrap longitudes to [-180, 180] range
-                        cx_wrapped = np.where(cx < -180, cx + 360, cx)
-                        cx_wrapped = np.where(cx_wrapped > 180, cx_wrapped - 360, cx_wrapped)
-
-                        # Find discontinuities
-                        jumps = np.abs(np.diff(cx_wrapped)) > 180
-                        if np.any(jumps):
-                            jump_indices = np.where(jumps)[0] + 1
-                            segments_x = np.split(cx_wrapped, jump_indices)
-                            segments_y = np.split(cy, jump_indices)
-                            for seg_x, seg_y in zip(segments_x, segments_y):
-                                if len(seg_x) > 1:
-                                    line = self.ax.plot(seg_x, seg_y, '--', color=solar_color,
-                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
-                                    self.overlay_artists.append(line)
-                        else:
-                            solar_circle = self.ax.plot(cx_wrapped, cy, '--', color=solar_color,
-                                                       linewidth=1.5, alpha=0.7, zorder=16)[0]
-                            self.overlay_artists.append(solar_circle)
+                        # West arc (right side in display)
+                        theta_west = np.linspace(np.pi/2, 3*np.pi/2, 73)
+                        cx_west = lon_sun_rad + solar_radius_west * np.cos(theta_west)
+                        cy_west = lat_sun_rad + solar_radius_west * np.sin(theta_west)
+                        draw_arc_segment(cx_west, cy_west, 180, is_radians=False)
                 except Exception as e:
-                    logger.debug(f"Could not draw solar exclusion circle: {e}")
+                    logger.debug(f"Could not draw solar exclusion boundary: {e}")
 
             # === MOON POSITION AND PHASE ===
             if sunmoon_settings.get('show_moon', True):
@@ -2327,6 +2332,9 @@ class SkyMapCanvas(FigureCanvas):
             # === HORIZON AND TWILIGHT BOUNDARIES ===
             horizon_settings = getattr(self, 'horizon_settings', None)
             if horizon_settings and horizon_settings.get('enabled', False):
+                # Note: Observable region shading is drawn separately in update_plot
+                # (not cached) because it depends on time-varying horizon position
+                # Draw horizon boundary lines
                 try:
                     self._draw_horizon_boundaries(jd, horizon_settings)
                 except Exception as e:
@@ -2653,6 +2661,228 @@ class SkyMapCanvas(FigureCanvas):
         
         logger.debug(f"Drew horizon boundaries for observer at ({observer_lat:.2f}, {observer_lon:.2f})")
 
+    def _clear_observable_shading(self):
+        """Clear any existing observable region shading."""
+        cleared = False
+        # Clear tracked shading artists
+        if hasattr(self, '_shading_artists') and self._shading_artists:
+            for artist in self._shading_artists:
+                try:
+                    artist.set_visible(False)
+                    artist.remove()
+                    cleared = True
+                except:
+                    pass
+            self._shading_artists = []
+        # Force canvas redraw if we cleared something
+        if cleared:
+            try:
+                self.draw_idle()
+            except:
+                pass
+
+    def _draw_observable_shading(self, jd, horizon_settings):
+        """Draw shaded region showing observable sky area.
+
+        Shades the intersection of all enabled constraints:
+        - Above horizon (altitude > 0°)
+        - Within declination limits
+        - Outside solar elongation zone
+        - Outside lunar exclusion zone (optional)
+        - Outside galactic exclusion zone (optional)
+
+        Uses day/night coloring based on Sun altitude.
+        """
+        SHADE_ZORDER = 0  # Behind everything
+
+        # Clear any previous shading first
+        self._clear_observable_shading()
+        self._shading_artists = []  # Ensure list exists
+
+        shade_night_color = horizon_settings.get('shade_night_color', '#E8E8E8')
+        shade_day_color = horizon_settings.get('shade_day_color', '#FFFDE8')
+
+        observer_lat = horizon_settings.get('observer_lat', 32.2226)
+        observer_lon = horizon_settings.get('observer_lon', -110.9747)
+
+        # Compute LST for altitude calculations
+        T = (jd - 2451545.0) / 36525.0
+        GMST = 280.46061837 + 360.98564736629 * (jd - 2451545.0) + \
+               0.000387933 * T**2 - T**3 / 38710000.0
+        GMST = GMST % 360
+        LST_deg = (GMST + observer_lon) % 360
+        lat_obs_rad = np.radians(observer_lat)
+
+        # Grid resolution (higher = smoother boundaries but slower)
+        n_lon, n_lat = 360, 180
+
+        # Create grid in current coordinate system
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            lon_grid = np.linspace(-180, 180, n_lon)
+            lat_grid = np.linspace(-90, 90, n_lat)
+        else:
+            lon_grid = np.linspace(-180, 180, n_lon)
+            lat_grid = np.linspace(-90, 90, n_lat)
+
+        lon_2d, lat_2d = np.meshgrid(lon_grid, lat_grid)
+
+        # Transform grid to equatorial for constraint checking
+        if self.coord_system == 'ecliptic':
+            ra_2d, dec_2d = CoordinateTransformer.ecliptic_to_equatorial(lon_2d, lat_2d)
+        elif self.coord_system == 'galactic':
+            ra_2d, dec_2d = CoordinateTransformer.galactic_to_equatorial(lon_2d, lat_2d)
+        elif self.coord_system == 'opposition':
+            # Opposition is ecliptic centered on anti-Sun
+            ecl_lon = lon_2d + getattr(self, 'sun_ecl_lon', 0) + 180
+            ecl_lon = np.where(ecl_lon > 180, ecl_lon - 360, ecl_lon)
+            ecl_lon = np.where(ecl_lon < -180, ecl_lon + 360, ecl_lon)
+            ra_2d, dec_2d = CoordinateTransformer.ecliptic_to_equatorial(ecl_lon, lat_2d)
+        else:  # equatorial
+            ra_2d, dec_2d = lon_2d.copy(), lat_2d.copy()
+            # Adjust for RA convention (0-360)
+            ra_2d = np.where(ra_2d < 0, ra_2d + 360, ra_2d)
+
+        # Start with all True mask
+        observable_mask = np.ones_like(lon_2d, dtype=bool)
+
+        # === HORIZON CONSTRAINT (altitude > 0°) ===
+        # Compute altitude for each point
+        # Hour angle: H = LST - RA
+        H_deg = LST_deg - ra_2d
+        H_rad = np.radians(H_deg)
+        dec_rad = np.radians(dec_2d)
+
+        # sin(alt) = sin(dec)*sin(lat) + cos(dec)*cos(lat)*cos(H)
+        sin_alt = np.sin(dec_rad) * np.sin(lat_obs_rad) + \
+                  np.cos(dec_rad) * np.cos(lat_obs_rad) * np.cos(H_rad)
+        altitude = np.degrees(np.arcsin(np.clip(sin_alt, -1, 1)))
+
+        horizon_mask = altitude > 0
+        observable_mask &= horizon_mask
+
+        # === DECLINATION LIMITS CONSTRAINT ===
+        dec_limit_settings = getattr(self, 'dec_limit_settings', None)
+        if dec_limit_settings and dec_limit_settings.get('enabled', False):
+            dec_north = dec_limit_settings.get('north', 60.0)
+            dec_south = dec_limit_settings.get('south', -25.0)
+            dec_mask = (dec_2d <= dec_north) & (dec_2d >= dec_south)
+            observable_mask &= dec_mask
+
+        # === SOLAR ELONGATION CONSTRAINT ===
+        sunmoon_settings = getattr(self, 'sunmoon_settings', None)
+        if sunmoon_settings and sunmoon_settings.get('solar_elongation_enabled', False):
+            sun_ra = getattr(self, 'sun_ra', None)
+            sun_dec = getattr(self, 'sun_dec', None)
+            if sun_ra is not None and sun_dec is not None:
+                # Get east/west limits
+                legacy_radius = sunmoon_settings.get('solar_radius', 45.0)
+                solar_radius_east = sunmoon_settings.get('solar_radius_east', legacy_radius)
+                solar_radius_west = sunmoon_settings.get('solar_radius_west', legacy_radius)
+
+                # Angular separation from Sun
+                ra_rad = np.radians(ra_2d)
+                dec_r = np.radians(dec_2d)
+                sun_ra_rad = np.radians(sun_ra)
+                sun_dec_rad = np.radians(sun_dec)
+
+                d_ra = ra_rad - sun_ra_rad
+                a = np.sin((dec_r - sun_dec_rad)/2)**2 + \
+                    np.cos(dec_r) * np.cos(sun_dec_rad) * np.sin(d_ra/2)**2
+                angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+
+                # Determine east/west
+                d_ra_deg = np.degrees(d_ra)
+                d_ra_deg = np.where(d_ra_deg > 180, d_ra_deg - 360, d_ra_deg)
+                d_ra_deg = np.where(d_ra_deg < -180, d_ra_deg + 360, d_ra_deg)
+                is_west_in_plot = d_ra_deg > 0
+
+                solar_limit = np.where(is_west_in_plot, solar_radius_west, solar_radius_east)
+                solar_mask = angular_sep >= solar_limit
+                observable_mask &= solar_mask
+
+        # === LUNAR EXCLUSION CONSTRAINT (optional) ===
+        if sunmoon_settings and sunmoon_settings.get('lunar_exclusion_enabled', False):
+            moon_ra = getattr(self, 'moon_ra', None)
+            moon_dec = getattr(self, 'moon_dec', None)
+            if moon_ra is not None and moon_dec is not None:
+                lunar_radius = sunmoon_settings.get('lunar_radius', 30.0)
+                # Scale by illumination (moon_phase is set when moon is drawn)
+                illumination = getattr(self, 'moon_phase', 0.5)
+                scaled_radius = lunar_radius * illumination
+
+                ra_rad = np.radians(ra_2d)
+                dec_r = np.radians(dec_2d)
+                moon_ra_rad = np.radians(moon_ra)
+                moon_dec_rad = np.radians(moon_dec)
+
+                d_ra = ra_rad - moon_ra_rad
+                a = np.sin((dec_r - moon_dec_rad)/2)**2 + \
+                    np.cos(dec_r) * np.cos(moon_dec_rad) * np.sin(d_ra/2)**2
+                moon_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+
+                lunar_mask = moon_sep >= scaled_radius
+                observable_mask &= lunar_mask
+
+        # === GALACTIC EXCLUSION CONSTRAINT (optional) ===
+        galactic_settings = getattr(self, 'galactic_settings', None)
+        if galactic_settings and galactic_settings.get('enabled', False):
+            gal_offset = galactic_settings.get('offset', 15.0)
+            # Transform to galactic to check latitude
+            gal_lon, gal_lat = CoordinateTransformer.equatorial_to_galactic(ra_2d, dec_2d)
+            galactic_mask = np.abs(gal_lat) >= gal_offset
+            observable_mask &= galactic_mask
+
+        # === DETERMINE DAY/NIGHT ===
+        # Compute Sun altitude at observer
+        sun_ra = getattr(self, 'sun_ra', None)
+        sun_dec = getattr(self, 'sun_dec', None)
+        is_daytime = False
+        if sun_ra is not None and sun_dec is not None:
+            H_sun = np.radians(LST_deg - sun_ra)
+            sin_alt_sun = np.sin(np.radians(sun_dec)) * np.sin(lat_obs_rad) + \
+                          np.cos(np.radians(sun_dec)) * np.cos(lat_obs_rad) * np.cos(H_sun)
+            sun_altitude = np.degrees(np.arcsin(np.clip(sin_alt_sun, -1, 1)))
+            is_daytime = sun_altitude > 0
+
+        shade_color = shade_day_color if is_daytime else shade_night_color
+
+        # === RENDER THE SHADING ===
+        if not np.any(observable_mask):
+            return  # Nothing to shade
+
+        try:
+            from matplotlib.colors import ListedColormap, to_rgba
+
+            # Create a single-color colormap with the shade color and alpha
+            rgba = to_rgba(shade_color, alpha=0.3)
+            cmap = ListedColormap([rgba])
+
+            # Use masked array with pcolormesh - masked values are transparent
+            masked_data = np.ma.array(np.ones_like(observable_mask, dtype=float),
+                                      mask=~observable_mask)
+
+            if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                # Convert to radians, flip longitude for East-left convention
+                lon_rad = np.radians(-lon_2d)
+                lat_rad = np.radians(lat_2d)
+
+                mesh = self.ax.pcolormesh(lon_rad, lat_rad, masked_data,
+                                         cmap=cmap, vmin=0, vmax=1,
+                                         shading='auto', zorder=SHADE_ZORDER)
+                self._shading_artists.append(mesh)
+                self.overlay_artists.append(mesh)
+            else:
+                # Rectangular projection
+                mesh = self.ax.pcolormesh(lon_2d, lat_2d, masked_data,
+                                         cmap=cmap, vmin=0, vmax=1,
+                                         shading='auto', zorder=SHADE_ZORDER)
+                self._shading_artists.append(mesh)
+                self.overlay_artists.append(mesh)
+
+            logger.debug(f"Drew observable shading ({'day' if is_daytime else 'night'})")
+        except Exception as e:
+            logger.debug(f"Could not draw observable shading: {e}")
+
     def _draw_constellation_boundaries(self, settings):
         """Draw IAU constellation boundary lines.
 
@@ -2882,6 +3112,34 @@ class SkyMapCanvas(FigureCanvas):
                     self.coord_system == 'opposition'):
                     self._draw_transformed_grid()
 
+            # Observable region shading updates every frame (not cached)
+            # because it depends on horizon position which changes with time
+            horizon_settings = getattr(self, 'horizon_settings', None)
+            shade_enabled = (horizon_settings and horizon_settings.get('enabled', False)
+                           and horizon_settings.get('shade_enabled', False))
+            if shade_enabled:
+                is_animating = False
+                try:
+                    parent = self.parent()
+                    if parent and hasattr(parent, 'time_panel') and hasattr(parent.time_panel, 'animation_timer'):
+                        is_animating = parent.time_panel.animation_timer.isActive()
+                except:
+                    pass
+                if not is_animating:
+                    try:
+                        self._draw_observable_shading(jd, horizon_settings)
+                    except Exception as e:
+                        logger.debug(f"Could not draw observable shading: {e}")
+            else:
+                # Clear any existing shading when disabled
+                if hasattr(self, '_shading_artists'):
+                    for artist in self._shading_artists:
+                        try:
+                            artist.remove()
+                        except:
+                            pass
+                    self._shading_artists = []
+
         if _profile:
             _times['overlays'] = time.time() - _t0
 
@@ -3017,7 +3275,10 @@ class SkyMapCanvas(FigureCanvas):
         sunmoon_settings = getattr(self, 'sunmoon_settings', None)
         if sunmoon_settings and sunmoon_settings.get('solar_elongation_enabled', False):
             if hasattr(self, 'sun_ra') and hasattr(self, 'sun_dec') and self.sun_ra is not None:
-                solar_radius = sunmoon_settings.get('solar_radius', 45.0)
+                # Get separate east and west limits (with legacy fallback)
+                legacy_radius = sunmoon_settings.get('solar_radius', 45.0)
+                solar_radius_east = sunmoon_settings.get('solar_radius_east', legacy_radius)
+                solar_radius_west = sunmoon_settings.get('solar_radius_west', legacy_radius)
 
                 # Calculate angular separation from Sun for all objects
                 ra = np.radians(positions[:, 1])
@@ -3030,14 +3291,25 @@ class SkyMapCanvas(FigureCanvas):
                 a = np.sin((dec - sun_dec_rad)/2)**2 + np.cos(dec) * np.cos(sun_dec_rad) * np.sin(d_ra/2)**2
                 angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
 
-                # Keep only objects outside the solar exclusion zone
-                solar_mask = angular_sep >= solar_radius
+                # Determine east/west: normalize RA difference to [-180, 180]
+                # Positive d_ra_deg means object RA > Sun RA
+                # In sky display (RA increases leftward), this appears on LEFT = east side
+                # But in matplotlib coords, positive offset = right side of plot
+                # So we need to invert: objects with positive d_ra appear on west side of plot
+                d_ra_deg = np.degrees(d_ra)
+                d_ra_deg = np.where(d_ra_deg > 180, d_ra_deg - 360, d_ra_deg)
+                d_ra_deg = np.where(d_ra_deg < -180, d_ra_deg + 360, d_ra_deg)
+                is_west_in_plot = d_ra_deg > 0  # Higher RA = west side in matplotlib coords
+
+                # Apply appropriate limit based on plot position
+                solar_limit = np.where(is_west_in_plot, solar_radius_west, solar_radius_east)
+                solar_mask = angular_sep >= solar_limit
                 positions = positions[solar_mask]
                 if len(positions) == 0:
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
                     self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
-                    self.stats_text.set_text(f'No objects outside {solar_radius:.0f}° solar elongation')
+                    self.stats_text.set_text(f'No objects outside solar elongation (E:{solar_radius_east:.0f}° W:{solar_radius_west:.0f}°)')
                     if self.trailing_settings.get('enabled', False):
                         self._clear_trails()
                         self.trail_history.clear()
@@ -6358,6 +6630,13 @@ class TimeControlPanel(QWidget):
     
     def set_to_now(self):
         self.datetime_edit.setDateTime(QDateTime.currentDateTimeUtc())
+        # Force overlay redraw by clearing cache (shading will redraw naturally)
+        parent = self.parent()
+        while parent and not hasattr(parent, 'canvas'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'canvas'):
+            if hasattr(parent.canvas, 'last_jd'):
+                parent.canvas.last_jd = None
     
     def set_jd(self, jd):
         """Set the datetime from a Julian Date"""
@@ -6531,6 +6810,8 @@ class ControlsPanel(QWidget):
                 self.parent_window.canvas.animation_playing = False
                 self.parent_window.canvas.animation_paused = True  # Mark as paused
                 self.parent_window.canvas._hysteresis_enabled = False  # Disable hysteresis
+                # Force full overlay redraw including shading
+                self.parent_window.canvas.last_jd = None
                 # Trigger redraw to restore display mode (density/contours)
                 self.parent_window.update_display()
             # Re-enable blink button when animation stops
@@ -6589,6 +6870,9 @@ class ControlsPanel(QWidget):
                     self.parent_window.canvas._clear_trails()
                     self.parent_window.canvas._visible_objects.clear()  # Clear hysteresis state
                     logger.debug("TRAIL: Cleared for fresh animation start")
+                # Always clear observable region shading during animation (it's disabled for performance)
+                if hasattr(self.parent_window.canvas, '_clear_observable_shading'):
+                    self.parent_window.canvas._clear_observable_shading()
                 else:
                     logger.debug("TRAIL: Resuming from pause - preserving trails")
 
@@ -6622,6 +6906,8 @@ class ControlsPanel(QWidget):
             self.parent_window.canvas.animation_paused = False  # Not paused - fully stopped
             self.parent_window.canvas._hysteresis_enabled = False
             self.parent_window.canvas._visible_objects.clear()
+            # Force full overlay redraw including shading on next update
+            self.parent_window.canvas.last_jd = None
 
     def refresh_scripts(self):
         """Refresh the list of available recording scripts"""
@@ -9856,18 +10142,27 @@ class SettingsDialog(QDialog):
         solar_elong_row.addStretch()
         sunmoon_layout.addLayout(solar_elong_row)
 
-        # Solar elongation radius row (indented)
+        # Solar elongation radius row (indented) - separate east and west limits
         solar_radius_row = QHBoxLayout()
         solar_radius_row.addSpacing(20)
-        solar_radius_row.addWidget(QLabel("Solar elongation:"))
-        self.solar_radius_spin = QDoubleSpinBox()
-        self.solar_radius_spin.setRange(5.0, 180.0)
-        self.solar_radius_spin.setValue(45.0)
-        self.solar_radius_spin.setSingleStep(5.0)
-        self.solar_radius_spin.setSuffix("°")
-        self.solar_radius_spin.setToolTip("Filter objects within this angular distance of the Sun")
-        self.solar_radius_spin.valueChanged.connect(self.on_sunmoon_changed)
-        solar_radius_row.addWidget(self.solar_radius_spin)
+        solar_radius_row.addWidget(QLabel("East:"))
+        self.solar_radius_east_spin = QDoubleSpinBox()
+        self.solar_radius_east_spin.setRange(5.0, 180.0)
+        self.solar_radius_east_spin.setValue(45.0)
+        self.solar_radius_east_spin.setSingleStep(5.0)
+        self.solar_radius_east_spin.setSuffix("°")
+        self.solar_radius_east_spin.setToolTip("Eastern elongation limit (morning sky)")
+        self.solar_radius_east_spin.valueChanged.connect(self.on_sunmoon_changed)
+        solar_radius_row.addWidget(self.solar_radius_east_spin)
+        solar_radius_row.addWidget(QLabel("West:"))
+        self.solar_radius_west_spin = QDoubleSpinBox()
+        self.solar_radius_west_spin.setRange(5.0, 180.0)
+        self.solar_radius_west_spin.setValue(45.0)
+        self.solar_radius_west_spin.setSingleStep(5.0)
+        self.solar_radius_west_spin.setSuffix("°")
+        self.solar_radius_west_spin.setToolTip("Western elongation limit (evening sky)")
+        self.solar_radius_west_spin.valueChanged.connect(self.on_sunmoon_changed)
+        solar_radius_row.addWidget(self.solar_radius_west_spin)
         solar_radius_row.addWidget(QLabel("Color:"))
         self.solar_color_edit = QLineEdit("#FFD700")  # Gold/yellow like sun
         self.solar_color_edit.setMaximumWidth(70)
@@ -10204,7 +10499,39 @@ class SettingsDialog(QDialog):
         style_row.addWidget(self.horizon_weight_spin)
         style_row.addStretch()
         horizon_layout.addLayout(style_row)
-        
+
+        # Observable region shading
+        shade_row = QHBoxLayout()
+        self.shade_observable_check = QCheckBox("Shade observable region")
+        self.shade_observable_check.setChecked(False)
+        self.shade_observable_check.setToolTip("Shade the region meeting all enabled constraints:\nhorizon, declination limits, solar/lunar/galactic exclusions\n(Disabled during animation)")
+        self.shade_observable_check.stateChanged.connect(self.on_horizon_changed)
+        shade_row.addWidget(self.shade_observable_check)
+        shade_row.addStretch()
+        horizon_layout.addLayout(shade_row)
+
+        # Shade colors row
+        shade_color_row = QHBoxLayout()
+        shade_color_row.addSpacing(20)
+        shade_color_row.addWidget(QLabel("Night:"))
+        self.shade_night_color_edit = QLineEdit("#E8E8E8")
+        self.shade_night_color_edit.setMaximumWidth(70)
+        self.shade_night_color_edit.setToolTip("Shading color for nighttime observable region")
+        self.shade_night_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.shade_night_color_edit.textChanged.connect(lambda text, w=self.shade_night_color_edit: self._update_color_edit_style(w))
+        shade_color_row.addWidget(self.shade_night_color_edit)
+        self._update_color_edit_style(self.shade_night_color_edit)
+        shade_color_row.addWidget(QLabel("Day:"))
+        self.shade_day_color_edit = QLineEdit("#FFFDE8")
+        self.shade_day_color_edit.setMaximumWidth(70)
+        self.shade_day_color_edit.setToolTip("Shading color for daytime observable region")
+        self.shade_day_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.shade_day_color_edit.textChanged.connect(lambda text, w=self.shade_day_color_edit: self._update_color_edit_style(w))
+        shade_color_row.addWidget(self.shade_day_color_edit)
+        self._update_color_edit_style(self.shade_day_color_edit)
+        shade_color_row.addStretch()
+        horizon_layout.addLayout(shade_color_row)
+
         horizon_group.setLayout(horizon_layout)
         self._layout.addWidget(horizon_group)
         self.collapsible_sections.append(horizon_group)
@@ -10948,7 +11275,8 @@ class SettingsDialog(QDialog):
         return {
             'show_sun': self.show_sun_check.isChecked(),
             'solar_elongation_enabled': self.solar_elongation_check.isChecked(),
-            'solar_radius': self.solar_radius_spin.value(),
+            'solar_radius_east': self.solar_radius_east_spin.value(),
+            'solar_radius_west': self.solar_radius_west_spin.value(),
             'solar_color': self.solar_color_edit.text(),
             'solar_show_bounds': self.solar_show_bounds.isChecked(),
             'show_moon': self.show_moon_check.isChecked(),
@@ -11038,7 +11366,10 @@ class SettingsDialog(QDialog):
             'show_astro': self.show_astro_check.isChecked(),
             'astro_color': self.astro_color_edit.text(),
             'line_style': self.horizon_style_combo.currentText(),
-            'line_weight': self.horizon_weight_spin.value()
+            'line_weight': self.horizon_weight_spin.value(),
+            'shade_enabled': self.shade_observable_check.isChecked(),
+            'shade_night_color': self.shade_night_color_edit.text(),
+            'shade_day_color': self.shade_day_color_edit.text()
         }
     
     def on_horizon_changed(self):
@@ -11059,7 +11390,12 @@ class SettingsDialog(QDialog):
         self.astro_color_edit.setEnabled(enabled and self.show_astro_check.isChecked())
         self.horizon_style_combo.setEnabled(enabled)
         self.horizon_weight_spin.setEnabled(enabled)
-        
+        # Observable region shading controls
+        self.shade_observable_check.setEnabled(enabled)
+        shade_enabled = enabled and self.shade_observable_check.isChecked()
+        self.shade_night_color_edit.setEnabled(shade_enabled)
+        self.shade_day_color_edit.setEnabled(shade_enabled)
+
         parent = self.parent()
         if parent and hasattr(parent, 'on_horizon_changed'):
             parent.on_horizon_changed()
@@ -11417,7 +11753,8 @@ class SettingsDialog(QDialog):
             state['sunmoon'] = {
                 'show_sun': self.show_sun_check.isChecked(),
                 'solar_elongation_enabled': self.solar_elongation_check.isChecked(),
-                'solar_radius': self.solar_radius_spin.value(),
+                'solar_radius_east': self.solar_radius_east_spin.value(),
+                'solar_radius_west': self.solar_radius_west_spin.value(),
                 'solar_color': self.solar_color_edit.text(),
                 'solar_show_bounds': self.solar_show_bounds.isChecked(),
                 'show_moon': self.show_moon_check.isChecked(),
@@ -11509,7 +11846,10 @@ class SettingsDialog(QDialog):
                 'show_astro': self.show_astro_check.isChecked(),
                 'astro_color': self.astro_color_edit.text(),
                 'line_style': self.horizon_style_combo.currentText(),
-                'line_weight': self.horizon_weight_spin.value()
+                'line_weight': self.horizon_weight_spin.value(),
+                'shade_enabled': self.shade_observable_check.isChecked(),
+                'shade_night_color': self.shade_night_color_edit.text(),
+                'shade_day_color': self.shade_day_color_edit.text()
             }
 
             # Constellations
@@ -11747,7 +12087,10 @@ class SettingsDialog(QDialog):
                 s = state['sunmoon']
                 self.show_sun_check.setChecked(s.get('show_sun', True))
                 self.solar_elongation_check.setChecked(s.get('solar_elongation_enabled', False))
-                self.solar_radius_spin.setValue(s.get('solar_radius', 45.0))
+                # Support legacy 'solar_radius' falling back to east/west
+                legacy_radius = s.get('solar_radius', 45.0)
+                self.solar_radius_east_spin.setValue(s.get('solar_radius_east', legacy_radius))
+                self.solar_radius_west_spin.setValue(s.get('solar_radius_west', legacy_radius))
                 self.solar_color_edit.setText(s.get('solar_color', '#FFD700'))
                 self.solar_show_bounds.setChecked(s.get('solar_show_bounds', True))
                 self.show_moon_check.setChecked(s.get('show_moon', True))
@@ -11844,6 +12187,9 @@ class SettingsDialog(QDialog):
                 self.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                 self.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                 self.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
+                self.shade_observable_check.setChecked(h.get('shade_enabled', False))
+                self.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
+                self.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
 
             # Constellations
             if 'constellations' in state:
@@ -12411,10 +12757,13 @@ class NEOVisualizer(QMainWindow):
                     except:
                         pass
                 self.canvas.overlay_artists = []
+            # Clear observable region shading (depends on declination limits)
+            if hasattr(self.canvas, '_clear_observable_shading'):
+                self.canvas._clear_observable_shading()
             self.canvas.last_overlay_jd = None
             self.canvas.last_jd = None  # Force update_plot to redraw
             self.update_display()  # Full update to apply declination filtering
-    
+
     def on_galactic_changed(self):
         """Handle changes to galactic exclusion settings"""
         # Force complete overlay redraw
@@ -12427,6 +12776,9 @@ class NEOVisualizer(QMainWindow):
                 except:
                     pass
             self.canvas.overlay_artists = []
+        # Clear observable region shading (depends on galactic exclusion)
+        if hasattr(self.canvas, '_clear_observable_shading'):
+            self.canvas._clear_observable_shading()
         self.update_display()
 
     def on_opposition_changed(self):
@@ -12467,6 +12819,9 @@ class NEOVisualizer(QMainWindow):
                 except:
                     pass
             self.canvas.overlay_artists = []
+        # Clear observable region shading (depends on solar/lunar exclusion)
+        if hasattr(self.canvas, '_clear_observable_shading'):
+            self.canvas._clear_observable_shading()
         self.update_display()
 
     def on_horizon_changed(self):
@@ -12481,6 +12836,9 @@ class NEOVisualizer(QMainWindow):
                 except:
                     pass
             self.canvas.overlay_artists = []
+        # Clear observable region shading
+        if hasattr(self.canvas, '_clear_observable_shading'):
+            self.canvas._clear_observable_shading()
         self.update_display()
 
     def on_constellations_changed(self):
@@ -14072,7 +14430,8 @@ class NEOVisualizer(QMainWindow):
                 sunmoon_settings = self.settings_dialog.get_sunmoon_settings()
             else:
                 sunmoon_settings = {'show_sun': True,
-                                    'solar_elongation_enabled': False, 'solar_radius': 45.0,
+                                    'solar_elongation_enabled': False, 'solar_radius_east': 45.0,
+                                    'solar_radius_west': 45.0,
                                     'solar_color': '#FFD700', 'solar_show_bounds': True,
                                     'show_moon': True, 'show_phases': False,
                                     'lunar_exclusion_enabled': False, 'lunar_radius': 30.0,
@@ -14722,7 +15081,8 @@ class NEOVisualizer(QMainWindow):
                 # Sun and Moon
                 self.settings_dialog.show_sun_check.setChecked(True)
                 self.settings_dialog.solar_elongation_check.setChecked(False)
-                self.settings_dialog.solar_radius_spin.setValue(45.0)
+                self.settings_dialog.solar_radius_east_spin.setValue(45.0)
+                self.settings_dialog.solar_radius_west_spin.setValue(45.0)
                 self.settings_dialog.solar_color_edit.setText("#FFD700")
                 self.settings_dialog.solar_show_bounds.setChecked(True)
                 self.settings_dialog.show_moon_check.setChecked(True)
@@ -14805,6 +15165,9 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.astro_color_edit.setText("#6666FF")
                 self.settings_dialog.horizon_style_combo.setCurrentText("dashed")
                 self.settings_dialog.horizon_weight_spin.setValue(1.0)
+                self.settings_dialog.shade_observable_check.setChecked(False)
+                self.settings_dialog.shade_night_color_edit.setText("#E8E8E8")
+                self.settings_dialog.shade_day_color_edit.setText("#FFFDE8")
 
                 # Constellations (off by default)
                 self.settings_dialog.show_constellation_bounds.setChecked(False)
@@ -14851,7 +15214,21 @@ class NEOVisualizer(QMainWindow):
             self.top_content.show()
             self.drawer_collapsed = False
             self.drawer_bar.setText("▼ Controls")
-            
+
+            # Force complete overlay redraw by clearing cached JD and overlay artists
+            if hasattr(self.canvas, 'last_jd'):
+                self.canvas.last_jd = None
+            if hasattr(self.canvas, 'overlay_artists'):
+                for artist in self.canvas.overlay_artists:
+                    try:
+                        artist.remove()
+                    except:
+                        pass
+                self.canvas.overlay_artists = []
+            # Clear observable region shading
+            if hasattr(self.canvas, '_clear_observable_shading'):
+                self.canvas._clear_observable_shading()
+
             self.status_label.setText("Reset to factory defaults")
             self.update_display()
 
@@ -14957,7 +15334,8 @@ class NEOVisualizer(QMainWindow):
                 settings['sunmoon'] = {
                     'show_sun': self.settings_dialog.show_sun_check.isChecked(),
                     'solar_elongation_enabled': self.settings_dialog.solar_elongation_check.isChecked(),
-                    'solar_radius': self.settings_dialog.solar_radius_spin.value(),
+                    'solar_radius_east': self.settings_dialog.solar_radius_east_spin.value(),
+                    'solar_radius_west': self.settings_dialog.solar_radius_west_spin.value(),
                     'solar_color': self.settings_dialog.solar_color_edit.text(),
                     'solar_show_bounds': self.settings_dialog.solar_show_bounds.isChecked(),
                     'show_moon': self.settings_dialog.show_moon_check.isChecked(),
@@ -15062,7 +15440,10 @@ class NEOVisualizer(QMainWindow):
                     'show_astro': self.settings_dialog.show_astro_check.isChecked(),
                     'astro_color': self.settings_dialog.astro_color_edit.text(),
                     'line_style': self.settings_dialog.horizon_style_combo.currentText(),
-                    'line_weight': self.settings_dialog.horizon_weight_spin.value()
+                    'line_weight': self.settings_dialog.horizon_weight_spin.value(),
+                    'shade_enabled': self.settings_dialog.shade_observable_check.isChecked(),
+                    'shade_night_color': self.settings_dialog.shade_night_color_edit.text(),
+                    'shade_day_color': self.settings_dialog.shade_day_color_edit.text()
                 }
 
                 # Constellations
@@ -15222,7 +15603,10 @@ class NEOVisualizer(QMainWindow):
                     s = settings['sunmoon']
                     self.settings_dialog.show_sun_check.setChecked(s.get('show_sun', True))
                     self.settings_dialog.solar_elongation_check.setChecked(s.get('solar_elongation_enabled', False))
-                    self.settings_dialog.solar_radius_spin.setValue(s.get('solar_radius', 45.0))
+                    # Support legacy 'solar_radius' falling back to east/west
+                    legacy_radius = s.get('solar_radius', 45.0)
+                    self.settings_dialog.solar_radius_east_spin.setValue(s.get('solar_radius_east', legacy_radius))
+                    self.settings_dialog.solar_radius_west_spin.setValue(s.get('solar_radius_west', legacy_radius))
                     self.settings_dialog.solar_color_edit.setText(s.get('solar_color', '#FFD700'))
                     self.settings_dialog.solar_show_bounds.setChecked(s.get('solar_show_bounds', True))
                     self.settings_dialog.show_moon_check.setChecked(s.get('show_moon', True))
@@ -15324,6 +15708,9 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                     self.settings_dialog.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                     self.settings_dialog.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
+                    self.settings_dialog.shade_observable_check.setChecked(h.get('shade_enabled', False))
+                    self.settings_dialog.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
+                    self.settings_dialog.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
 
                 # Constellations
                 if 'constellations' in settings:
