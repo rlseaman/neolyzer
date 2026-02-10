@@ -92,7 +92,12 @@ class Asteroid(Base):
     discovery_dec = Column(Float, nullable=True)  # Dec at discovery (degrees)
     discovery_vmag = Column(Float, nullable=True)  # Median V magnitude at discovery
     discovery_site = Column(String(10), nullable=True)  # MPC observatory code
-    
+    discovery_nobs = Column(Integer, nullable=True)  # Number of observations in discovery tracklet
+    discovery_span_hours = Column(Float, nullable=True)  # Tracklet time span (hours)
+    discovery_rate = Column(Float, nullable=True)  # Sky motion rate (deg/day)
+    discovery_pa = Column(Float, nullable=True)  # Position angle of motion (degrees)
+    discovery_site_name = Column(String(100), nullable=True)  # Human-readable site name
+
     # Update tracking
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -201,6 +206,11 @@ class AlternateAsteroid(Base):
     discovery_dec = Column(Float, nullable=True)
     discovery_vmag = Column(Float, nullable=True)
     discovery_site = Column(String(10), nullable=True)
+    discovery_nobs = Column(Integer, nullable=True)
+    discovery_span_hours = Column(Float, nullable=True)
+    discovery_rate = Column(Float, nullable=True)
+    discovery_pa = Column(Float, nullable=True)
+    discovery_site_name = Column(String(100), nullable=True)
 
     # Indexes
     __table_args__ = (
@@ -583,81 +593,163 @@ def fetch_moid_batch(asteroids: List[Dict], show_progress: bool = True, output_d
 def load_discovery_tracklets(asteroids: List[Dict], csv_path: str, show_progress: bool = True) -> int:
     """
     Load discovery tracklet data from CSV and merge into asteroid list.
-    
+
+    Supports both the newer NEO_discovery_tracklets.csv (with additional columns
+    and renamed fields) and the older NEA_discovery_tracklets.csv format.
+
     Parameters:
     -----------
     asteroids : List[Dict]
         List of asteroid dictionaries to update
     csv_path : str
-        Path to NEA_discovery_tracklets.csv
+        Path to discovery tracklets CSV. If the file doesn't exist, will try
+        alternate filename (NEO_ vs NEA_ prefix) in the same directory.
     show_progress : bool
         Whether to show progress messages
-        
+
     Returns:
     --------
     int : Number of asteroids matched
     """
     import os
-    
+
+    # Try the given path first, then try alternate filename
     if not os.path.exists(csv_path):
-        logger.warning(f"Discovery tracklet file not found: {csv_path}")
-        return 0
-    
+        csv_dir = os.path.dirname(csv_path)
+        csv_name = os.path.basename(csv_path)
+        if csv_name.startswith('NEO_'):
+            alt_name = csv_name.replace('NEO_', 'NEA_', 1)
+        elif csv_name.startswith('NEA_'):
+            alt_name = csv_name.replace('NEA_', 'NEO_', 1)
+        else:
+            alt_name = None
+
+        if alt_name:
+            alt_path = os.path.join(csv_dir, alt_name)
+            if os.path.exists(alt_path):
+                if show_progress:
+                    logger.info(f"Using alternate file: {alt_path}")
+                csv_path = alt_path
+            else:
+                logger.warning(f"Discovery tracklet file not found: {csv_path} (also tried {alt_path})")
+                return 0
+        else:
+            logger.warning(f"Discovery tracklet file not found: {csv_path}")
+            return 0
+
     if show_progress:
         logger.info(f"Loading discovery tracklet data from {csv_path}...")
-    
+
     try:
         # Load CSV
         df = pd.read_csv(csv_path)
-        
+
         if show_progress:
             logger.info(f"Loaded {len(df)} discovery tracklet records")
-        
-        # Build lookup dictionaries by packed designation
+
+        # Auto-detect column names (new vs old CSV format)
+        if 'packed_primary_provisional_designation' in df.columns:
+            packed_col = 'packed_primary_provisional_designation'
+        elif 'packed_designation' in df.columns:
+            packed_col = 'packed_designation'
+        else:
+            logger.error("CSV missing packed designation column")
+            return 0
+
+        # Check for new columns
+        has_nobs = 'nobs' in df.columns
+        has_span = 'span_hours' in df.columns
+        has_rate = 'rate_deg_per_day' in df.columns
+        has_pa = 'position_angle_deg' in df.columns
+        has_site_name = 'discovery_site_name' in df.columns
+
+        if show_progress and has_nobs:
+            logger.info(f"New-format CSV detected: nobs, span, rate, PA, site_name columns available")
+
+        # Build lookup dictionaries by packed provisional designation
         tracklet_by_packed = {}
+        # Secondary lookup by primary_designation (number string) for numbered asteroids
+        tracklet_by_number = {}
+        has_primary = 'primary_designation' in df.columns
+
         for _, row in df.iterrows():
-            packed = str(row['packed_designation']).strip()
+            packed = str(row[packed_col]).strip()
             disc_mjd = row['avg_mjd_discovery_tracklet'] if pd.notna(row['avg_mjd_discovery_tracklet']) else None
             # Precompute CLN from MJD
             disc_cln = mjd_to_cln(disc_mjd)
-            tracklet_by_packed[packed] = {
+            tracklet = {
                 'discovery_mjd': disc_mjd,
                 'discovery_cln': disc_cln,
                 'discovery_ra': row['avg_ra_deg'] if pd.notna(row['avg_ra_deg']) else None,
                 'discovery_dec': row['avg_dec_deg'] if pd.notna(row['avg_dec_deg']) else None,
                 'discovery_vmag': row['median_v_magnitude'] if pd.notna(row['median_v_magnitude']) else None,
                 'discovery_site': str(row['discovery_site_code']).strip() if pd.notna(row['discovery_site_code']) else None,
+                'discovery_nobs': int(row['nobs']) if has_nobs and pd.notna(row['nobs']) else None,
+                'discovery_span_hours': float(row['span_hours']) if has_span and pd.notna(row['span_hours']) else None,
+                'discovery_rate': float(row['rate_deg_per_day']) if has_rate and pd.notna(row['rate_deg_per_day']) else None,
+                'discovery_pa': float(row['position_angle_deg']) if has_pa and pd.notna(row['position_angle_deg']) else None,
+                'discovery_site_name': str(row['discovery_site_name']).strip() if has_site_name and pd.notna(row['discovery_site_name']) else None,
             }
-        
+            tracklet_by_packed[packed] = tracklet
+            # Also index by primary_designation for numbered asteroid matching
+            if has_primary and pd.notna(row['primary_designation']):
+                prim = str(row['primary_designation']).strip()
+                tracklet_by_number[prim] = tracklet
+
+        # Import unpacker for numbered designations (00433 -> "433", A0004 -> "100004")
+        try:
+            from designation_utils import unpack_numbered_designation
+        except ImportError:
+            unpack_numbered_designation = None
+
         # Match to asteroids
         matched = 0
         for ast in asteroids:
             des = ast['designation']
-            
+
             if des in tracklet_by_packed:
+                # Direct match on packed provisional designation
                 tracklet = tracklet_by_packed[des]
                 ast.update(tracklet)
                 matched += 1
             else:
-                # No match - set fields to None
-                ast['discovery_mjd'] = None
-                ast['discovery_cln'] = None
-                ast['discovery_ra'] = None
-                ast['discovery_dec'] = None
-                ast['discovery_vmag'] = None
-                ast['discovery_site'] = None
-        
+                # Try numbered asteroid lookup: unpack MPC packed number to plain number
+                found = False
+                if len(des) == 5 and tracklet_by_number and unpack_numbered_designation:
+                    try:
+                        number_str = unpack_numbered_designation(des)
+                        if number_str in tracklet_by_number:
+                            tracklet = tracklet_by_number[number_str]
+                            ast.update(tracklet)
+                            matched += 1
+                            found = True
+                    except Exception:
+                        pass
+                if not found:
+                    # No match - set fields to None
+                    ast['discovery_mjd'] = None
+                    ast['discovery_cln'] = None
+                    ast['discovery_ra'] = None
+                    ast['discovery_dec'] = None
+                    ast['discovery_vmag'] = None
+                    ast['discovery_site'] = None
+                    ast['discovery_nobs'] = None
+                    ast['discovery_span_hours'] = None
+                    ast['discovery_rate'] = None
+                    ast['discovery_pa'] = None
+                    ast['discovery_site_name'] = None
+
         if show_progress:
             logger.info(f"Matched discovery data for {matched} of {len(asteroids)} asteroids")
             logger.info(f"Coverage: {100.0 * matched / len(asteroids):.1f}%")
-        
+
         return matched
-        
+
     except Exception as e:
         logger.error(f"Error loading discovery tracklets: {e}")
         import traceback
         logger.debug(traceback.format_exc())
-        
+
         # Set all to None on error
         for ast in asteroids:
             ast['discovery_mjd'] = None
@@ -666,7 +758,12 @@ def load_discovery_tracklets(asteroids: List[Dict], csv_path: str, show_progress
             ast['discovery_dec'] = None
             ast['discovery_vmag'] = None
             ast['discovery_site'] = None
-        
+            ast['discovery_nobs'] = None
+            ast['discovery_span_hours'] = None
+            ast['discovery_rate'] = None
+            ast['discovery_pa'] = None
+            ast['discovery_site_name'] = None
+
         return 0
 
 
@@ -737,6 +834,31 @@ class DatabaseManager:
                     conn.execute(text("ALTER TABLE asteroids ADD COLUMN last_seen_in_catalog DATETIME"))
                     conn.commit()
                 logger.info("Migration complete: stale tracking columns added")
+
+            # Migration: Add discovery tracklet detail columns if missing
+            if 'discovery_nobs' not in columns:
+                logger.info("Migrating database: adding discovery tracklet detail columns...")
+                with self.engine.connect() as conn:
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_nobs INTEGER"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_span_hours FLOAT"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_rate FLOAT"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_pa FLOAT"))
+                    conn.execute(text("ALTER TABLE asteroids ADD COLUMN discovery_site_name VARCHAR(100)"))
+                    conn.commit()
+                logger.info("Migration complete: discovery tracklet detail columns added")
+
+                # Also migrate alternate_asteroids if table exists
+                if 'alternate_asteroids' in inspector.get_table_names():
+                    alt_columns = [c['name'] for c in inspector.get_columns('alternate_asteroids')]
+                    if 'discovery_nobs' not in alt_columns:
+                        with self.engine.connect() as conn:
+                            conn.execute(text("ALTER TABLE alternate_asteroids ADD COLUMN discovery_nobs INTEGER"))
+                            conn.execute(text("ALTER TABLE alternate_asteroids ADD COLUMN discovery_span_hours FLOAT"))
+                            conn.execute(text("ALTER TABLE alternate_asteroids ADD COLUMN discovery_rate FLOAT"))
+                            conn.execute(text("ALTER TABLE alternate_asteroids ADD COLUMN discovery_pa FLOAT"))
+                            conn.execute(text("ALTER TABLE alternate_asteroids ADD COLUMN discovery_site_name VARCHAR(100)"))
+                            conn.commit()
+                        logger.info("Migration complete: alternate_asteroids tracklet detail columns added")
 
             # Migration: Add catalog provenance columns if catalogs table exists
             if 'catalogs' in inspector.get_table_names():
@@ -1025,8 +1147,13 @@ class DatabaseManager:
             'discovery_dec': ast.discovery_dec,
             'discovery_vmag': ast.discovery_vmag,
             'discovery_site': ast.discovery_site,
+            'discovery_nobs': ast.discovery_nobs,
+            'discovery_span_hours': ast.discovery_span_hours,
+            'discovery_rate': ast.discovery_rate,
+            'discovery_pa': ast.discovery_pa,
+            'discovery_site_name': ast.discovery_site_name,
         }
-    
+
     def clear_all(self):
         """Clear all asteroids (use with caution!)"""
         session = self.get_session()
@@ -1362,6 +1489,11 @@ class DatabaseManager:
             'discovery_dec': ast.discovery_dec,
             'discovery_vmag': ast.discovery_vmag,
             'discovery_site': ast.discovery_site,
+            'discovery_nobs': ast.discovery_nobs,
+            'discovery_span_hours': ast.discovery_span_hours,
+            'discovery_rate': ast.discovery_rate,
+            'discovery_pa': ast.discovery_pa,
+            'discovery_site_name': ast.discovery_site_name,
         }
 
 

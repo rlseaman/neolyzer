@@ -37,7 +37,7 @@ neolyzer/
 │   ├── verify_installation.py  # Verify installation
 │   └── verify_fixes.py         # Verification tests
 ├── data/                       # Data files
-│   └── NEA_discovery_tracklets.csv  # Discovery circumstances data
+│   └── NEO_discovery_tracklets.csv  # Discovery circumstances data (replaces NEA_)
 ├── assets/                     # UI assets
 │   └── CSS_logo_transparent.png     # Catalina Sky Survey logo
 ├── diagnose_*.py               # Diagnostic scripts (CLN, missing NEOs, SBDB)

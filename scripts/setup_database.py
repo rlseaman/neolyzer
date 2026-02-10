@@ -252,17 +252,21 @@ def main():
     # Step 2b: Load discovery tracklet data
     print("Step 2b: Loading discovery tracklet data...")
     print("-" * 70)
-    print("This loads discovery circumstances (date, position, magnitude, site)")
-    print("for each NEO from the bundled NEA_discovery_tracklets.csv file.")
+    print("This loads discovery circumstances (date, position, magnitude, site,")
+    print("tracklet details) for each NEO from the bundled CSV file.")
     print()
-    
+
     try:
-        tracklet_csv = os.path.join(os.path.dirname(__file__), '..', 'data', 'NEA_discovery_tracklets.csv')
+        # Prefer NEO_discovery_tracklets.csv (more complete), fall back to NEA_
+        data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
+        tracklet_csv = os.path.join(data_dir, 'NEO_discovery_tracklets.csv')
+        if not os.path.exists(tracklet_csv):
+            tracklet_csv = os.path.join(data_dir, 'NEA_discovery_tracklets.csv')
         if os.path.exists(tracklet_csv):
             matched = load_discovery_tracklets(asteroids, tracklet_csv, show_progress=True)
             print(f"✓ Loaded discovery data for {matched}/{len(asteroids)} asteroids")
         else:
-            print(f"⚠ Discovery tracklet file not found: {tracklet_csv}")
+            print(f"⚠ Discovery tracklet file not found in {data_dir}")
             print("  'Hide before discovery' feature will not be available.")
         print()
     except Exception as e:

@@ -5038,14 +5038,21 @@ class NEOInfoDialog(QDialog):
         except:
             return date
     
-    def _format_discovery_site(self, site):
-        """Format discovery site with survey name"""
+    def _format_discovery_site(self, site, site_name=None):
+        """Format discovery site with survey name.
+
+        Uses site_name from DB when available, falls back to hardcoded lookup.
+        """
         if not site:
             return '<span style="color: gray; font-style: italic;">Unknown</span>'
-        
+
         site = str(site).strip()
-        
-        # Site code to name mapping (based on CNEOS categories)
+
+        # Use DB-provided site name if available
+        if site_name:
+            return f'{site} ({site_name})'
+
+        # Fallback: site code to name mapping (based on CNEOS categories)
         site_names = {
             # LINEAR
             '704': 'LINEAR', 'G45': 'LINEAR', 'P07': 'LINEAR',
@@ -5056,7 +5063,7 @@ class NEOInfoDialog(QDialog):
             # LONEOS
             '699': 'LONEOS',
             # Catalina
-            '703': 'Mt. Lemmon (CSS)', 'G96': 'Mt. Lemmon (CSS)', 
+            '703': 'Mt. Lemmon (CSS)', 'G96': 'Mt. Lemmon (CSS)',
             'E12': 'Siding Spring (CSS)', 'I52': 'Catalina', 'V06': 'Catalina',
             # Pan-STARRS
             'F51': 'Pan-STARRS 1', 'F52': 'Pan-STARRS 2',
@@ -5069,7 +5076,7 @@ class NEOInfoDialog(QDialog):
             'V00': 'Lunar & Planetary Lab', 'W84': 'Cerro Tololo',
             'I41': 'Palomar', 'U68': 'Steward', 'U74': 'Steward',
         }
-        
+
         name = site_names.get(site, '')
         if name:
             return f'{site} ({name})'
@@ -5315,10 +5322,31 @@ class NEOInfoDialog(QDialog):
         <h3 style="margin-bottom: 3px;">Discovery</h3>
         <table cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
         <tr><td style="padding-right: 8px;"><b>Date:</b></td><td>{self._format_discovery_date(discovery_mjd)}</td></tr>
-        <tr><td style="padding-right: 8px;"><b>Site:</b></td><td>{self._format_discovery_site(discovery_site)}</td></tr>
+        <tr><td style="padding-right: 8px;"><b>Site:</b></td><td>{self._format_discovery_site(discovery_site, ast.get('discovery_site_name'))}</td></tr>
         </table>
         """
-        
+
+        # Add discovery tracklet details if available
+        disc_rate = ast.get('discovery_rate')
+        disc_pa = ast.get('discovery_pa')
+        disc_nobs = ast.get('discovery_nobs')
+        disc_span = ast.get('discovery_span_hours')
+        tracklet_rows = []
+        if disc_rate is not None or disc_pa is not None:
+            rate_str = f"{disc_rate:.2f}\u00b0/day" if disc_rate is not None else "?"
+            pa_str = f"PA {disc_pa:.0f}\u00b0" if disc_pa is not None else ""
+            combined = f"{rate_str} @ {pa_str}" if pa_str else rate_str
+            tracklet_rows.append(f'<tr><td style="padding-right: 8px;"><b>Rate/PA:</b></td><td>{combined}</td></tr>')
+        if disc_nobs is not None or disc_span is not None:
+            nobs_str = f"{disc_nobs} obs" if disc_nobs is not None else "? obs"
+            span_str = f"over {disc_span:.2f} hr" if disc_span is not None else ""
+            combined = f"{nobs_str} {span_str}".strip()
+            tracklet_rows.append(f'<tr><td style="padding-right: 8px;"><b>Tracklet:</b></td><td>{combined}</td></tr>')
+        if tracklet_rows:
+            html += '<table cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-top: 4px;">'
+            html += ''.join(tracklet_rows)
+            html += '</table>'
+
         return html
 
 
@@ -5350,7 +5378,7 @@ class NEOTableDialog(QDialog):
         filter_layout = QHBoxLayout()
         filter_label = QLabel("Filter:")
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Type to filter by designation, name, class... (press Enter)")
+        self.filter_input.setPlaceholderText("Type to filter by designation, name, class, site... (press Enter)")
         self.filter_input.returnPressed.connect(self.apply_filter)
         self.filter_input.setMaximumWidth(300)
         filter_layout.addWidget(filter_label)
@@ -5509,18 +5537,20 @@ class NEOTableDialog(QDialog):
                 readable = (ast.get('readable_designation') or '').lower()
                 orbit_class = (ast.get('orbit_class') or '').lower()
                 site = (ast.get('discovery_site') or '').lower()
-                
+                site_name = (ast.get('discovery_site_name') or '').lower()
+
                 try:
                     unpacked = unpack_designation(ast.get('designation', '')).lower()
                 except:
                     unpacked = ''
-                
+
                 # Match if filter is found in any field
-                if not (filter_text in packed or 
-                        filter_text in readable or 
+                if not (filter_text in packed or
+                        filter_text in readable or
                         filter_text in unpacked or
                         filter_text in orbit_class or
-                        filter_text in site):
+                        filter_text in site or
+                        filter_text in site_name):
                     continue
             
             display_rows.append((pos_row, ast_idx, ast))
