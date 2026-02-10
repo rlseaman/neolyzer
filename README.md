@@ -60,7 +60,7 @@ Platform-specific notes in [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt).
 - **Coordinate systems:** Equatorial, Ecliptic, Galactic, Opposition
 - **Animation:** Variable playback rate and direction
 - **Moon phase display:** Catalina Lunation Number (CLN)
-- **Discovery tracking:** Hide objects before discovery date
+- **Discovery tracking:** Hide objects before discovery date, with tracklet details (rate, PA, nobs, span, site name) from bundled `NEO_discovery_tracklets.csv`
 - **Earth MOID filtering:** Via JPL SBDB
 - **Horizon/twilight overlays:** For observer location
 - **Scripted playback:** Full state save/restore
@@ -105,6 +105,7 @@ During setup, select which JPL planetary ephemeris to use:
 - Ephemeris file: 17-3500 MB (stored in `~/.skyfield/`)
 - Position cache: 200-400 MB (stored in `cache/`)
 - Database: 50-100 MB (stored in `data/`)
+- Discovery tracklets: ~4.5 MB (bundled `data/NEO_discovery_tracklets.csv`)
 - Total: 300 MB - 4 GB depending on ephemeris choice
 
 ---
