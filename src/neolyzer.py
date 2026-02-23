@@ -109,6 +109,11 @@ except ImportError:
 
 import matplotlib
 matplotlib.use('Qt5Agg')
+# Disable matplotlib's default keybindings to prevent them from eating key events
+# (e.g., 's' for save, 'p' for pan, 'g' for grid) when the canvas has focus
+for _km in list(matplotlib.rcParams):
+    if _km.startswith('keymap.'):
+        matplotlib.rcParams[_km] = []
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -752,7 +757,14 @@ class SkyMapCanvas(FigureCanvas):
             facecolors='none', edgecolors='gray', linewidths=1.5,
             alpha=0.7, zorder=10
         )
-        
+
+        # Create empty scatter for non-discovery NEOs (open diamonds)
+        self.scatter_nondiscovery = self.ax.scatter(
+            [], [], s=10, marker='D',
+            facecolors='none', edgecolors='gray', linewidths=1.0,
+            alpha=0.5, zorder=9
+        )
+
         # Create highlight scatter for selected object (red ring)
         self.scatter_highlight = self.ax.scatter(
             [], [], s=300,
@@ -2647,18 +2659,70 @@ class SkyMapCanvas(FigureCanvas):
                 logger.debug(f"Error drawing altitude boundary at {altitude_deg}°: {e}")
         
         # Draw enabled boundaries
+        # Airmass limit boundary (above horizon)
+        if horizon_settings.get('airmass_enabled', False) and horizon_settings.get('show_airmass_line', False):
+            airmass = horizon_settings.get('airmass_limit', 2.0)
+            airmass_alt = np.degrees(np.arcsin(1.0 / airmass))
+            draw_altitude_boundary(airmass_alt, horizon_settings.get('airmass_line_color', '#FFFF00'))
+
         if horizon_settings.get('show_horizon', True):
             draw_altitude_boundary(0, horizon_settings.get('horizon_color', '#FF6600'))
-        
+
         if horizon_settings.get('show_civil', False):
             draw_altitude_boundary(-6, horizon_settings.get('civil_color', '#FF9933'))
-        
+
         if horizon_settings.get('show_nautical', False):
             draw_altitude_boundary(-12, horizon_settings.get('nautical_color', '#CC66FF'))
-        
+
         if horizon_settings.get('show_astro', True):
             draw_altitude_boundary(-18, horizon_settings.get('astro_color', '#6666FF'))
-        
+
+        # Zenith and Nadir markers
+        if horizon_settings.get('show_zenith_nadir', False):
+            try:
+                zenith_color = horizon_settings.get('zenith_color', '#00FF00')
+                # Zenith: RA = LST, Dec = observer_lat
+                zenith_ra = LST_deg
+                zenith_dec = observer_lat
+                # Nadir: RA = LST + 180, Dec = -observer_lat
+                nadir_ra = (LST_deg + 180) % 360
+                nadir_dec = -observer_lat
+
+                for marker_ra, marker_dec, marker_sym in [(zenith_ra, zenith_dec, '^'), (nadir_ra, nadir_dec, 'v')]:
+                    # Transform to current coordinate system
+                    if self.coord_system == 'ecliptic':
+                        m_lon, m_lat = CoordinateTransformer.equatorial_to_ecliptic(
+                            np.array([marker_ra]), np.array([marker_dec]))
+                    elif self.coord_system == 'galactic':
+                        m_lon, m_lat = CoordinateTransformer.equatorial_to_galactic(
+                            np.array([marker_ra]), np.array([marker_dec]))
+                    elif self.coord_system == 'opposition':
+                        ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(
+                            np.array([marker_ra]), np.array([marker_dec]))
+                        m_lon = ecl_lon - self.sun_ecl_lon - 180
+                        m_lon = np.where(m_lon < -180, m_lon + 360, m_lon)
+                        m_lon = np.where(m_lon > 180, m_lon - 360, m_lon)
+                        m_lat = ecl_lat
+                    else:
+                        m_lon = np.where(np.array([marker_ra]) > 180,
+                                        np.array([marker_ra]) - 360, np.array([marker_ra]))
+                        m_lat = np.array([marker_dec])
+
+                    if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                        m_lon = np.where(m_lon > 180, m_lon - 360, m_lon)
+                        px = np.radians(-m_lon)
+                        py = np.radians(m_lat)
+                    else:
+                        px = m_lon
+                        py = m_lat
+
+                    artist = self.ax.scatter(px, py, marker=marker_sym, s=120,
+                                            c=zenith_color, linewidths=2.0,
+                                            alpha=0.9, zorder=HORIZON_ZORDER + 1)
+                    self.overlay_artists.append(artist)
+            except Exception as e:
+                logger.debug(f"Could not draw zenith/nadir markers: {e}")
+
         logger.debug(f"Drew horizon boundaries for observer at ({observer_lat:.2f}, {observer_lon:.2f})")
 
     def _clear_observable_shading(self):
@@ -2759,6 +2823,15 @@ class SkyMapCanvas(FigureCanvas):
 
         horizon_mask = altitude > 0
         observable_mask &= horizon_mask
+
+        # === AIRMASS LIMIT CONSTRAINT ===
+        airmass_enabled = horizon_settings.get('airmass_enabled', False)
+        if airmass_enabled:
+            airmass_limit = horizon_settings.get('airmass_limit', 2.0)
+            # airmass = 1/cos(z) = 1/sin(alt), so min altitude = arcsin(1/airmass)
+            min_alt = np.degrees(np.arcsin(1.0 / airmass_limit))
+            airmass_mask = altitude >= min_alt
+            observable_mask &= airmass_mask
 
         # === DECLINATION LIMITS CONSTRAINT ===
         dec_limit_settings = getattr(self, 'dec_limit_settings', None)
@@ -3066,7 +3139,8 @@ class SkyMapCanvas(FigureCanvas):
                     orb_filters=None, asteroids=None, size_settings=None,
                     galactic_settings=None, opposition_settings=None, hide_before_discovery=False,
                     hide_missing_discovery=False, color_by='V magnitude', show_legend=False,
-                    site_filter=None, misc_filter=None):
+                    site_filter=None, misc_filter=None,
+                    nondiscovery_positions=None, nondiscovery_asteroids=None):
         """Update plot with positions"""
         _profile = self._show_fps
         if _profile:
@@ -3147,6 +3221,7 @@ class SkyMapCanvas(FigureCanvas):
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
             self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+            self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
             self.stats_text.set_text('No objects')
             # Clear trails when no objects visible
             if self.trailing_settings.get('enabled', False):
@@ -3186,6 +3261,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text('No provisional objects (all numbered)')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -3209,6 +3285,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text('No numbered objects (all provisional)')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -3229,6 +3306,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text('No objects in geocentric distance range')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -3264,6 +3342,7 @@ class SkyMapCanvas(FigureCanvas):
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
                     self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                    self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                     self.stats_text.set_text('No objects in heliocentric distance range')
                     if self.trailing_settings.get('enabled', False):
                         self._clear_trails()
@@ -3309,6 +3388,7 @@ class SkyMapCanvas(FigureCanvas):
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
                     self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                    self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                     self.stats_text.set_text(f'No objects outside solar elongation (E:{solar_radius_east:.0f}° W:{solar_radius_west:.0f}°)')
                     if self.trailing_settings.get('enabled', False):
                         self._clear_trails()
@@ -3330,6 +3410,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text(f'No objects in declination range {dec_south:.0f}° to {dec_north:.0f}°')
                 if self.trailing_settings.get('enabled', False):
                     self._clear_trails()
@@ -3352,6 +3433,7 @@ class SkyMapCanvas(FigureCanvas):
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
             self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+            self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
             self.stats_text.set_text(f'No objects {mag_min:.1f} < mag < {mag_max:.1f}')
             # Clear trails when no objects visible
             if self.trailing_settings.get('enabled', False):
@@ -3477,6 +3559,7 @@ class SkyMapCanvas(FigureCanvas):
             self.scatter.set_offsets(np.empty((0, 2)))
             self.scatter.set_array(np.array([]))
             self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+            self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
             self.stats_text.set_text('No objects in effective magnitude range')
             # Clear trails when no objects visible
             if self.trailing_settings.get('enabled', False):
@@ -3511,6 +3594,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text('No objects discovered yet at this date')
                 # Clear trails when no objects visible
                 if self.trailing_settings.get('enabled', False):
@@ -3541,6 +3625,7 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter.set_offsets(np.empty((0, 2)))
                 self.scatter.set_array(np.array([]))
                 self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                 self.stats_text.set_text('No objects (all have missing discovery data)')
                 # Clear trails when no objects visible
                 if self.trailing_settings.get('enabled', False):
@@ -3587,6 +3672,7 @@ class SkyMapCanvas(FigureCanvas):
                     self.scatter.set_offsets(np.empty((0, 2)))
                     self.scatter.set_array(np.array([]))
                     self.scatter_far.set_offsets(np.empty((0, 2)))  # Clear hollow too
+                    self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))  # Clear diamonds too
                     self.stats_text.set_text('No objects match site filter')
                     # Clear trails when no objects visible
                     if self.trailing_settings.get('enabled', False):
@@ -3817,6 +3903,8 @@ class SkyMapCanvas(FigureCanvas):
             self.scatter.set_sizes([])
             self.scatter_far.set_offsets(np.empty((0, 2)))
             self.scatter_far.set_sizes([])
+            self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))
+            self.scatter_nondiscovery.set_sizes([])
             self._clear_cneos_legend()
         else:
             # Determine coloring mode
@@ -3896,7 +3984,254 @@ class SkyMapCanvas(FigureCanvas):
                 self.scatter_far.set_offsets(np.empty((0, 2)))
                 self.scatter_far.set_sizes([])
                 self.scatter_far.set_edgecolors([])
-        
+
+            # Render non-discovery diamonds (same filters as main objects)
+            if nondiscovery_positions is not None and len(nondiscovery_positions) > 0:
+                nd_pos = nondiscovery_positions
+                nd_keep = np.ones(len(nd_pos), dtype=bool)
+
+                # Numbered/unnumbered filter
+                if (hide_numbered or hide_unnumbered) and nondiscovery_asteroids is not None:
+                    for i in range(len(nd_pos)):
+                        ast_idx = int(nd_pos[i, 0])
+                        if ast_idx < len(nondiscovery_asteroids):
+                            desig = nondiscovery_asteroids[ast_idx].get('designation', '')
+                            if hide_numbered and desig and len(desig) == 5:
+                                nd_keep[i] = False
+                            elif hide_unnumbered and desig and len(desig) == 7:
+                                nd_keep[i] = False
+
+                # Geocentric distance filter
+                if geo_near_enabled:
+                    nd_keep &= (nd_pos[:, 3] >= geo_near_dist)
+                if geo_far_enabled:
+                    nd_keep &= (nd_pos[:, 3] <= geo_far_dist)
+
+                # Heliocentric distance filter
+                if helio_near_enabled or helio_far_enabled:
+                    if hasattr(self, 'sun_dist') and self.sun_dist is not None:
+                        nd_gd = nd_pos[:, 3]
+                        nd_ra_r = np.radians(nd_pos[:, 1])
+                        nd_dec_r = np.radians(nd_pos[:, 2])
+                        cos_s = (np.sin(nd_dec_r) * np.sin(np.radians(self.sun_dec)) +
+                                np.cos(nd_dec_r) * np.cos(np.radians(self.sun_dec)) *
+                                np.cos(nd_ra_r - np.radians(self.sun_ra)))
+                        cos_s = np.clip(cos_s, -1, 1)
+                        nd_hd = np.sqrt(np.abs(nd_gd**2 + self.sun_dist**2 -
+                                    2 * nd_gd * self.sun_dist * cos_s))
+                        if helio_near_enabled:
+                            nd_keep &= (nd_hd >= helio_near_dist)
+                        if helio_far_enabled:
+                            nd_keep &= (nd_hd <= helio_far_dist)
+
+                # Solar elongation filter
+                if sunmoon_settings and sunmoon_settings.get('solar_elongation_enabled', False):
+                    if hasattr(self, 'sun_ra') and self.sun_ra is not None:
+                        legacy = sunmoon_settings.get('solar_radius', 45.0)
+                        se_east = sunmoon_settings.get('solar_radius_east', legacy)
+                        se_west = sunmoon_settings.get('solar_radius_west', legacy)
+                        nd_ra_r = np.radians(nd_pos[:, 1])
+                        nd_dec_r = np.radians(nd_pos[:, 2])
+                        sun_ra_r = np.radians(self.sun_ra)
+                        sun_dec_r = np.radians(self.sun_dec)
+                        d_ra = nd_ra_r - sun_ra_r
+                        a = (np.sin((nd_dec_r - sun_dec_r)/2)**2 +
+                             np.cos(nd_dec_r) * np.cos(sun_dec_r) * np.sin(d_ra/2)**2)
+                        ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                        d_ra_deg = np.degrees(d_ra)
+                        d_ra_deg = np.where(d_ra_deg > 180, d_ra_deg - 360, d_ra_deg)
+                        d_ra_deg = np.where(d_ra_deg < -180, d_ra_deg + 360, d_ra_deg)
+                        is_west = d_ra_deg > 0
+                        solar_lim = np.where(is_west, se_west, se_east)
+                        nd_keep &= (ang_sep >= solar_lim)
+
+                # Declination limits
+                if dec_limit_settings and dec_limit_settings.get('enabled', False):
+                    dn = dec_limit_settings.get('north', 90.0)
+                    ds = dec_limit_settings.get('south', -90.0)
+                    nd_keep &= (nd_pos[:, 2] <= dn) & (nd_pos[:, 2] >= ds)
+
+                # Effective magnitude (galactic penalty + lunar exclusion + opposition benefit)
+                nd_display_mag = nd_pos[:, 4].copy()
+                nd_eff_mag = nd_display_mag.copy()
+
+                if galactic_settings and galactic_settings.get('enabled', False):
+                    g_offset = galactic_settings.get('offset', 15.0)
+                    g_penalty = galactic_settings.get('penalty', 2.0)
+                    _, gal_b = CoordinateTransformer.equatorial_to_galactic(nd_pos[:, 1], nd_pos[:, 2])
+                    nd_eff_mag[np.abs(gal_b) < g_offset] += g_penalty
+
+                if sunmoon_settings and sunmoon_settings.get('lunar_exclusion_enabled', False):
+                    if hasattr(self, 'moon_ra') and hasattr(self, 'moon_dec') and hasattr(self, 'moon_phase'):
+                        mr = sunmoon_settings.get('lunar_radius', 30.0)
+                        mp = sunmoon_settings.get('lunar_penalty', 3.0)
+                        cur_r = mr * self.moon_phase
+                        cur_p = mp * self.moon_phase
+                        if cur_r > 0.5 and cur_p > 0.01:
+                            d_ra = np.radians(nd_pos[:, 1] - self.moon_ra)
+                            d_dec = np.radians(nd_pos[:, 2] - self.moon_dec)
+                            dec_r = np.radians(nd_pos[:, 2])
+                            moon_dec_r = np.radians(self.moon_dec)
+                            a = (np.sin(d_dec/2)**2 +
+                                 np.cos(dec_r) * np.cos(moon_dec_r) * np.sin(d_ra/2)**2)
+                            ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                            nd_eff_mag[ang_sep < cur_r] += cur_p
+
+                if opposition_settings and opposition_settings.get('enabled', False):
+                    if hasattr(self, 'sun_ra') and hasattr(self, 'sun_dec'):
+                        opp_r = opposition_settings.get('radius', 5.0)
+                        opp_b = opposition_settings.get('benefit', 2.0)
+                        opp_ra = (self.sun_ra + 180) % 360
+                        opp_dec = -self.sun_dec
+                        d_ra = np.radians(nd_pos[:, 1] - opp_ra)
+                        d_dec = np.radians(nd_pos[:, 2] - opp_dec)
+                        dec_r = np.radians(nd_pos[:, 2])
+                        opp_dec_r = np.radians(opp_dec)
+                        a = (np.sin(d_dec/2)**2 +
+                             np.cos(dec_r) * np.cos(opp_dec_r) * np.sin(d_ra/2)**2)
+                        ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                        nd_eff_mag[ang_sep < opp_r] -= opp_b
+
+                # Effective magnitude filter (with opposition benefit + non-discovery mag offset)
+                nd_opp_max = 0.0
+                if opposition_settings and opposition_settings.get('enabled', False):
+                    nd_opp_max = opposition_settings.get('benefit', 2.0)
+                nd_mag_offset = 0.0
+                win = self.window()
+                if win and hasattr(win, 'settings_dialog') and win.settings_dialog:
+                    sd = win.settings_dialog
+                    if hasattr(sd, 'nd_mag_offset_spin'):
+                        nd_mag_offset = sd.nd_mag_offset_spin.value()
+                nd_keep &= (nd_eff_mag >= mag_min) & (nd_eff_mag < mag_max + nd_opp_max + nd_mag_offset)
+
+                # Behind-sun filter (unless "Show behind sun" is checked)
+                if not show_hollow:
+                    if hasattr(self, 'sun_ra') and hasattr(self, 'sun_dec') and hasattr(self, 'sun_dist'):
+                        nd_ra_r = np.radians(nd_pos[:, 1])
+                        nd_dec_r = np.radians(nd_pos[:, 2])
+                        cos_s = (np.sin(nd_dec_r) * np.sin(np.radians(self.sun_dec)) +
+                                np.cos(nd_dec_r) * np.cos(np.radians(self.sun_dec)) *
+                                np.cos(nd_ra_r - np.radians(self.sun_ra)))
+                        cos_s = np.clip(cos_s, -1, 1)
+                        nd_dist = nd_pos[:, 3]
+                        dsn_sq = nd_dist**2 + self.sun_dist**2 - 2 * nd_dist * self.sun_dist * cos_s
+                        dsn = np.sqrt(np.abs(dsn_sq))
+                        nd_keep &= (dsn >= nd_dist)  # Near side: Sun-NEO >= Earth-NEO
+
+                # Site filter
+                if site_filter and nondiscovery_asteroids is not None:
+                    wl_on = site_filter.get('whitelist_enabled', False)
+                    wl = site_filter.get('whitelist', [])
+                    bl_on = site_filter.get('blacklist_enabled', False)
+                    bl = site_filter.get('blacklist', [])
+                    if (wl_on and wl) or (bl_on and bl):
+                        for i in range(len(nd_pos)):
+                            if nd_keep[i]:
+                                ast_idx = int(nd_pos[i, 0])
+                                if ast_idx < len(nondiscovery_asteroids):
+                                    site = nondiscovery_asteroids[ast_idx].get('discovery_site', '')
+                                    site = str(site).strip() if site else ''
+                                    if wl_on and wl and site not in wl:
+                                        nd_keep[i] = False
+                                    elif bl_on and bl and site in bl:
+                                        nd_keep[i] = False
+
+                # Apply combined filter mask
+                nd_pos = nd_pos[nd_keep]
+                nd_display_mag = nd_display_mag[nd_keep]
+
+                if len(nd_pos) > 0:
+                    nd_ra = nd_pos[:, 1]
+                    nd_dec = nd_pos[:, 2]
+                    nd_mag_vals = nd_display_mag  # Original V mag for color/size
+
+                    # Transform coordinates (same as main objects)
+                    if self.coord_system == 'ecliptic':
+                        nd_lon, nd_lat = CoordinateTransformer.equatorial_to_ecliptic(nd_ra, nd_dec)
+                    elif self.coord_system == 'galactic':
+                        nd_lon, nd_lat = CoordinateTransformer.equatorial_to_galactic(nd_ra, nd_dec)
+                    elif self.coord_system == 'opposition':
+                        nd_lon, nd_lat = CoordinateTransformer.equatorial_to_ecliptic(nd_ra, nd_dec)
+                        if hasattr(self, 'sun_ecl_lon'):
+                            opp_lon = (self.sun_ecl_lon + 180) % 360
+                            nd_lon = nd_lon - opp_lon
+                            nd_lon = np.where(nd_lon > 180, nd_lon - 360, nd_lon)
+                            nd_lon = np.where(nd_lon < -180, nd_lon + 360, nd_lon)
+                    else:
+                        nd_lon, nd_lat = nd_ra, nd_dec
+
+                    # Convert for projection
+                    if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                        nd_lon = np.where(nd_lon > 180, nd_lon - 360, nd_lon)
+                        nd_lon_rad = np.radians(-nd_lon)
+                        nd_lat_rad = np.radians(nd_lat)
+                        nd_valid = (np.abs(nd_lon_rad) <= np.pi) & (np.abs(nd_lat_rad) <= np.pi/2)
+                        nd_lon_rad = nd_lon_rad[nd_valid]
+                        nd_lat_rad = nd_lat_rad[nd_valid]
+                        nd_mag_vals = nd_mag_vals[nd_valid]
+                        nd_pos = nd_pos[nd_valid]
+                        nd_offsets = np.column_stack([nd_lon_rad, nd_lat_rad])
+                    else:
+                        nd_lon = np.where(nd_lon > 180, nd_lon - 360, nd_lon)
+                        nd_offsets = np.column_stack([nd_lon, nd_lat])
+
+                    if len(nd_offsets) > 0:
+                        # Size diamonds using same size settings
+                        nd_data_vals = nd_mag_vals
+                        size_min_diam = size_settings.get('size_min', 2)
+                        size_max_diam = size_settings.get('size_max', 12)
+                        data_min_s = size_settings.get('data_min', 19.0)
+                        data_max_s = size_settings.get('data_max', 25.0)
+                        data_range_s = data_max_s - data_min_s
+                        bin_size_s = size_settings.get('bin_size', 0.25)
+                        invert_s = size_settings.get('invert', True)
+
+                        if abs(data_range_s) > 0.0001 and bin_size_s > 0:
+                            n_bins_s = max(1, int(np.ceil(data_range_s / bin_size_s)))
+                        else:
+                            n_bins_s = 1
+                        normalized_s = (nd_data_vals - data_min_s) / data_range_s if data_range_s > 0 else np.zeros(len(nd_data_vals))
+                        normalized_s = np.clip(normalized_s, 0, 0.9999)
+                        bin_indices_s = (normalized_s * n_bins_s).astype(int)
+                        bin_indices_s = np.clip(bin_indices_s, 0, n_bins_s - 1)
+                        if n_bins_s > 1:
+                            bin_diams = np.linspace(size_min_diam, size_max_diam, n_bins_s)
+                        else:
+                            bin_diams = np.array([(size_min_diam + size_max_diam) / 2])
+                        if invert_s:
+                            bin_indices_s = (n_bins_s - 1) - bin_indices_s
+                        nd_diameters = bin_diams[bin_indices_s]
+                        nd_sizes = np.pi * (nd_diameters ** 2) / 4
+
+                        # Color diamonds by magnitude (edge colors)
+                        import matplotlib
+                        norm = plt.Normalize(vmin=self.cbar_min, vmax=self.cbar_max)
+                        cmap_obj = matplotlib.colormaps.get_cmap(self.cmap)
+                        nd_colors = cmap_obj(norm(nd_mag_vals))
+
+                        self.scatter_nondiscovery.set_offsets(nd_offsets)
+                        self.scatter_nondiscovery.set_sizes(nd_sizes)
+                        self.scatter_nondiscovery.set_edgecolors(nd_colors)
+
+                        # Include diamonds in click-to-identify data
+                        if nondiscovery_asteroids is not None:
+                            self.plot_offsets = np.vstack([self.plot_offsets, nd_offsets])
+                            self.visible_data = np.vstack([self.visible_data, nd_pos])
+                            self.nondiscovery_asteroids = nondiscovery_asteroids
+                        self._nondiscovery_count = len(nd_offsets)
+                    else:
+                        self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))
+                        self.scatter_nondiscovery.set_sizes([])
+                        self._nondiscovery_count = 0
+                else:
+                    self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))
+                    self.scatter_nondiscovery.set_sizes([])
+                    self._nondiscovery_count = 0
+            else:
+                self.scatter_nondiscovery.set_offsets(np.empty((0, 2)))
+                self.scatter_nondiscovery.set_sizes([])
+                self._nondiscovery_count = 0
+
         # Enhanced Stats
         if len(mag) > 0:
             # Date and time - use cached timescale to avoid file handle exhaustion
@@ -4102,8 +4437,30 @@ class SkyMapCanvas(FigureCanvas):
         self.stats_visible = not self.stats_visible
         self.stats_text.set_visible(self.stats_visible)
         self.draw()
+    def keyPressEvent(self, event):
+        """Override Qt key press to pass unhandled events to parent.
+
+        Matplotlib's FigureCanvasQTAgg accepts all key events by default,
+        which prevents them from propagating to the main window (needed for
+        keyboard shortcuts and spinbox input). We ignore events we don't
+        handle so they propagate normally.
+        """
+        key = event.key()
+        if PYQT_VERSION == 6:
+            if key == Qt.Key.Key_Escape:
+                self._clear_constellation_highlight()
+                event.accept()
+                return
+        else:
+            if key == Qt.Key_Escape:
+                self._clear_constellation_highlight()
+                event.accept()
+                return
+        # Don't accept - let event propagate to parent widgets
+        event.ignore()
+
     def on_key_press(self, event):
-        """Handle key press events."""
+        """Handle matplotlib key press events (deprecated - see keyPressEvent)."""
         if event.key == 'escape':
             # Clear constellation highlight on Escape
             self._clear_constellation_highlight()
@@ -4167,11 +4524,20 @@ class SkyMapCanvas(FigureCanvas):
         # Get the asteroid data
         visible_row = self.visible_data[nearest_idx]
         ast_idx = int(visible_row[0])  # Column 0 is the index
-        
-        if ast_idx < 0 or ast_idx >= len(self.current_asteroids):
-            return
-        
-        asteroid = self.current_asteroids[ast_idx]
+
+        # Determine if this is a non-discovery diamond (appended after main points)
+        nd_count = getattr(self, '_nondiscovery_count', 0)
+        main_count = len(self.plot_offsets) - nd_count
+        if nearest_idx >= main_count and nd_count > 0:
+            # Non-discovery: look up in nondiscovery_asteroids
+            nd_list = getattr(self, 'nondiscovery_asteroids', None)
+            if nd_list is None or ast_idx < 0 or ast_idx >= len(nd_list):
+                return
+            asteroid = nd_list[ast_idx]
+        else:
+            if ast_idx < 0 or ast_idx >= len(self.current_asteroids):
+                return
+            asteroid = self.current_asteroids[ast_idx]
         
         # Current position data from visible_row
         current_ra = visible_row[1]
@@ -8702,9 +9068,17 @@ class MagnitudeRangesPanel(QWidget):
         self.lunation_discoveries_check = QCheckBox("Show discoveries per lunation")
         self.lunation_discoveries_check.setChecked(False)
         self.lunation_discoveries_check.setToolTip("Show only NEOs discovered during the current lunation (CLN)")
-        self.lunation_discoveries_check.stateChanged.connect(self.on_filters_changed)
+        self.lunation_discoveries_check.stateChanged.connect(self.on_lunation_changed)
         mag_layout.addWidget(self.lunation_discoveries_check)
-        
+
+        # Show non-discoveries (undiscovered objects as diamonds)
+        self.show_nondiscoveries_check = QCheckBox("Show known non-discoveries")
+        self.show_nondiscoveries_check.setChecked(False)
+        self.show_nondiscoveries_check.setEnabled(False)
+        self.show_nondiscoveries_check.setToolTip("Overlay not-yet-discovered objects as open diamonds")
+        self.show_nondiscoveries_check.stateChanged.connect(self.on_filters_changed)
+        mag_layout.addWidget(self.show_nondiscoveries_check)
+
         mag_group.setLayout(mag_layout)
         layout.addWidget(mag_group)
         
@@ -8734,9 +9108,21 @@ class MagnitudeRangesPanel(QWidget):
         """Return whether to hide all NEOs"""
         return self.hide_all_neos_check.isChecked()
 
+    def on_lunation_changed(self, state):
+        """Handle lunation discoveries checkbox change"""
+        lunation_on = (state == 2)  # Qt.Checked = 2
+        self.show_nondiscoveries_check.setEnabled(lunation_on)
+        if not lunation_on:
+            self.show_nondiscoveries_check.setChecked(False)
+        self.filters_changed.emit()
+
     def get_lunation_discoveries_only(self):
         """Return whether to show only NEOs discovered during current lunation"""
         return self.lunation_discoveries_check.isChecked()
+
+    def get_show_nondiscoveries(self):
+        """Return whether to show non-discovery objects as diamonds"""
+        return self.show_nondiscoveries_check.isChecked()
     
     def on_show_all_changed(self, state):
         """Handle show all NEOs checkbox change"""
@@ -10441,7 +10827,24 @@ class SettingsDialog(QDialog):
         lines_label = QLabel("Boundary lines:")
         lines_label.setStyleSheet("font-weight: bold;")
         horizon_layout.addWidget(lines_label)
-        
+
+        # Airmass limit boundary line
+        airmass_line_row = QHBoxLayout()
+        self.show_airmass_line_check = QCheckBox("Airmass limit (30.0°)")
+        self.show_airmass_line_check.setChecked(False)
+        self.show_airmass_line_check.setToolTip("Show boundary line at the airmass limit altitude")
+        self.show_airmass_line_check.stateChanged.connect(self.on_horizon_changed)
+        airmass_line_row.addWidget(self.show_airmass_line_check)
+        self.airmass_line_color_edit = QLineEdit("#FFFF00")
+        self.airmass_line_color_edit.setMaximumWidth(70)
+        self.airmass_line_color_edit.setToolTip("Airmass limit line color")
+        self.airmass_line_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.airmass_line_color_edit.textChanged.connect(lambda text, w=self.airmass_line_color_edit: self._update_color_edit_style(w))
+        airmass_line_row.addWidget(self.airmass_line_color_edit)
+        self._update_color_edit_style(self.airmass_line_color_edit)
+        airmass_line_row.addStretch()
+        horizon_layout.addLayout(airmass_line_row)
+
         # Horizon (alt=0°)
         horizon_row = QHBoxLayout()
         self.show_horizon_check = QCheckBox("Horizon (0°)")
@@ -10510,6 +10913,23 @@ class SettingsDialog(QDialog):
         astro_row.addStretch()
         horizon_layout.addLayout(astro_row)
         
+        # Zenith/Nadir markers
+        zenith_row = QHBoxLayout()
+        self.show_zenith_nadir_check = QCheckBox("Zenith/Nadir")
+        self.show_zenith_nadir_check.setChecked(False)
+        self.show_zenith_nadir_check.setToolTip("Mark the zenith and nadir positions")
+        self.show_zenith_nadir_check.stateChanged.connect(self.on_horizon_changed)
+        zenith_row.addWidget(self.show_zenith_nadir_check)
+        self.zenith_color_edit = QLineEdit("#00FF00")
+        self.zenith_color_edit.setMaximumWidth(70)
+        self.zenith_color_edit.setToolTip("Zenith/Nadir marker color")
+        self.zenith_color_edit.editingFinished.connect(self.on_horizon_changed)
+        self.zenith_color_edit.textChanged.connect(lambda text, w=self.zenith_color_edit: self._update_color_edit_style(w))
+        zenith_row.addWidget(self.zenith_color_edit)
+        self._update_color_edit_style(self.zenith_color_edit)
+        zenith_row.addStretch()
+        horizon_layout.addLayout(zenith_row)
+
         # Line style options
         style_row = QHBoxLayout()
         style_row.addWidget(QLabel("Line style:"))
@@ -10529,6 +10949,26 @@ class SettingsDialog(QDialog):
         style_row.addWidget(self.horizon_weight_spin)
         style_row.addStretch()
         horizon_layout.addLayout(style_row)
+
+        # Airmass limit
+        airmass_row = QHBoxLayout()
+        self.airmass_limit_check = QCheckBox("Airmass limit:")
+        self.airmass_limit_check.setChecked(False)
+        self.airmass_limit_check.setToolTip("Exclude sky regions above the specified airmass\n(airmass 2.0 = altitude 30°, 3.0 = 19.5°)")
+        self.airmass_limit_check.stateChanged.connect(self.on_horizon_changed)
+        airmass_row.addWidget(self.airmass_limit_check)
+        self.airmass_limit_spin = QDoubleSpinBox()
+        self.airmass_limit_spin.setRange(1.00, 10.00)
+        self.airmass_limit_spin.setValue(2.00)
+        self.airmass_limit_spin.setDecimals(2)
+        self.airmass_limit_spin.setSingleStep(0.05)
+        self.airmass_limit_spin.setMaximumWidth(60)
+        self.airmass_limit_spin.setToolTip("Maximum airmass (1.00 = zenith)")
+        self.airmass_limit_spin.valueChanged.connect(self._update_airmass_label)
+        self.airmass_limit_spin.valueChanged.connect(self.on_horizon_changed)
+        airmass_row.addWidget(self.airmass_limit_spin)
+        airmass_row.addStretch()
+        horizon_layout.addLayout(airmass_row)
 
         # Observable region shading
         shade_row = QHBoxLayout()
@@ -10954,6 +11394,46 @@ class SettingsDialog(QDialog):
         self.hide_missing_discovery_check.stateChanged.connect(self.on_discovery_changed)
         advanced_layout.addWidget(self.hide_missing_discovery_check)
 
+        # Non-discovery latency
+        nd_latency_row = QHBoxLayout()
+        nd_latency_row.addWidget(QLabel("Non-discovery latency:"))
+        self.nd_latency_spin = QSpinBox()
+        self.nd_latency_spin.setRange(0, 999)
+        self.nd_latency_spin.setValue(0)
+        self.nd_latency_spin.setMaximumWidth(60)
+        self.nd_latency_spin.setToolTip("Only show known non-discoveries found more than this many lunations after the current one")
+        self.nd_latency_spin.valueChanged.connect(self.on_discovery_changed)
+        nd_latency_row.addWidget(self.nd_latency_spin)
+        nd_latency_row.addWidget(QLabel("lunations"))
+        nd_latency_row.addStretch()
+        advanced_layout.addLayout(nd_latency_row)
+
+        # Non-discovery magnitude offset
+        nd_mag_row = QHBoxLayout()
+        nd_mag_row.addWidget(QLabel("Non-discovery mag offset:"))
+        self.nd_mag_offset_spin = QDoubleSpinBox()
+        self.nd_mag_offset_spin.setRange(-10.0, 10.0)
+        self.nd_mag_offset_spin.setValue(0.0)
+        self.nd_mag_offset_spin.setDecimals(2)
+        self.nd_mag_offset_spin.setSingleStep(0.25)
+        self.nd_mag_offset_spin.setMaximumWidth(65)
+        self.nd_mag_offset_spin.setToolTip("Added to V max for non-discoveries: positive = fainter limit, negative = brighter")
+        self.nd_mag_offset_spin.valueChanged.connect(self.on_discovery_changed)
+        nd_mag_row.addWidget(self.nd_mag_offset_spin)
+        nd_mag_row.addWidget(QLabel("mag"))
+        self.nd_mag_reset_btn = QPushButton("Reset")
+        self.nd_mag_reset_btn.setMaximumWidth(50)
+        self.nd_mag_reset_btn.setToolTip("Reset non-discovery mag offset to 0")
+        self.nd_mag_reset_btn.clicked.connect(self._reset_nd_mag_offset)
+        nd_mag_row.addWidget(self.nd_mag_reset_btn)
+        self.nd_mag_v84_btn = QPushButton("V84 limit")
+        self.nd_mag_v84_btn.setMaximumWidth(70)
+        self.nd_mag_v84_btn.setToolTip("Set offset so non-discovery V max = mean + 1σ of visible discoveries (~84th percentile)")
+        self.nd_mag_v84_btn.clicked.connect(self._apply_v84_limit)
+        nd_mag_row.addWidget(self.nd_mag_v84_btn)
+        nd_mag_row.addStretch()
+        advanced_layout.addLayout(nd_mag_row)
+
         # Collapsible control panels
         self.kiosk_mode_check = QCheckBox("Collapsible control panels")
         self.kiosk_mode_check.setChecked(False)
@@ -11249,7 +11729,40 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         if parent and hasattr(parent, 'on_discovery_changed'):
             parent.on_discovery_changed()
-    
+
+    def _reset_nd_mag_offset(self):
+        """Reset non-discovery mag offset to 0 and clear V84 button state."""
+        self.nd_mag_offset_spin.setValue(0.0)
+        self.nd_mag_v84_btn.setStyleSheet("")
+        self.nd_mag_v84_btn.setText("V84 limit")
+
+    def _apply_v84_limit(self):
+        """Set nd_mag_offset so effective non-discovery V max = mean + 1σ of visible discoveries."""
+        win = self.parent()
+        if not win or not hasattr(win, 'canvas'):
+            return
+        canvas = win.canvas
+        vd = getattr(canvas, 'visible_data', None)
+        if vd is None or len(vd) == 0:
+            return
+        # Exclude non-discovery points (appended at the end)
+        nd_count = getattr(canvas, '_nondiscovery_count', 0)
+        main_count = len(vd) - nd_count
+        if main_count <= 1:
+            return
+        mags = vd[:main_count, 4]
+        mean_v = np.mean(mags)
+        std_v = np.std(mags)
+        # Current V max from magnitude panel
+        if hasattr(win, 'magnitude_panel'):
+            _, v_max = win.magnitude_panel.get_magnitude_limits()
+        else:
+            v_max = 22.0
+        offset = (mean_v + std_v) - v_max
+        self.nd_mag_offset_spin.setValue(round(offset, 2))
+        self.nd_mag_v84_btn.setStyleSheet("background-color: #90EE90; font-weight: bold;")
+        self.nd_mag_v84_btn.setText(f"V84={mean_v + std_v:.1f}")
+
     def get_site_filter_settings(self):
         """Return current site filter settings"""
         # Parse whitelist
@@ -11397,11 +11910,23 @@ class SettingsDialog(QDialog):
             'astro_color': self.astro_color_edit.text(),
             'line_style': self.horizon_style_combo.currentText(),
             'line_weight': self.horizon_weight_spin.value(),
+            'airmass_enabled': self.airmass_limit_check.isChecked(),
+            'airmass_limit': self.airmass_limit_spin.value(),
+            'show_airmass_line': self.show_airmass_line_check.isChecked(),
+            'airmass_line_color': self.airmass_line_color_edit.text(),
+            'show_zenith_nadir': self.show_zenith_nadir_check.isChecked(),
+            'zenith_color': self.zenith_color_edit.text(),
             'shade_enabled': self.shade_observable_check.isChecked(),
             'shade_night_color': self.shade_night_color_edit.text(),
             'shade_day_color': self.shade_day_color_edit.text()
         }
-    
+
+    def _update_airmass_label(self, value=None):
+        """Update the airmass boundary line checkbox label with the altitude equivalent."""
+        airmass = self.airmass_limit_spin.value()
+        alt_deg = np.degrees(np.arcsin(1.0 / airmass))
+        self.show_airmass_line_check.setText(f"Airmass limit ({alt_deg:.1f}°)")
+
     def on_horizon_changed(self):
         """Emit signal when horizon/twilight settings change"""
         # Enable/disable dependent controls based on main checkbox
@@ -11420,6 +11945,15 @@ class SettingsDialog(QDialog):
         self.astro_color_edit.setEnabled(enabled and self.show_astro_check.isChecked())
         self.horizon_style_combo.setEnabled(enabled)
         self.horizon_weight_spin.setEnabled(enabled)
+        # Airmass controls
+        airmass_active = enabled and self.airmass_limit_check.isChecked()
+        self.airmass_limit_check.setEnabled(enabled)
+        self.airmass_limit_spin.setEnabled(airmass_active)
+        self.show_airmass_line_check.setEnabled(airmass_active)
+        self.airmass_line_color_edit.setEnabled(airmass_active and self.show_airmass_line_check.isChecked())
+        # Zenith/Nadir controls (only when horizon is enabled)
+        self.show_zenith_nadir_check.setEnabled(enabled)
+        self.zenith_color_edit.setEnabled(enabled and self.show_zenith_nadir_check.isChecked())
         # Observable region shading controls
         self.shade_observable_check.setEnabled(enabled)
         shade_enabled = enabled and self.shade_observable_check.isChecked()
@@ -11686,7 +12220,8 @@ class SettingsDialog(QDialog):
                     'h_max': parent.magnitude_panel.h_max_spin.value(),
                     'show_all': parent.magnitude_panel.show_all_neos_check.isChecked(),
                     'hide_all': parent.magnitude_panel.hide_all_neos_check.isChecked(),
-                    'lunation_discoveries_only': parent.magnitude_panel.lunation_discoveries_check.isChecked()
+                    'lunation_discoveries_only': parent.magnitude_panel.lunation_discoveries_check.isChecked(),
+                    'show_nondiscoveries': parent.magnitude_panel.show_nondiscoveries_check.isChecked()
                 }
 
             # Animation
@@ -11858,7 +12393,9 @@ class SettingsDialog(QDialog):
             state['advanced'] = {
                 'lr_increment': self.lr_increment_spin.value(),
                 'lr_unit': self.lr_unit_combo.currentText(),
-                'mag_hysteresis': self.mag_hysteresis_spin.value()
+                'mag_hysteresis': self.mag_hysteresis_spin.value(),
+                'nd_latency': self.nd_latency_spin.value(),
+                'nd_mag_offset': self.nd_mag_offset_spin.value()
             }
 
             # Horizon/Twilight
@@ -11877,6 +12414,12 @@ class SettingsDialog(QDialog):
                 'astro_color': self.astro_color_edit.text(),
                 'line_style': self.horizon_style_combo.currentText(),
                 'line_weight': self.horizon_weight_spin.value(),
+                'airmass_enabled': self.airmass_limit_check.isChecked(),
+                'airmass_limit': self.airmass_limit_spin.value(),
+                'show_airmass_line': self.show_airmass_line_check.isChecked(),
+                'airmass_line_color': self.airmass_line_color_edit.text(),
+                'show_zenith_nadir': self.show_zenith_nadir_check.isChecked(),
+                'zenith_color': self.zenith_color_edit.text(),
                 'shade_enabled': self.shade_observable_check.isChecked(),
                 'shade_night_color': self.shade_night_color_edit.text(),
                 'shade_day_color': self.shade_day_color_edit.text()
@@ -12021,6 +12564,7 @@ class SettingsDialog(QDialog):
                 parent.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
                 parent.magnitude_panel.hide_all_neos_check.setChecked(m.get('hide_all', False))
                 parent.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
+                parent.magnitude_panel.show_nondiscoveries_check.setChecked(m.get('show_nondiscoveries', False))
 
             # Animation
             if 'animation' in state and hasattr(parent, 'controls_panel'):
@@ -12199,6 +12743,8 @@ class SettingsDialog(QDialog):
                 self.lr_increment_spin.setValue(a.get('lr_increment', 1.0))
                 self.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
                 self.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
+                self.nd_latency_spin.setValue(a.get('nd_latency', 0))
+                self.nd_mag_offset_spin.setValue(a.get('nd_mag_offset', 0.0))
 
             # Horizon/Twilight (fallback defaults match factory defaults)
             if 'horizon' in state:
@@ -12217,6 +12763,12 @@ class SettingsDialog(QDialog):
                 self.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                 self.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                 self.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
+                self.airmass_limit_check.setChecked(h.get('airmass_enabled', False))
+                self.airmass_limit_spin.setValue(h.get('airmass_limit', 2.0))
+                self.show_airmass_line_check.setChecked(h.get('show_airmass_line', False))
+                self.airmass_line_color_edit.setText(h.get('airmass_line_color', '#FFFF00'))
+                self.show_zenith_nadir_check.setChecked(h.get('show_zenith_nadir', False))
+                self.zenith_color_edit.setText(h.get('zenith_color', '#00FF00'))
                 self.shade_observable_check.setChecked(h.get('shade_enabled', False))
                 self.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
                 self.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
@@ -12359,7 +12911,10 @@ class NEOVisualizer(QMainWindow):
         self.setup_ui()
         self.setup_statusbar()
         self.setup_keyboard_shortcuts()
-        
+
+        # Install event filter to release focus from input widgets on Enter
+        QApplication.instance().installEventFilter(self)
+
         QTimer.singleShot(100, self.initialize_data)
     
     def setup_ui(self):
@@ -14243,17 +14798,12 @@ class NEOVisualizer(QMainWindow):
     def setup_keyboard_shortcuts(self):
         """Set up keyboard shortcuts for time navigation.
 
-        Uses Shift+[ and Shift+] to avoid conflicts with text input widgets.
+        Shift+[ and Shift+] (i.e., { and }) navigate time backward/forward.
+        Handled via keyPressEvent instead of QShortcut for reliable cross-platform
+        behavior (QKeySequence("Shift+[") is unreliable on macOS).
         """
-        # Shift+bracket keys - avoid conflicts with text input
-        shortcut_back = QShortcut(QKeySequence("Shift+["), self)
-        shortcut_back.activated.connect(self.navigate_time_backward)
-
-        shortcut_fwd = QShortcut(QKeySequence("Shift+]"), self)
-        shortcut_fwd.activated.connect(self.navigate_time_forward)
-
-        # Store shortcuts to prevent garbage collection
-        self._shortcuts = [shortcut_back, shortcut_fwd]
+        # Navigation is now handled in keyPressEvent below
+        pass
     
     def navigate_time_backward(self):
         """Navigate time backward by configured increment"""
@@ -14281,14 +14831,14 @@ class NEOVisualizer(QMainWindow):
         if self.settings_dialog and hasattr(self.settings_dialog, 'get_advanced_settings'):
             settings = self.settings_dialog.get_advanced_settings()
         else:
-            settings = {'lr_increment': 1, 'lr_unit': 'solar day'}
+            settings = {'lr_increment': 1, 'lr_unit': 'hour'}
         
         # Constants
         SIDEREAL_DAY = 0.99726957
         LUNATION = 29.530588853
         
         increment = settings.get('lr_increment', 1.0)
-        unit = settings.get('lr_unit', 'solar day')
+        unit = settings.get('lr_unit', 'hour')
 
         if unit == 'minute':
             return increment / 1440.0  # 1440 minutes per day
@@ -14658,10 +15208,16 @@ class NEOVisualizer(QMainWindow):
             
             # Apply lunation discovery filter (show only NEOs discovered during current CLN)
             lunation_discoveries_only = self.magnitude_panel.get_lunation_discoveries_only()
+            show_nondiscoveries = self.magnitude_panel.get_show_nondiscoveries()
+            nondiscovery_asteroids = None
             if lunation_discoveries_only:
                 try:
                     # Use precise CLN calculation (changes at actual Full Moon)
                     current_cln, _ = jd_to_cln(jd)
+
+                    # Save pre-filter list for non-discoveries overlay
+                    if show_nondiscoveries:
+                        pre_lunation_asteroids = list(asteroids)
 
                     # Fast filter using precomputed discovery_cln
                     # Note: discovery_cln uses average method, so there may be ~1 day
@@ -14672,6 +15228,18 @@ class NEOVisualizer(QMainWindow):
                     n_with_cln = sum(1 for ast in asteroids if ast.get('discovery_cln') is not None)
                     logger.debug(f"Lunation filter: CLN {current_cln}, {n_with_cln}/{len(asteroids)} have discovery_cln, {len(filtered_asteroids)} match")
                     asteroids = filtered_asteroids
+
+                    # Build non-discovery list: objects discovered more than
+                    # nd_latency lunations after the current one
+                    if show_nondiscoveries:
+                        nd_latency = 0
+                        if self.settings_dialog and hasattr(self.settings_dialog, 'nd_latency_spin'):
+                            nd_latency = self.settings_dialog.nd_latency_spin.value()
+                        nd_threshold = current_cln + nd_latency
+                        nondiscovery_asteroids = [ast for ast in pre_lunation_asteroids
+                                                  if ast.get('discovery_cln') is not None
+                                                  and ast.get('discovery_cln') > nd_threshold]
+                        logger.debug(f"Non-discoveries: {len(nondiscovery_asteroids)} objects discovered after CLN {nd_threshold} (latency={nd_latency})")
                 except Exception as e:
                     logger.error(f"Lunation filter error: {e}")
                     pass  # Keep all if CLN calculation fails
@@ -14727,6 +15295,20 @@ class NEOVisualizer(QMainWindow):
                     display_asteroids = asteroids[::decimation]
 
             positions = self.calculator.calculate_batch(display_asteroids, jd)
+
+            # Compute non-discovery positions if needed
+            nondiscovery_positions = None
+            display_nondiscovery_asteroids = None
+            if nondiscovery_asteroids is not None and len(nondiscovery_asteroids) > 0:
+                display_nd = nondiscovery_asteroids
+                if is_animating and self.settings_dialog and hasattr(self.settings_dialog, 'get_fast_animation_settings'):
+                    fast_settings = self.settings_dialog.get_fast_animation_settings()
+                    if fast_settings.get('enabled', False):
+                        decimation = fast_settings.get('decimation', 4)
+                        display_nd = nondiscovery_asteroids[::decimation]
+                nondiscovery_positions = self.calculator.calculate_batch(display_nd, jd)
+                display_nondiscovery_asteroids = display_nd
+
             if self.show_fps:
                 t1 = time.time()
 
@@ -14738,7 +15320,9 @@ class NEOVisualizer(QMainWindow):
                                    galactic_settings=galactic_settings, opposition_settings=opposition_settings,
                                    hide_before_discovery=hide_before_discovery, hide_missing_discovery=hide_missing_discovery,
                                    color_by=color_by, show_legend=show_legend, site_filter=site_filter,
-                                   misc_filter=misc_filter)
+                                   misc_filter=misc_filter,
+                                   nondiscovery_positions=nondiscovery_positions,
+                                   nondiscovery_asteroids=display_nondiscovery_asteroids)
 
             if self.show_fps:
                 t2 = time.time()
@@ -14753,9 +15337,15 @@ class NEOVisualizer(QMainWindow):
                 if lunation_discoveries_only:
                     try:
                         current_cln, _ = jd_to_cln(jd)
-                        self.status_label.setText(
-                            f"{dt} | {n_shown} discoveries in CLN {current_cln}"
-                        )
+                        nd_count = getattr(self.canvas, '_nondiscovery_count', 0)
+                        if show_nondiscoveries and nd_count > 0:
+                            self.status_label.setText(
+                                f"{dt} | {n_shown} discoveries + {nd_count} undiscovered in CLN {current_cln}"
+                            )
+                        else:
+                            self.status_label.setText(
+                                f"{dt} | {n_shown} discoveries in CLN {current_cln}"
+                            )
                     except:
                         self.status_label.setText(
                             f"{dt} | {n_shown} discoveries (lunation filter)"
@@ -15059,6 +15649,7 @@ class NEOVisualizer(QMainWindow):
             self.magnitude_panel.show_all_neos_check.setChecked(False)
             self.magnitude_panel.hide_all_neos_check.setChecked(False)
             self.magnitude_panel.lunation_discoveries_check.setChecked(False)
+            self.magnitude_panel.show_nondiscoveries_check.setChecked(False)
 
             # NEO classes panel
             self.neo_classes_panel.select_all()
@@ -15168,7 +15759,9 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.ud_increment_spin.setValue(1)
                 self.settings_dialog.ud_unit_combo.setCurrentText("lunation")
                 self.settings_dialog.mag_hysteresis_spin.setValue(0.10)
-                
+                self.settings_dialog.nd_latency_spin.setValue(0)
+                self.settings_dialog.nd_mag_offset_spin.setValue(0.0)
+
                 # Trailing
                 self.settings_dialog.enable_trailing_check.setChecked(False)
                 self.settings_dialog.trail_length_spin.setValue(50)
@@ -15195,6 +15788,12 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.astro_color_edit.setText("#6666FF")
                 self.settings_dialog.horizon_style_combo.setCurrentText("dashed")
                 self.settings_dialog.horizon_weight_spin.setValue(1.0)
+                self.settings_dialog.airmass_limit_check.setChecked(False)
+                self.settings_dialog.airmass_limit_spin.setValue(2.0)
+                self.settings_dialog.show_airmass_line_check.setChecked(False)
+                self.settings_dialog.airmass_line_color_edit.setText("#FFFF00")
+                self.settings_dialog.show_zenith_nadir_check.setChecked(False)
+                self.settings_dialog.zenith_color_edit.setText("#00FF00")
                 self.settings_dialog.shade_observable_check.setChecked(False)
                 self.settings_dialog.shade_night_color_edit.setText("#E8E8E8")
                 self.settings_dialog.shade_day_color_edit.setText("#FFFDE8")
@@ -15285,7 +15884,8 @@ class NEOVisualizer(QMainWindow):
                     'h_max': self.magnitude_panel.h_max_spin.value(),
                     'show_all': self.magnitude_panel.show_all_neos_check.isChecked(),
                     'hide_all': self.magnitude_panel.hide_all_neos_check.isChecked(),
-                    'lunation_discoveries_only': self.magnitude_panel.lunation_discoveries_check.isChecked()
+                    'lunation_discoveries_only': self.magnitude_panel.lunation_discoveries_check.isChecked(),
+                    'show_nondiscoveries': self.magnitude_panel.show_nondiscoveries_check.isChecked()
                 },
                 'animation': {
                     'rate': self.controls_panel.rate_spin.value(),
@@ -15430,9 +16030,11 @@ class NEOVisualizer(QMainWindow):
                 settings['advanced'] = {
                     'lr_increment': self.settings_dialog.lr_increment_spin.value(),
                     'lr_unit': self.settings_dialog.lr_unit_combo.currentText(),
-                    'mag_hysteresis': self.settings_dialog.mag_hysteresis_spin.value()
+                    'mag_hysteresis': self.settings_dialog.mag_hysteresis_spin.value(),
+                    'nd_latency': self.settings_dialog.nd_latency_spin.value(),
+                    'nd_mag_offset': self.settings_dialog.nd_mag_offset_spin.value()
                 }
-                
+
                 # Trailing
                 settings['trailing'] = {
                     'enabled': self.settings_dialog.enable_trailing_check.isChecked(),
@@ -15471,6 +16073,12 @@ class NEOVisualizer(QMainWindow):
                     'astro_color': self.settings_dialog.astro_color_edit.text(),
                     'line_style': self.settings_dialog.horizon_style_combo.currentText(),
                     'line_weight': self.settings_dialog.horizon_weight_spin.value(),
+                    'airmass_enabled': self.settings_dialog.airmass_limit_check.isChecked(),
+                    'airmass_limit': self.settings_dialog.airmass_limit_spin.value(),
+                    'show_airmass_line': self.settings_dialog.show_airmass_line_check.isChecked(),
+                    'airmass_line_color': self.settings_dialog.airmass_line_color_edit.text(),
+                    'show_zenith_nadir': self.settings_dialog.show_zenith_nadir_check.isChecked(),
+                    'zenith_color': self.settings_dialog.zenith_color_edit.text(),
                     'shade_enabled': self.settings_dialog.shade_observable_check.isChecked(),
                     'shade_night_color': self.settings_dialog.shade_night_color_edit.text(),
                     'shade_day_color': self.settings_dialog.shade_day_color_edit.text()
@@ -15529,6 +16137,7 @@ class NEOVisualizer(QMainWindow):
                 self.magnitude_panel.show_all_neos_check.setChecked(m.get('show_all', False))
                 self.magnitude_panel.hide_all_neos_check.setChecked(m.get('hide_all', False))
                 self.magnitude_panel.lunation_discoveries_check.setChecked(m.get('lunation_discoveries_only', False))
+                self.magnitude_panel.show_nondiscoveries_check.setChecked(m.get('show_nondiscoveries', False))
 
             # Animation
             if 'animation' in settings:
@@ -15706,7 +16315,9 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.lr_increment_spin.setValue(a.get('lr_increment', 1))
                     self.settings_dialog.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
                     self.settings_dialog.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
-                
+                    self.settings_dialog.nd_latency_spin.setValue(a.get('nd_latency', 0))
+                    self.settings_dialog.nd_mag_offset_spin.setValue(a.get('nd_mag_offset', 0.0))
+
                 # Trailing
                 if 'trailing' in settings:
                     t = settings['trailing']
@@ -15738,6 +16349,12 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.astro_color_edit.setText(h.get('astro_color', '#6666FF'))
                     self.settings_dialog.horizon_style_combo.setCurrentText(h.get('line_style', 'dashed'))
                     self.settings_dialog.horizon_weight_spin.setValue(h.get('line_weight', 1.0))
+                    self.settings_dialog.airmass_limit_check.setChecked(h.get('airmass_enabled', False))
+                    self.settings_dialog.airmass_limit_spin.setValue(h.get('airmass_limit', 2.0))
+                    self.settings_dialog.show_airmass_line_check.setChecked(h.get('show_airmass_line', False))
+                    self.settings_dialog.airmass_line_color_edit.setText(h.get('airmass_line_color', '#FFFF00'))
+                    self.settings_dialog.show_zenith_nadir_check.setChecked(h.get('show_zenith_nadir', False))
+                    self.settings_dialog.zenith_color_edit.setText(h.get('zenith_color', '#00FF00'))
                     self.settings_dialog.shade_observable_check.setChecked(h.get('shade_enabled', False))
                     self.settings_dialog.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
                     self.settings_dialog.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
@@ -15788,17 +16405,73 @@ class NEOVisualizer(QMainWindow):
             logger.error(f"Restore settings error: {e}")
             self.status_label.setText(f"Error restoring settings: {e}")
     
+    def eventFilter(self, obj, event):
+        """Release focus from input widgets on Enter/Return.
+
+        When the user presses Enter in a QSpinBox, QDoubleSpinBox, or QLineEdit,
+        focus returns to the canvas so keyboard shortcuts (Shift+[/]) work immediately.
+        """
+        if PYQT_VERSION == 6:
+            from PyQt6.QtCore import QEvent
+            key_press_type = QEvent.Type.KeyPress
+            enter_keys = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+        else:
+            from PyQt5.QtCore import QEvent
+            key_press_type = QEvent.KeyPress
+            enter_keys = (Qt.Key_Return, Qt.Key_Enter)
+
+        if event.type() == key_press_type and isinstance(obj, (QSpinBox, QDoubleSpinBox, QLineEdit)):
+            if event.key() in enter_keys:
+                # Let the widget process Enter first, then release focus
+                QTimer.singleShot(0, lambda: self.canvas.setFocus() if hasattr(self, 'canvas') else None)
+        return super().eventFilter(obj, event)
+
     def keyPressEvent(self, event):
-        """Handle keyboard events"""
-        from PyQt6.QtCore import Qt
-        
-        if event.key() == Qt.Key.Key_Escape:
+        """Handle keyboard events.
+
+        Shift+[ ({) and Shift+] (}) navigate time backward/forward.
+        Only fires when no text-input widget has focus (spinboxes, line edits).
+        """
+        key = event.key()
+
+        if PYQT_VERSION == 6:
+            escape_key = Qt.Key.Key_Escape
+            braceleft_key = Qt.Key.Key_BraceLeft
+            braceright_key = Qt.Key.Key_BraceRight
+            bracketleft_key = Qt.Key.Key_BracketLeft
+            bracketright_key = Qt.Key.Key_BracketRight
+            shift_mod = Qt.KeyboardModifier.ShiftModifier
+        else:
+            escape_key = Qt.Key_Escape
+            braceleft_key = Qt.Key_BraceLeft
+            braceright_key = Qt.Key_BraceRight
+            bracketleft_key = Qt.Key_BracketLeft
+            bracketright_key = Qt.Key_BracketRight
+            shift_mod = Qt.ShiftModifier
+
+        if key == escape_key:
             # Clear selection mode
             if hasattr(self, 'canvas') and self.canvas.selection_mode is not None:
                 self.canvas.clear_selection()
                 self.status_label.setText("Selection cancelled.")
                 return
-        
+
+        # Shift+[ / Shift+] for time navigation
+        # Check both BraceLeft/BraceRight (character produced) and
+        # Shift+BracketLeft/BracketRight (physical key + modifier) for cross-platform reliability
+        is_shift = bool(event.modifiers() & shift_mod)
+        if key == braceleft_key or (key == bracketleft_key and is_shift):
+            # Don't navigate if a text input widget has focus
+            focus_widget = QApplication.focusWidget()
+            if not isinstance(focus_widget, (QLineEdit, QSpinBox, QDoubleSpinBox)):
+                self.navigate_time_backward()
+                return
+        if key == braceright_key or (key == bracketright_key and is_shift):
+            focus_widget = QApplication.focusWidget()
+            if not isinstance(focus_widget, (QLineEdit, QSpinBox, QDoubleSpinBox)):
+                self.navigate_time_forward()
+                return
+
         # Pass to parent class
         super().keyPressEvent(event)
 
