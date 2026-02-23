@@ -9,6 +9,8 @@ Interactive visualization tool for the NEO catalog supporting Planetary Defense 
 
 **New to NEOlyzer?** See the [Getting Started Guide](GETTING_STARTED.md) for a step-by-step walkthrough.
 
+<a href="assets/NEOlyzer_visible_PHAs.png"><img src="assets/NEOlyzer_visible_PHAs.png" alt="NEOlyzer showing visible Potentially Hazardous Asteroids" width="800"></a>
+
 ---
 
 ## Quick Start
