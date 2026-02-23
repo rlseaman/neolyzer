@@ -1143,7 +1143,7 @@ class SkyMapCanvas(FigureCanvas):
         for line in self.trail_lines:
             try:
                 line.remove()
-            except:
+            except Exception:
                 pass
         self.trail_lines.clear()
     
@@ -1302,7 +1302,7 @@ class SkyMapCanvas(FigureCanvas):
         if self.density_hexbin is not None:
             try:
                 self.density_hexbin.remove()
-            except:
+            except Exception:
                 pass
             self.density_hexbin = None
         
@@ -1317,9 +1317,9 @@ class SkyMapCanvas(FigureCanvas):
                         for coll in list(self.contour_set.collections):
                             try:
                                 coll.remove()
-                            except:
+                            except Exception:
                                 pass
-                except:
+                except Exception:
                     pass
             except Exception as e:
                 logger.debug(f"Error clearing contours: {e}")
@@ -1330,9 +1330,9 @@ class SkyMapCanvas(FigureCanvas):
                     for txt in list(self.contour_set.labelTexts):
                         try:
                             txt.remove()
-                        except:
+                        except Exception:
                             pass
-            except:
+            except Exception:
                 pass
             
             self.contour_set = None
@@ -1408,7 +1408,7 @@ class SkyMapCanvas(FigureCanvas):
             try:
                 for coll in self.contour_set.collections:
                     coll.remove()
-            except:
+            except Exception:
                 pass
             self.contour_set = None
         
@@ -1617,7 +1617,7 @@ class SkyMapCanvas(FigureCanvas):
                     try:
                         gal_l, gal_b = CoordinateTransformer.equatorial_to_galactic(ra, dec)
                         draw_plane_line(gal_l, gal_b, color)
-                    except:
+                    except Exception:
                         pass
                 elif self.coord_system in ['ecliptic', 'opposition']:
                     # Ecliptic plane is horizontal line at lat=0 in ecliptic/opposition coords
@@ -1637,7 +1637,7 @@ class SkyMapCanvas(FigureCanvas):
                         try:
                             nep_ra, nep_dec = CoordinateTransformer.equatorial_to_galactic(nep_ra, nep_dec)
                             sep_ra, sep_dec = CoordinateTransformer.equatorial_to_galactic(sep_ra, sep_dec)
-                        except:
+                        except Exception:
                             pass
                     elif self.coord_system == 'ecliptic':
                         nep_ra, nep_dec = 0, 90  # North ecliptic pole in ecliptic coords
@@ -1670,7 +1670,7 @@ class SkyMapCanvas(FigureCanvas):
                     try:
                         gal_l, gal_b = CoordinateTransformer.equatorial_to_galactic(eq_ra, eq_dec)
                         draw_plane_line(gal_l, gal_b, color)
-                    except:
+                    except Exception:
                         pass
                 elif self.coord_system == 'opposition':
                     # Convert equator to ecliptic, then shift by opposition
@@ -1693,7 +1693,7 @@ class SkyMapCanvas(FigureCanvas):
                         try:
                             ncp_ra, ncp_dec = CoordinateTransformer.equatorial_to_galactic(0, 90)
                             scp_ra, scp_dec = CoordinateTransformer.equatorial_to_galactic(0, -90)
-                        except:
+                        except Exception:
                             pass
                     elif self.coord_system == 'opposition':
                         # Convert to ecliptic then shift
@@ -1719,14 +1719,14 @@ class SkyMapCanvas(FigureCanvas):
                     try:
                         gal_lon, gal_lat = CoordinateTransformer.galactic_to_equatorial(gal_l, gal_b)
                         draw_plane_line(gal_lon, gal_lat, color)
-                    except:
+                    except Exception:
                         pass
                 elif self.coord_system == 'ecliptic':
                     try:
                         eq_ra, eq_dec = CoordinateTransformer.galactic_to_equatorial(gal_l, gal_b)
                         gal_lon, gal_lat = CoordinateTransformer.equatorial_to_ecliptic(eq_ra, eq_dec)
                         draw_plane_line(gal_lon, gal_lat, color)
-                    except:
+                    except Exception:
                         pass
                 elif self.coord_system == 'opposition':
                     try:
@@ -1738,7 +1738,7 @@ class SkyMapCanvas(FigureCanvas):
                         gal_lon = np.where(gal_lon > 180, gal_lon - 360, gal_lon)
                         gal_lon = np.where(gal_lon < -180, gal_lon + 360, gal_lon)
                         draw_plane_line(gal_lon, gal_lat, color)
-                    except:
+                    except Exception:
                         pass
                 elif self.coord_system == 'galactic':
                     # Galactic plane is horizontal line at b=0 in galactic coords
@@ -2311,7 +2311,7 @@ class SkyMapCanvas(FigureCanvas):
                                 b = int(color[5:7], 16)
                                 luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
                                 text_color = 'black' if luminance > 0.5 else 'white'
-                            except:
+                            except Exception:
                                 text_color = 'black'
 
                             planet_text = self.ax.text(lon_rad, lat_rad, symbol,
@@ -2735,14 +2735,14 @@ class SkyMapCanvas(FigureCanvas):
                     artist.set_visible(False)
                     artist.remove()
                     cleared = True
-                except:
+                except Exception:
                     pass
             self._shading_artists = []
         # Force canvas redraw if we cleared something
         if cleared:
             try:
                 self.draw_idle()
-            except:
+            except Exception:
                 pass
 
     def _draw_observable_shading(self, jd, horizon_settings):
@@ -3197,7 +3197,7 @@ class SkyMapCanvas(FigureCanvas):
                     parent = self.parent()
                     if parent and hasattr(parent, 'time_panel') and hasattr(parent.time_panel, 'animation_timer'):
                         is_animating = parent.time_panel.animation_timer.isActive()
-                except:
+                except Exception:
                     pass
                 if not is_animating:
                     try:
@@ -3210,7 +3210,7 @@ class SkyMapCanvas(FigureCanvas):
                     for artist in self._shading_artists:
                         try:
                             artist.remove()
-                        except:
+                        except Exception:
                             pass
                     self._shading_artists = []
 
@@ -4551,7 +4551,7 @@ class SkyMapCanvas(FigureCanvas):
                 # Temporarily disconnect canvas to prevent highlight clear
                 self.current_info_dialog.canvas = None
                 self.current_info_dialog.close()
-            except:
+            except Exception:
                 pass
         
         # Highlight the selected object
@@ -4580,7 +4580,7 @@ class SkyMapCanvas(FigureCanvas):
         try:
             cursor_pos = QCursor.pos()
             click_screen_pos = (cursor_pos.x(), cursor_pos.y())
-        except:
+        except Exception:
             pass
         
         # Show info dialog (non-blocking, passing canvas reference)
@@ -4597,7 +4597,7 @@ class SkyMapCanvas(FigureCanvas):
             self.draw()
             try:
                 self.fig.canvas.flush_events()
-            except:
+            except Exception:
                 pass
             self.update()  # Qt widget update
     
@@ -4698,7 +4698,7 @@ class SkyMapCanvas(FigureCanvas):
         if hasattr(self, '_constellation_label') and self._constellation_label:
             try:
                 self._constellation_label.remove()
-            except:
+            except Exception:
                 pass
 
         # Position label at center of highlighted segments
@@ -4723,7 +4723,7 @@ class SkyMapCanvas(FigureCanvas):
         if hasattr(self, '_highlight_collection') and self._highlight_collection:
             try:
                 self._highlight_collection.remove()
-            except:
+            except Exception:
                 pass
             self._highlight_collection = None
 
@@ -4731,7 +4731,7 @@ class SkyMapCanvas(FigureCanvas):
         if hasattr(self, '_constellation_label') and self._constellation_label:
             try:
                 self._constellation_label.remove()
-            except:
+            except Exception:
                 pass
             self._constellation_label = None
 
@@ -4766,7 +4766,7 @@ class SkyMapCanvas(FigureCanvas):
         if hasattr(self, 'cneos_legend') and self.cneos_legend is not None:
             try:
                 self.cneos_legend.remove()
-            except:
+            except Exception:
                 pass
             self.cneos_legend = None
         # Also clear any other legends
@@ -4781,7 +4781,7 @@ class SkyMapCanvas(FigureCanvas):
             try:
                 self.current_info_dialog.canvas = None
                 self.current_info_dialog.close()
-            except:
+            except Exception:
                 pass
         
         # Get mag_max and calculator from parent
@@ -4854,7 +4854,7 @@ class SkyMapCanvas(FigureCanvas):
                     found_ast = ast
                     found_idx = idx
                     break
-            except:
+            except Exception:
                 pass
             
             # 4. Try packing the search string and comparing
@@ -4864,7 +4864,7 @@ class SkyMapCanvas(FigureCanvas):
                     found_ast = ast
                     found_idx = idx
                     break
-            except:
+            except Exception:
                 pass
             
             # 5. For numbered asteroids, try matching number in various forms
@@ -5040,7 +5040,7 @@ class SkyMapCanvas(FigureCanvas):
             try:
                 for artist in self.selector.artists:
                     artist.remove()
-            except:
+            except Exception:
                 pass
             self.selector = None
         self.selection_mode = None
@@ -5239,7 +5239,7 @@ class NEOInfoDialog(QDialog):
             helio_dist = np.sqrt(abs(helio_dist_sq))
             
             return helio_dist < dist  # Behind sun if heliocentric < geocentric (closer to Sun than Earth)
-        except:
+        except Exception:
             return False
     
     def _check_visibility_at_jd(self, jd):
@@ -5267,7 +5267,7 @@ class NEOInfoDialog(QDialog):
                 return False, mag_at_jd
             
             return True, mag_at_jd
-        except:
+        except Exception:
             return None, None
     
     def _find_visibility_transitions(self, current_jd, is_currently_visible):
@@ -5401,7 +5401,7 @@ class NEOInfoDialog(QDialog):
         try:
             disc_cln, _ = jd_to_cln(discovery_jd)
             return f'{date} (CLN {disc_cln})'
-        except:
+        except Exception:
             return date
     
     def _format_discovery_site(self, site, site_name=None):
@@ -5526,7 +5526,7 @@ class NEOInfoDialog(QDialog):
         packed_desig = ast['designation']
         try:
             full_desig = unpack_designation(packed_desig)
-        except:
+        except Exception:
             full_desig = packed_desig
         
         # Use readable_designation from MPC if available (e.g., "Eros" or "2024 AA")
@@ -5907,7 +5907,7 @@ class NEOTableDialog(QDialog):
 
                 try:
                     unpacked = unpack_designation(ast.get('designation', '')).lower()
-                except:
+                except Exception:
                     unpacked = ''
 
                 # Match if filter is found in any field
@@ -5954,7 +5954,7 @@ class NEOTableDialog(QDialog):
             else:
                 try:
                     display_des = unpack_designation(packed)
-                except:
+                except Exception:
                     display_des = packed
             item = QTableWidgetItem(display_des)
             item.setData(Qt.ItemDataRole.UserRole + 1, ast_idx)  # Store asteroid index
@@ -6041,7 +6041,7 @@ class NEOTableDialog(QDialog):
         if col in [2, 3, 4, 5, 6, 7, 8, 9, 10]:  # Numeric columns
             try:
                 item.setData(Qt.ItemDataRole.UserRole, float(text) if text else float('inf'))
-            except:
+            except Exception:
                 pass
         self.table.setItem(row, col, item)
     
@@ -6984,7 +6984,7 @@ class TimeControlPanel(QWidget):
             eph_name = get_configured_ephemeris().replace('.bsp', '').upper()
             year_range = get_ephemeris_year_range()
             msg = f"Date clamped to {eph_name} ephemeris {which_end} ({year_range[0] if which_end == 'start' else year_range[1]})"
-        except:
+        except Exception:
             msg = f"Date clamped to ephemeris {which_end}"
         # Find parent window and show in status bar
         parent = self.parent()
@@ -7527,7 +7527,7 @@ class ControlsPanel(QWidget):
                         found_indices.append(idx)
                         found = True
                         break
-                except:
+                except Exception:
                     pass
                 
                 # Number match
@@ -7677,7 +7677,7 @@ class ControlsPanel(QWidget):
             try:
                 ra, dec, dist, mag = calculator.calculate_position(elements, jd, ast.get('H', 20), ast.get('G', 0.15))
                 distances.append(dist)
-            except:
+            except Exception:
                 distances.append(np.nan)
         
         # Convert JD to dates for x-axis
@@ -8746,7 +8746,7 @@ class HelicentricChartDialog(QDialog):
             ts = get_timescale()
             t = ts.tt_jd(self.current_jd)
             date_str = t.utc_datetime().strftime('%Y-%m-%d %H:%M UTC')
-        except:
+        except Exception:
             date_str = f"JD {self.current_jd:.2f}"
         
         self.date_label.setText(date_str)
@@ -11626,7 +11626,7 @@ class SettingsDialog(QDialog):
             else:
                 # Invalid color - reset to default style
                 line_edit.setStyleSheet("")
-        except:
+        except Exception:
             line_edit.setStyleSheet("")
 
     def closeEvent(self, event):
@@ -13291,7 +13291,7 @@ class NEOVisualizer(QMainWindow):
                 self.canvas.current_info_dialog.canvas = None  # Prevent double clear
                 self.canvas.current_info_dialog.close()
                 self.canvas.current_info_dialog = None
-            except:
+            except Exception:
                 pass
         
         # Create dialog only once, then show/hide
@@ -13339,7 +13339,7 @@ class NEOVisualizer(QMainWindow):
                 for artist in self.canvas.overlay_artists:
                     try:
                         artist.remove()
-                    except:
+                    except Exception:
                         pass
                 self.canvas.overlay_artists = []
             # Clear observable region shading (depends on declination limits)
@@ -13358,7 +13358,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         # Clear observable region shading (depends on galactic exclusion)
@@ -13375,7 +13375,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         self.update_display()
@@ -13401,7 +13401,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         # Clear observable region shading (depends on solar/lunar exclusion)
@@ -13418,7 +13418,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         # Clear observable region shading
@@ -13436,7 +13436,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         self.update_display()
@@ -13451,7 +13451,7 @@ class NEOVisualizer(QMainWindow):
             for artist in self.canvas.overlay_artists:
                 try:
                     artist.remove()
-                except:
+                except Exception:
                     pass
             self.canvas.overlay_artists = []
         self.update_display()
@@ -14135,7 +14135,7 @@ class NEOVisualizer(QMainWindow):
             try:
                 for cat in catalogs:
                     self.blink_with_combo.addItem(cat['name'], cat['id'])
-            except:
+            except Exception:
                 pass
             # Restore selection
             if blink_with_current is not None:
@@ -15275,7 +15275,7 @@ class NEOVisualizer(QMainWindow):
                     try:
                         current_cln, _ = jd_to_cln(jd)
                         self.status_label.setText(f"No discoveries in CLN {current_cln}")
-                    except:
+                    except Exception:
                         self.status_label.setText("No objects (lunation filter)")
                 else:
                     self.status_label.setText("No objects")
@@ -15346,7 +15346,7 @@ class NEOVisualizer(QMainWindow):
                             self.status_label.setText(
                                 f"{dt} | {n_shown} discoveries in CLN {current_cln}"
                             )
-                    except:
+                    except Exception:
                         self.status_label.setText(
                             f"{dt} | {n_shown} discoveries (lunation filter)"
                         )
@@ -15392,7 +15392,7 @@ class NEOVisualizer(QMainWindow):
                 self.canvas.current_info_dialog.canvas = None
                 self.canvas.current_info_dialog.close()
                 self.canvas.current_info_dialog = None
-            except:
+            except Exception:
                 pass
 
         if hasattr(self, 'about_dialog') and self.about_dialog is not None and self.about_dialog.isVisible():
@@ -15439,7 +15439,7 @@ class NEOVisualizer(QMainWindow):
                 self.canvas.current_info_dialog.canvas = None  # Prevent double clear
                 self.canvas.current_info_dialog.close()
                 self.canvas.current_info_dialog = None
-            except:
+            except Exception:
                 pass
         
         if self.help_dialog is not None and self.help_dialog.isVisible():
@@ -15851,7 +15851,7 @@ class NEOVisualizer(QMainWindow):
                 for artist in self.canvas.overlay_artists:
                     try:
                         artist.remove()
-                    except:
+                    except Exception:
                         pass
                 self.canvas.overlay_artists = []
             # Clear observable region shading
