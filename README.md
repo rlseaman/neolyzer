@@ -1,11 +1,13 @@
 # NEOlyzer
 
-**Near-Earth Object Visualization and Analysis** | Version 3.06
+**Near-Earth Object Visualization and Analysis** | Version 3.07
 
 Interactive visualization tool for the NEO catalog supporting Planetary Defense research and operations. Developed at Catalina Sky Survey, University of Arizona.
 
 - **Date Range:** 1550-2650 (DE440 ephemeris, configurable)
 - **Objects:** 40,000+ Near-Earth Asteroids (catalog grows daily)
+
+**New to NEOlyzer?** See the [Getting Started Guide](GETTING_STARTED.md) for a step-by-step walkthrough.
 
 ---
 
@@ -22,11 +24,11 @@ cd neolyzer
 
 ### Without Git
 
-Download and extract: [neolyzer-v3.06.zip](https://github.com/rlseaman/neolyzer/archive/refs/tags/v3.06.zip)
+Download and extract: [neolyzer-v3.07.zip](https://github.com/rlseaman/neolyzer/archive/refs/tags/v3.07.zip)
 
 ```bash
-unzip neolyzer-v3.06.zip
-cd neolyzer-3.06
+unzip neolyzer-v3.07.zip
+cd neolyzer-3.07
 ./install.sh
 ./run_neolyzer.sh
 ```
@@ -43,12 +45,12 @@ Or download from the [Releases](https://github.com/rlseaman/neolyzer/releases) p
 | macOS (Apple Silicon) | Supported |
 | Linux (RHEL, Debian/Ubuntu) | Supported |
 | Linux (Raspberry Pi) | Supported |
-| Windows (via WSL) | Supported |
+| Windows (via WSL) | Community tested |
 
 **Requirements:**
 - Python 3.10+ (3.12+ recommended)
 - Unix-like shell (bash/zsh) for install scripts
-- Windows users: use WSL, Git Bash, or run Python directly
+- Windows users: install [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and run from a WSL terminal
 
 Platform-specific notes in [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt).
 
@@ -62,13 +64,14 @@ Platform-specific notes in [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt).
 - **Moon phase display:** Catalina Lunation Number (CLN)
 - **Discovery tracking:** Hide objects before discovery date, with tracklet details (rate, PA, nobs, span, site name) from bundled `NEO_discovery_tracklets.csv`
 - **Earth MOID filtering:** Via JPL SBDB
-- **Horizon/twilight overlays:** For observer location
+- **Horizon/twilight overlays:** For observer location, with airmass limits and zenith/nadir markers
 - **Scripted playback:** Full state save/restore
 - **Data tables:** Selection and CSV export
 - **Constellation boundaries:** IAU boundary overlay
 - **Background stars:** Bright star display with magnitude filtering
 - **Alternate catalogs:** Load and compare multiple catalog versions
 - **Catalog blinking:** Rapidly toggle between catalogs for comparison
+- **Non-discovery overlay:** Show not-yet-discovered NEOs as diamonds during lunation filter
 
 ---
 
@@ -202,6 +205,46 @@ Load historical or comparison catalogs for side-by-side analysis:
 
 ---
 
+## Diagnostics
+
+Diagnostic scripts for investigating specific issues (run from project root):
+
+```bash
+./venv/bin/python diagnose_cln.py      # Compare CLN calculation methods
+./venv/bin/python diagnose_missing.py  # Check for missing NEOs in database
+./venv/bin/python diagnose_sbdb.py     # JPL SBDB data diagnostics
+```
+
+---
+
+## FAQ
+
+**How long does installation take?**
+First-time setup takes 10-40 minutes depending on internet speed and cache options. The ephemeris download (~115 MB) and cache build are the longest steps. Subsequent launches are fast.
+
+**The display is slow or choppy during animation.**
+Open Settings and enable Fast Animation mode, which decimates objects during playback. Also check [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt) for platform-specific performance tips.
+
+**How do I update the NEO catalog?**
+Run `./venv/bin/python scripts/update_catalog.py --fetch-moid --mark-stale --clear-cache` for a quick daily update. See the [Maintenance](#maintenance) section for more options.
+
+**Why are some NEOs missing from the display?**
+Several filters can hide objects: magnitude limits, discovery date filter ("Hide before discovery"), behind-sun hiding, solar elongation exclusion, NEO class toggles, and declination limits. Check the Magnitude panel and Settings dialog.
+
+**Can I go back in time before 1550?**
+The default DE440 ephemeris covers 1550-2650. For earlier dates, re-run setup and select the DE441 ephemeris, which extends to 13200 BC (3.5 GB download).
+
+**What do the colors and sizes mean?**
+By default, dots are colored and sized by V magnitude (apparent brightness). Brighter objects are larger and bluer; fainter objects are smaller and redder. The color scale and size mapping are configurable in Settings.
+
+**Installation fails with a lock file error.**
+A previous install may have crashed. Run `./install.sh --force-unlock` to clear the stale lock file and try again.
+
+**Where are ephemeris files stored?**
+In `~/.skyfield/` in your home directory. These are shared across projects and not deleted when you remove NEOlyzer.
+
+---
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -211,6 +254,7 @@ Load historical or comparison catalogs for side-by-side analysis:
 | PyQt6 issues | See [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt) |
 | Permission denied | `chmod +x install.sh run_neolyzer.sh run_setup.sh` |
 | Ephemeris errors | Check `~/.skyfield/` for corrupted .bsp files |
+| Lock file error | `./install.sh --force-unlock` |
 
 ---
 

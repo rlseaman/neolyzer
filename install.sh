@@ -10,7 +10,7 @@
 
 set -e  # Exit on error
 
-VERSION="3.04"
+VERSION="3.07"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -59,7 +59,9 @@ Options:
   
   --skip-deps      Skip system dependency installation
                    (use if you've already installed them)
-  
+
+  --force-unlock   Remove stale lock file from a crashed install
+
   --help           Show this help message
 
 Environment Variables:
@@ -120,6 +122,16 @@ parse_args() {
             --skip-deps)
                 SKIP_DEPS=true
                 shift
+                ;;
+            --force-unlock)
+                LOCK_FILE="$SCRIPT_DIR/.install.lock"
+                if [ -f "$LOCK_FILE" ]; then
+                    rm -f "$LOCK_FILE"
+                    print_status "Lock file removed."
+                else
+                    print_info "No lock file found."
+                fi
+                exit 0
                 ;;
             --help|-h)
                 show_help
@@ -737,8 +749,8 @@ main() {
         if ! flock -n 200; then
             print_error "Another installation is already running!"
             echo ""
-            echo "If you're sure no other install is running, remove the lock file:"
-            echo "  rm $LOCK_FILE"
+            echo "If you're sure no other install is running:"
+            echo "  ./install.sh --force-unlock"
             echo ""
             exit 1
         fi
@@ -754,8 +766,8 @@ main() {
                 if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
                     print_error "Another installation is already running (PID: $OLD_PID)!"
                     echo ""
-                    echo "If you're sure no other install is running, remove the lock file:"
-                    echo "  rm $LOCK_FILE"
+                    echo "If you're sure no other install is running:"
+                    echo "  ./install.sh --force-unlock"
                     echo ""
                     exit 1
                 else

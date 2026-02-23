@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.06 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.07 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -12900,7 +12900,7 @@ class NEOVisualizer(QMainWindow):
         # Auto-equalize on first data load for better default symbol sizes
         self._auto_equalize_pending = True
 
-        self.setWindowTitle("NEOlyzer v3.06")
+        self.setWindowTitle("NEOlyzer v3.07")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -15460,7 +15460,7 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.06</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version 3.07</b> - Near-Earth Object sky position visualization and analysis tool</p>
         <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
@@ -15477,13 +15477,22 @@ class NEOVisualizer(QMainWindow):
         <li><b>Catalog comparison:</b> Load alternate catalogs and blink between them</li>
         </ul>
 
+        <h3>New in v3.07</h3>
+        <ul>
+        <li><b>Non-discovery overlay:</b> Show not-yet-discovered NEOs as open diamonds during lunation filter</li>
+        <li><b>Airmass limit:</b> Filter and draw boundary at configurable airmass limit</li>
+        <li><b>Zenith/Nadir markers:</b> Optional position markers in all coordinate systems</li>
+        <li><b>V84 auto-limit:</b> Set non-discovery magnitude offset to mean+1&sigma; of visible discoveries</li>
+        <li><b>Keyboard improvements:</b> Reliable Shift+[/] navigation across all platforms</li>
+        </ul>
+
         <h3>New in v3.06</h3>
         <ul>
         <li><b>Alternate catalogs:</b> Load and compare multiple NEA catalog versions</li>
         <li><b>Catalog blinking:</b> Rapidly toggle between primary and alternate catalogs</li>
-        <li><b>Catalog selector:</b> Dropdown in toolbar to switch between catalogs</li>
+        <li><b>Catalog comparison:</b> Blink between any two catalogs with diff mode</li>
+        <li><b>Changed objects table:</b> View orbital element differences between catalogs</li>
         <li><b>Stale object tracking:</b> Mark objects missing from updated catalogs</li>
-        <li><b>Provenance tracking:</b> Record catalog source and update timestamps</li>
         </ul>
 
         <h3>Alternate Catalogs</h3>
@@ -15498,15 +15507,6 @@ class NEOVisualizer(QMainWindow):
         </ul>
         <p><i>Note: Blinking and animation are mutually exclusive for clarity.</i></p>
         <p>Load alternates via command line: <code>scripts/load_alt_catalog.py</code></p>
-
-        <h3>New in v3.06</h3>
-        <ul>
-        <li><b>Catalog comparison:</b> Blink between any two catalogs (primary or alternate)</li>
-        <li><b>Changed objects table:</b> View orbital element differences between catalogs</li>
-        <li><b>Diff mode:</b> Highlight objects unique to primary, alternate, or both</li>
-        <li><b>Dynamic blink filters:</b> NEO class buttons now work during blink mode</li>
-        <li><b>Visual blink indicator:</b> Color-coded dropdowns show active catalog</li>
-        </ul>
 
         <h3>New in v3.05</h3>
         <ul>

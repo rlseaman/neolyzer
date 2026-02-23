@@ -1,5 +1,5 @@
 # NEO Visualizer - Python Dependencies
-# Python 3.9+ required
+# Python 3.10+ required
 
 # Core scientific computing
 numpy>=1.24.0
