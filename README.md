@@ -35,6 +35,8 @@ cd neolyzer-3.07
 
 Or download from the [Releases](https://github.com/rlseaman/neolyzer/releases) page.
 
+**Comments, questions, suggestions?** Open an [Issue](https://github.com/rlseaman/neolyzer/issues).
+
 ---
 
 ## Platform Support
