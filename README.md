@@ -4,7 +4,7 @@
 
 Interactive visualization tool for the NEO catalog supporting Planetary Defense research and operations. Developed at Catalina Sky Survey, University of Arizona.
 
-- **Date Range:** 1550-2650 (DE440 ephemeris, configurable)
+- **Date Range:** 1550-2650 (DE440 ephemeris, configurable, the cached orbits are not integrated)
 - **Objects:** 40,000+ Near-Earth Asteroids (catalog grows daily)
 
 **New to NEOlyzer?** See the [Getting Started Guide](GETTING_STARTED.md) for a step-by-step walkthrough.
@@ -45,7 +45,7 @@ Or download from the [Releases](https://github.com/rlseaman/neolyzer/releases) p
 | macOS (Apple Silicon) | Supported |
 | Linux (RHEL, Debian/Ubuntu) | Supported |
 | Linux (Raspberry Pi) | Supported |
-| Windows (via WSL) | Community tested |
+| Windows (via WSL) | Needs community testing |
 
 **Requirements:**
 - Python 3.10+ (3.12+ recommended)
