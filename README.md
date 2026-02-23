@@ -11,6 +11,8 @@ Interactive visualization tool for the NEO catalog supporting Planetary Defense 
 
 <a href="assets/NEOlyzer_visible_PHAs.png"><img src="assets/NEOlyzer_visible_PHAs.png" alt="NEOlyzer showing visible Potentially Hazardous Asteroids" width="800"></a>
 
+*Screenshot of NEOlyzer v3.07. Controls are set for a whole-sky, ecliptic opposition, equal-area Hammer plot of Potentially Hazardous Asteroids (PHAs) visible to limiting V magnitude of 22 on February 23, 2026. The plot is overlaid with an equatorial coordinate grid. Click Settings for many other options.*
+
 ---
 
 ## Quick Start
