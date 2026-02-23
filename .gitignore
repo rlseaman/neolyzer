@@ -3,8 +3,14 @@ venv/
 
 # Cache and data files
 cache/
-data/
 alt_data/
+
+# Data files: generated/downloaded (reference files like stars, constellations are tracked)
+data/asteroids.db
+data/neo_catalog.db
+data/NEA.txt
+data/MPC/
+data/sbdb_moid_cache.json
 diagnostics/
 recordings/
 logs/
