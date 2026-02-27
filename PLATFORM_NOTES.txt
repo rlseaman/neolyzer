@@ -142,7 +142,11 @@ REQUIREMENTS:
 
 SYSTEM DEPENDENCIES:
   sudo apt update
+  # Ubuntu 22.04 / Debian 11:
   sudo apt install libhdf5-dev libgl1-mesa-glx libxcb-xinerama0 \
+       libxcb-cursor0 libxkbcommon-x11-0 build-essential
+  # Ubuntu 24.04+ / Debian 12+ (libgl1-mesa-glx was removed):
+  sudo apt install libhdf5-dev libgl1 libxcb-xinerama0 \
        libxcb-cursor0 libxkbcommon-x11-0 build-essential
 
 NEWER PYTHON (if needed):
@@ -159,6 +163,7 @@ INSTALLATION:
 NOTES:
   - Ubuntu 22.04 has Python 3.10
   - Ubuntu 24.04 has Python 3.12
+  - Ubuntu 24.04+ replaced libgl1-mesa-glx with libgl1
   - Qt6 may need additional packages
 
 
@@ -174,7 +179,11 @@ REQUIREMENTS:
 
 SYSTEM DEPENDENCIES:
   sudo apt update
+  # Older Raspberry Pi OS:
   sudo apt install libhdf5-dev libgl1-mesa-glx python3-pyqt6 \
+       python3-numpy build-essential
+  # Newer Raspberry Pi OS (if libgl1-mesa-glx unavailable):
+  sudo apt install libhdf5-dev libgl1 python3-pyqt6 \
        python3-numpy build-essential
 
 INSTALLATION:

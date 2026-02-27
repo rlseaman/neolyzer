@@ -507,28 +507,36 @@ install_deps_rhel() {
 #######################################
 install_deps_debian() {
     print_info "Checking dependencies via apt..."
-    
+
+    # libgl1-mesa-glx was removed in Ubuntu 24.04+; replaced by libgl1
+    local gl_pkg="libgl1-mesa-glx"
+    if apt-cache show libgl1-mesa-glx >/dev/null 2>&1; then
+        gl_pkg="libgl1-mesa-glx"
+    else
+        gl_pkg="libgl1"
+    fi
+
     if sudo -n true 2>/dev/null; then
         print_info "Installing system packages..."
         sudo apt-get update -qq 2>/dev/null || true
         sudo apt-get install -y \
             libhdf5-dev \
-            libgl1-mesa-glx \
+            "$gl_pkg" \
             libgl1-mesa-dev \
             libxcb-xinerama0 \
             libxcb-cursor0 \
             libxkbcommon-x11-0 \
             build-essential \
             2>/dev/null || print_warning "Some packages may not be available"
-        
+
         # Qt6 on Ubuntu
         sudo apt-get install -y qt6-base-dev 2>/dev/null || \
         print_info "Qt6 packages not found - PyQt6 will install its own"
     else
         print_warning "No sudo access. Please ask your administrator to install:"
-        echo "  apt install libhdf5-dev libgl1-mesa-glx build-essential"
+        echo "  apt install libhdf5-dev $gl_pkg build-essential"
     fi
-    
+
     print_status "Debian/Ubuntu dependencies checked"
 }
 
@@ -537,12 +545,20 @@ install_deps_debian() {
 #######################################
 install_deps_raspbian() {
     print_info "Installing Raspberry Pi dependencies..."
-    
+
+    # libgl1-mesa-glx was removed in newer Debian/Ubuntu; replaced by libgl1
+    local gl_pkg="libgl1-mesa-glx"
+    if apt-cache show libgl1-mesa-glx >/dev/null 2>&1; then
+        gl_pkg="libgl1-mesa-glx"
+    else
+        gl_pkg="libgl1"
+    fi
+
     if sudo -n true 2>/dev/null; then
         sudo apt-get update -qq 2>/dev/null || true
         sudo apt-get install -y \
             libhdf5-dev \
-            libgl1-mesa-glx \
+            "$gl_pkg" \
             libxcb-xinerama0 \
             libxcb-cursor0 \
             python3-pyqt6 \
@@ -552,7 +568,7 @@ install_deps_raspbian() {
     else
         print_warning "No sudo access. Please install packages manually."
     fi
-    
+
     print_status "Raspberry Pi dependencies checked"
 }
 
