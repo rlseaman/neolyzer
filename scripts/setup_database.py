@@ -249,6 +249,58 @@ def main():
         print("⚠ Skipping MOID fetch. MOID filtering will not be available.")
         print()
     
+    # Step 2a: Download Gaia sky maps (optional, for Milky Way background)
+    print("Step 2a: Milky Way background maps (optional)")
+    print("-" * 70)
+    print("Download Gaia EDR3 all-sky maps for the Milky Way background feature.")
+    print("These show 1.8 billion stars from ESA's Gaia mission.")
+    print("  - Color flux map:    3.7 MB (photometric colors)")
+    print("  - Grayscale density: 1.5 MB (star counts)")
+    print("  Total: ~5 MB.  License: CC BY-SA 3.0 IGO (ESA/Gaia/DPAC)")
+    print()
+
+    data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
+    gaia_files = {
+        'Gaia_EDR3_flux_cartesian_2k.png': {
+            'url': 'https://sci.esa.int/documents/33580/35361/Gaia_EDR3_flux_cartesian_2k.png',
+            'desc': 'color flux map',
+            'size': '3.7 MB'
+        },
+        'Gaia_EDR3_nsrc_cartesian_2k.png': {
+            'url': 'https://sci.esa.int/documents/33580/35361/Gaia_EDR3_nsrc_cartesian_2k.png',
+            'desc': 'grayscale density map',
+            'size': '1.5 MB'
+        }
+    }
+
+    existing = [f for f in gaia_files if os.path.exists(os.path.join(data_dir, f))]
+    if len(existing) == len(gaia_files):
+        print("All Gaia sky maps already present. Skipping download.")
+        print()
+    else:
+        response = input("Download Gaia sky maps? (y/n, default: y): ").lower().strip()
+        if response != 'n':
+            import requests as req
+            for filename, info in gaia_files.items():
+                filepath = os.path.join(data_dir, filename)
+                if os.path.exists(filepath):
+                    print(f"  {filename} already exists, skipping")
+                    continue
+                try:
+                    print(f"  Downloading {info['desc']} ({info['size']})...")
+                    r = req.get(info['url'], timeout=60)
+                    r.raise_for_status()
+                    with open(filepath, 'wb') as f:
+                        f.write(r.content)
+                    print(f"  ✓ Saved {filename}")
+                except Exception as e:
+                    print(f"  ✗ Could not download {filename}: {e}")
+                    print(f"    You can download manually from: {info['url']}")
+            print()
+        else:
+            print("⚠ Skipping Gaia download. Hipparcos density (built-in) will be available.")
+            print()
+
     # Step 2b: Load discovery tracklet data
     print("Step 2b: Loading discovery tracklet data...")
     print("-" * 70)

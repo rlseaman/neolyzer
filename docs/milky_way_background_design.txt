@@ -1,0 +1,237 @@
+==============================================================================
+NEOlyzer: Milky Way Background Feature — Design & Implementation
+==============================================================================
+Date: 2026-03-06
+Status: Implemented and functional — iterating on display tuning
+
+==============================================================================
+1. OVERVIEW
+==============================================================================
+
+A Milky Way background layer for the NEOlyzer sky map, primarily for public
+outreach. Displays stellar density or photometric imagery behind all existing
+overlays (NEOs, grid, constellations, Sun/Moon/planets, etc.).
+
+Four data sources are implemented:
+
+  1) Gaia EDR3 Color (flux map) — RGB photometric image from 1.8 billion stars
+  2) Gaia EDR3 Density (grayscale) — star count map converted to luminance
+  3) Gaia EDR3 Density (original image) — star count map as original RGB
+  4) Hipparcos Density — pre-built heatmap from ~118,218 bright stars
+
+The feature works across all 4 projections and all 4 coordinate systems,
+including animated Opposition mode.
+
+
+==============================================================================
+2. DATA SOURCES & CREDITS
+==============================================================================
+
+--- 2a. ESA Gaia EDR3 (primary, highest quality) ---
+
+The Gaia mission (European Space Agency) has cataloged positions, parallaxes,
+and photometry for approximately 1.8 billion stars. NEOlyzer uses pre-rendered
+all-sky maps derived from Gaia Early Data Release 3 (EDR3).
+
+  Source:    ESA/Gaia/DPAC
+  Website:  https://sci.esa.int/web/gaia/
+  License:  CC BY-SA 3.0 IGO
+  Citation: Gaia Collaboration et al. (2021), A&A 649, A1 (Gaia EDR3)
+
+Files used (2k equirectangular, Galactic coordinates):
+  - Gaia_EDR3_flux_cartesian_2k.png   2000x1000  3.7 MB  Color flux map
+  - Gaia_EDR3_nsrc_cartesian_2k.png   2000x1000  1.5 MB  Star count density
+
+The 2k resolution is sufficient for a background overlay and small enough to
+download during setup. Both files are optionally downloaded in setup_database.py
+Step 2a from ESA's document server.
+
+Image pixel convention (confirmed empirically via LMC/SMC positions):
+  - Column 0 = l=+180 (anti-center), l DECREASES left-to-right
+  - Row 0 = b=+90 (north Galactic pole)
+  - Normalized at load time: flip both axes + roll half-width so col 0 = l=0,
+    row 0 = b=-90, matching the Hipparcos grid convention
+
+--- 2b. ESA Hipparcos (lightweight fallback) ---
+
+The Hipparcos satellite (European Space Agency, 1989-1993) produced the first
+high-precision astrometric catalog from space, with ~118,218 stars.
+
+  Source:    ESA Hipparcos catalog (I/239)
+  Website:  https://www.cosmos.esa.int/web/hipparcos
+  Access:   Via skyfield.data.hipparcos (already a project dependency)
+  Archive:  https://cdsarc.cds.unistra.fr/ftp/cats/I/239/hip_main.dat
+  Citation: ESA (1997), The Hipparcos and Tycho Catalogues, ESA SP-1200
+
+Pre-processed into data/hipparcos_density.npz (114 KB):
+  - density_1deg: 180x360 array (1-degree bins in Galactic coordinates)
+  - density_05deg: 360x720 array (half-degree bins)
+  - 8.2x Galactic plane-to-pole concentration ratio
+  - Recognizable MW band but no dust lanes or fine detail
+
+Context: Galactic exclusion for NEO surveying is due to faint (V ~ 20-23)
+stars that confuse moving object detection algorithms. The Hipparcos catalog
+of bright stars (V < ~12) and the Gaia density map showing all-star counts
+are complementary representations of this effect at different magnitude ranges.
+
+--- 2c. Comparison ---
+
+  Source              Stars          Resolution    Visual Quality
+  ---------------------------------------------------------------
+  Hipparcos density   118,218        ~2 deg bins   Clear band, no detail
+  Gaia density map    1.8 billion    arcminutes    Structure visible
+  Gaia color flux     1.8 billion    arcminutes    Photographic quality
+
+
+==============================================================================
+3. TECHNICAL ARCHITECTURE
+==============================================================================
+
+--- 3a. Coordinate System Handling ---
+
+All source data is natively in Galactic coordinates. NEOlyzer supports four
+coordinate systems: Equatorial, Ecliptic, Galactic, and Opposition.
+
+For Galactic mode, the image maps directly. For the other three, every pixel
+is transformed from the target coordinate system back to Galactic to sample
+the source image. Implementation:
+
+  1. Build a grid in the target system (e.g., RA/Dec for Equatorial)
+  2. For each grid point, transform to Galactic (l, b) via CoordinateTransformer
+  3. Sample the source image at (l, b) via scipy.ndimage.map_coordinates
+  4. Cache the resampled array keyed by (source, coord_system, opp_offset, shape)
+
+East-on-left convention: The resampler pre-flips the target grid
+(np.linspace 179.5 to -179.5) so the display's horizontal negation produces
+correct orientation.
+
+--- 3b. Opposition Mode and Animation ---
+
+The Milky Way is STATIC — unlike the asteroid density heatmap (which must
+re-bin every frame), the MW data never changes. In Opposition mode, only the
+centering longitude shifts as the Sun moves. Resampling is cached per
+rounded opp_offset, so animation cost is dominated by cache lookup.
+
+--- 3c. Projection Handling ---
+
+  Rectangular: matplotlib imshow() with extent=[180, -180, -90, 90]
+  Hammer/Aitoff/Mollweide: matplotlib pcolormesh() with lon/lat grid
+
+For grayscale data: rendered via 'gray' colormap with vmin=0, vmax=1.
+Inversion is applied at the data level (1.0 - arr) before rendering.
+For RGB data: rendered directly, with RGBA facecolors for pcolormesh.
+
+--- 3d. Rendering Pipeline ---
+
+  _load_milkyway_source(source_name):
+    - Loads and normalizes source data (lazy, cached in self._mw_data)
+    - Hipparcos: from .npz, float32, normalized 0-1
+    - Gaia density: PNG -> grayscale 'L', normalized, axis-flipped
+    - Gaia density image: PNG -> RGB, normalized, axis-flipped
+    - Gaia color: PNG -> RGB, normalized, axis-flipped
+
+  _resample_milkyway(source_arr, coord_system, opp_offset, target_shape):
+    - Transforms source from Galactic to target coord system
+    - Cached by (id(source), coord_system, opp_offset, shape)
+
+  _draw_milkyway_background(settings):
+    - Applies scaling (linear/log/sqrt/asinh), vmin/vmax, brightness/contrast
+    - Applies inversion at data level
+    - Renders via pcolormesh or imshow at MW_ZORDER = -1 (behind everything)
+    - Cache key prevents unnecessary redraws
+
+  _draw_gc_gac_markers(settings):
+    - Draws Galactic Center (l=0, b=0) and Anti-Center (l=180, b=0) markers
+    - Transforms through all coordinate systems including Opposition
+    - Cyan '+' markers with labels, zorder=16
+
+--- 3e. Dependencies ---
+
+No new dependencies. All libraries are existing:
+  astropy, scipy, Pillow, matplotlib, numpy, skyfield
+
+
+==============================================================================
+4. SETTINGS DIALOG CONTROLS
+==============================================================================
+
+"Milky Way Background" CollapsibleGroupBox in the Settings dialog:
+
+  +-- Milky Way Background ------------------------------------+
+  |                                                             |
+  |  [x] Enable Milky Way background                           |
+  |                                                             |
+  |  Source: [Gaia Color v]                                     |
+  |          +-- Gaia Color (flux map)                          |
+  |          +-- Gaia Density (all stars, grayscale)            |
+  |          +-- Gaia Density Image (all stars)                 |
+  |          +-- Hipparcos Density (bright stars)               |
+  |                                                             |
+  |  -- Display --                                              |
+  |  Opacity:     [====*==========] 100%                        |
+  |  Brightness:  [========*======] -0.25                       |
+  |  Contrast:    [========*======]  1.5                        |
+  |                                                             |
+  |  -- Scaling --                                              |
+  |  Scale: [Linear v]  (Linear / Log / Sqrt / Asinh)          |
+  |  Min:   [   0  ] <--> Max: [ 100 ]                         |
+  |  [Invert]  [Equalize]  [Reset]                             |
+  |                                                             |
+  |  [x] Show Galactic center / anti-center                    |
+  |  [x] Show during animation                                 |
+  |  Resolution: [Medium v] (Low / Medium / High)              |
+  |                                                             |
+  +-------------------------------------------------------------+
+
+Defaults: opacity 100%, brightness -0.25, contrast 1.5, MW disabled.
+
+All settings are saved/restored via:
+  - Factory reset (reset_all)
+  - Persistent settings (JSON save/restore)
+  - Script state (save/restore for scripted playback)
+
+
+==============================================================================
+5. PERFORMANCE
+==============================================================================
+
+  Operation                            Cost         When
+  --------------------------------------------------------------------
+  Load Gaia PNG + convert to array     ~200 ms      First use (lazy)
+  Resample (Galactic)                  ~4 ms        Coord system change
+  Resample (Equatorial, via astropy)   ~216 ms      Coord system change
+  Resample (Ecliptic/Opposition)       ~20 ms       Coord system change
+  Render via pcolormesh/imshow         ~5-10 ms     Projection/coord change
+  Opposition re-centering              ~0.1 ms      Per animation frame
+  Brightness/contrast adjustment       ~2 ms        Interactive slider
+
+  Memory: ~6 MB at Medium resolution (500x250) for all cached variants.
+
+
+==============================================================================
+6. RESOLVED DESIGN QUESTIONS
+==============================================================================
+
+  1. Opposition mode updates continuously during animation. Cost is negligible.
+
+  2. Gaia download is optional during setup (setup_database.py Step 2a).
+     Files are 3.7 MB + 1.5 MB. Skipped if already present.
+
+  3. Single colormap ('gray') for density modes. Inversion via data transform,
+     not colormap reversal (avoids double-inversion bug).
+
+  4. Brightness/contrast operate on full RGB for color images. For non-linear
+     scaling of color images, luminance is extracted, scaled, and the ratio
+     applied back to preserve hue.
+
+
+==============================================================================
+7. FUTURE CONSIDERATIONS
+==============================================================================
+
+  - Custom colormap selection for density modes (hot, viridis, bone, etc.)
+  - Higher resolution support for zoomed rectangular projection views
+  - Per-projection internal caching of resampled arrays
+  - HEALPix pixelization if healpy is added later
+
+==============================================================================

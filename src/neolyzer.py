@@ -615,6 +615,13 @@ class SkyMapCanvas(FigureCanvas):
         self.opposition_settings = None
         self.horizon_settings = None
         self.constellation_settings = None
+        self.milkyway_settings = None
+
+        # Milky Way background data (loaded lazily)
+        self._mw_data = {}  # source_name -> raw galactic-coord array
+        self._mw_resampled = {}  # (source, coord_system) -> resampled array
+        self._mw_artist = None  # current background artist
+        self._mw_last_key = None  # cache key for current display
 
         # Load constellation boundary data
         self._constellation_boundaries = self._load_constellation_boundaries()
@@ -993,6 +1000,7 @@ class SkyMapCanvas(FigureCanvas):
         self.projection = projection
         self.trail_history.clear()  # Clear trails - old coordinates invalid
         self._clear_trails()
+        self._clear_milkyway_artist()
         logger.debug(f"TRAIL: Cleared due to projection change to {projection}")
         self.setup_plot()
 
@@ -1001,6 +1009,7 @@ class SkyMapCanvas(FigureCanvas):
         self.coord_system = coord_system
         self.trail_history.clear()  # Clear trails - old coordinates invalid
         self._clear_trails()
+        self._clear_milkyway_artist()
         logger.debug(f"TRAIL: Cleared due to coordinate system change to {coord_system}")
         self.setup_plot()
     
@@ -2325,6 +2334,32 @@ class SkyMapCanvas(FigureCanvas):
                 except Exception as e:
                     logger.debug(f"Could not draw planets: {e}")
 
+            # === MILKY WAY BACKGROUND ===
+            mw_settings = getattr(self, 'milkyway_settings', None)
+            if mw_settings and mw_settings.get('enabled', False):
+                # Check animation state for show_during_animation setting
+                mw_show = True
+                if not mw_settings.get('show_during_animation', True):
+                    try:
+                        parent = self.parent()
+                        if parent and hasattr(parent, 'time_panel') and hasattr(parent.time_panel, 'animation_timer'):
+                            if parent.time_panel.animation_timer.isActive():
+                                mw_show = False
+                    except Exception:
+                        pass
+                if mw_show:
+                    try:
+                        self._draw_milkyway_background(mw_settings)
+                    except Exception as e:
+                        logger.debug(f"Could not draw Milky Way background: {e}")
+                else:
+                    self._clear_milkyway_artist()
+                # GC/GAC markers (drawn even when MW background is off)
+                try:
+                    self._draw_gc_gac_markers(mw_settings)
+                except Exception as e:
+                    logger.debug(f"Could not draw GC/GAC markers: {e}")
+
             # === CONSTELLATION BOUNDARIES ===
             constellation_settings = getattr(self, 'constellation_settings', None)
             if constellation_settings and constellation_settings.get('show_boundaries', False):
@@ -3132,6 +3167,366 @@ class SkyMapCanvas(FigureCanvas):
 
         self.overlay_artists.append(scatter)
         logger.debug(f"Drew {len(lons)} background stars (V < {mag_limit})")
+
+    def _load_milkyway_source(self, source_name):
+        """Load a Milky Way background data source into self._mw_data.
+
+        All sources are stored as 2D float32 arrays in Galactic coordinates,
+        normalized to 0-1 range. Shape is (n_lat, n_lon).
+        """
+        if source_name in self._mw_data:
+            return self._mw_data[source_name]
+
+        import os
+        data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
+
+        if source_name == 'hipparcos':
+            npz_path = os.path.join(data_dir, 'hipparcos_density.npz')
+            if not os.path.exists(npz_path):
+                logger.warning("Hipparcos density grid not found")
+                return None
+            with np.load(npz_path) as npz:
+                arr = npz['density_1deg'].astype(np.float32)
+            # Normalize to 0-1
+            if arr.max() > 0:
+                arr = arr / arr.max()
+            self._mw_data[source_name] = arr
+            logger.info(f"Loaded Hipparcos density grid: {arr.shape}")
+            return arr
+
+        elif source_name == 'gaia_density':
+            png_path = os.path.join(data_dir, 'Gaia_EDR3_nsrc_cartesian_2k.png')
+            if not os.path.exists(png_path):
+                logger.warning("Gaia density map not found")
+                return None
+            from PIL import Image
+            img = Image.open(png_path).convert('L')  # grayscale
+            arr = np.array(img, dtype=np.float32) / 255.0
+            # Gaia equirectangular convention (confirmed via LMC/SMC positions):
+            #   col 0 = l=+180 (anti-center), col w = l=-180, l DECREASES left-to-right
+            #   row 0 = b=+90 (top), row h = b=-90
+            # Normalize to match Hipparcos convention: col 0=l=0, col w=l=360, row 0=b=-90
+            arr = arr[::-1, ::-1]  # flip both: row 0=b=-90, l now increases L-to-R
+            arr = np.roll(arr, arr.shape[1] // 2, axis=1)  # shift so col 0=l=0
+            self._mw_data[source_name] = arr
+            logger.info(f"Loaded Gaia density map: {arr.shape}")
+            return arr
+
+        elif source_name == 'gaia_color':
+            png_path = os.path.join(data_dir, 'Gaia_EDR3_flux_cartesian_2k.png')
+            if not os.path.exists(png_path):
+                logger.warning("Gaia color map not found")
+                return None
+            from PIL import Image
+            img = Image.open(png_path).convert('RGB')
+            arr = np.array(img, dtype=np.float32) / 255.0  # shape (H, W, 3)
+            # Same normalization as density map above
+            arr = arr[::-1, ::-1]
+            arr = np.roll(arr, arr.shape[1] // 2, axis=1)
+            self._mw_data[source_name] = arr
+            logger.info(f"Loaded Gaia color map: {arr.shape}")
+            return arr
+
+        elif source_name == 'gaia_density_image':
+            png_path = os.path.join(data_dir, 'Gaia_EDR3_nsrc_cartesian_2k.png')
+            if not os.path.exists(png_path):
+                logger.warning("Gaia density image not found")
+                return None
+            from PIL import Image
+            img = Image.open(png_path).convert('RGB')
+            arr = np.array(img, dtype=np.float32) / 255.0  # shape (H, W, 3)
+            # Same normalization as density map above
+            arr = arr[::-1, ::-1]
+            arr = np.roll(arr, arr.shape[1] // 2, axis=1)
+            self._mw_data[source_name] = arr
+            logger.info(f"Loaded Gaia density image: {arr.shape}")
+            return arr
+
+        return None
+
+    def _resample_milkyway(self, source_arr, coord_system, opp_offset=0,
+                           target_shape=(500, 1000)):
+        """Resample a Galactic-coordinate MW array to the target coordinate system.
+
+        Returns a 2D (grayscale) or 3D (RGB) array in the target system.
+        """
+        cache_key = (id(source_arr), coord_system,
+                     round(opp_offset) if coord_system == 'opposition' else 0,
+                     target_shape)
+        if cache_key in self._mw_resampled:
+            return self._mw_resampled[cache_key]
+
+        from scipy.ndimage import map_coordinates
+
+        ny, nx = target_shape
+        src_h, src_w = source_arr.shape[:2]
+
+        # Build target coordinate grid
+        # Negate longitudes: the display will flip horizontally (East on left),
+        # so we pre-flip the sampling grid to compensate
+        target_lons = np.linspace(179.5, -179.5, nx)
+        target_lats = np.linspace(-89.5, 89.5, ny)
+        lon2d, lat2d = np.meshgrid(target_lons, target_lats)
+
+        if coord_system == 'galactic':
+            # Direct mapping — target coords are already galactic
+            gal_l = lon2d.copy()
+            gal_l[gal_l < 0] += 360  # convert -180..180 to 0..360
+            gal_b = lat2d
+        else:
+            # Transform target coords back to galactic
+            if coord_system == 'equatorial':
+                ra_flat = lon2d.ravel()
+                ra_flat = ra_flat.copy()
+                ra_flat[ra_flat < 0] += 360  # -180..180 -> 0..360
+                dec_flat = lat2d.ravel()
+                gal_l_flat, gal_b_flat = CoordinateTransformer.equatorial_to_galactic(
+                    ra_flat, dec_flat)
+            elif coord_system == 'ecliptic':
+                ecl_lon_flat = lon2d.ravel().copy()
+                ecl_lon_flat[ecl_lon_flat < 0] += 360
+                ecl_lat_flat = lat2d.ravel()
+                ra_flat, dec_flat = CoordinateTransformer.ecliptic_to_equatorial(
+                    ecl_lon_flat, ecl_lat_flat)
+                gal_l_flat, gal_b_flat = CoordinateTransformer.equatorial_to_galactic(
+                    ra_flat, dec_flat)
+            elif coord_system == 'opposition':
+                # Opposition coords: longitude is ecliptic lon shifted by Sun position
+                opp_lon_flat = lon2d.ravel().copy()
+                ecl_lon_flat = (opp_lon_flat + opp_offset) % 360
+                ecl_lat_flat = lat2d.ravel()
+                ra_flat, dec_flat = CoordinateTransformer.ecliptic_to_equatorial(
+                    ecl_lon_flat, ecl_lat_flat)
+                gal_l_flat, gal_b_flat = CoordinateTransformer.equatorial_to_galactic(
+                    ra_flat, dec_flat)
+            else:
+                gal_l_flat = lon2d.ravel()
+                gal_b_flat = lat2d.ravel()
+
+            gal_l = np.asarray(gal_l_flat).reshape(ny, nx)
+            gal_b = np.asarray(gal_b_flat).reshape(ny, nx)
+
+        # Map galactic (l, b) to source pixel coords
+        # Source: l=0..360 maps to col 0..src_w, b=-90..90 maps to row 0..src_h
+        src_col = (gal_l % 360) / 360.0 * (src_w - 1)
+        src_row = (gal_b + 90) / 180.0 * (src_h - 1)
+
+        if source_arr.ndim == 3:
+            # RGB: resample each channel
+            channels = []
+            for c in range(source_arr.shape[2]):
+                ch = map_coordinates(source_arr[:, :, c],
+                                     [src_row.ravel(), src_col.ravel()],
+                                     order=1, mode='wrap')
+                channels.append(ch.reshape(ny, nx))
+            result = np.stack(channels, axis=-1).astype(np.float32)
+        else:
+            result = map_coordinates(source_arr,
+                                     [src_row.ravel(), src_col.ravel()],
+                                     order=1, mode='wrap')
+            result = result.reshape(ny, nx).astype(np.float32)
+
+        self._mw_resampled[cache_key] = result
+        return result
+
+    def _draw_milkyway_background(self, settings):
+        """Draw the Milky Way background overlay."""
+        MW_ZORDER = -1  # Behind everything including observable shading
+
+        if not settings or not settings.get('enabled', False):
+            self._clear_milkyway_artist()
+            return
+
+        source_name = settings.get('source', 'hipparcos')
+        source_arr = self._load_milkyway_source(source_name)
+        if source_arr is None:
+            return
+
+        opacity = settings.get('opacity', 30) / 100.0
+        brightness = settings.get('brightness', 0.0)
+        contrast = settings.get('contrast', 1.0)
+        scaling = settings.get('scaling', 'linear')
+        vmin = settings.get('vmin', 0.0) / 100.0
+        vmax = settings.get('vmax', 100.0) / 100.0
+        invert = settings.get('invert', False)
+
+        # Get opposition offset for resampling
+        opp_offset = 0
+        if self.coord_system == 'opposition':
+            opp_offset = getattr(self, 'sun_ecl_lon', 0) + 180
+
+        # Choose resolution
+        res = settings.get('resolution', 'medium')
+        if res == 'low':
+            target_shape = (125, 250)
+        elif res == 'high':
+            target_shape = (500, 1000)
+        else:
+            target_shape = (250, 500)
+
+        # Resample to current coordinate system
+        display_arr = self._resample_milkyway(source_arr, self.coord_system,
+                                              opp_offset, target_shape)
+
+        # Apply scaling (for grayscale / single-channel data)
+        if display_arr.ndim == 2:
+            arr = display_arr.copy()
+            if scaling == 'log':
+                arr = np.log1p(arr * 100) / np.log1p(100)
+            elif scaling == 'sqrt':
+                arr = np.sqrt(arr)
+            elif scaling == 'asinh':
+                arr = np.arcsinh(arr * 10) / np.arcsinh(10)
+            # Apply vmin/vmax clipping
+            arr = np.clip((arr - vmin) / max(vmax - vmin, 0.001), 0, 1)
+            # Apply brightness/contrast
+            arr = np.clip((arr - 0.5) * contrast + 0.5 + brightness, 0, 1)
+            if invert:
+                arr = 1.0 - arr
+        else:
+            # RGB color image
+            arr = display_arr.copy()
+            # Convert to luminance for scaling, then apply back
+            if scaling != 'linear':
+                lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+                lum_orig = lum.copy()
+                if scaling == 'log':
+                    lum = np.log1p(lum * 100) / np.log1p(100)
+                elif scaling == 'sqrt':
+                    lum = np.sqrt(lum)
+                elif scaling == 'asinh':
+                    lum = np.arcsinh(lum * 10) / np.arcsinh(10)
+                # Scale RGB by luminance ratio
+                ratio = np.where(lum_orig > 1e-6, lum / lum_orig, 1.0)
+                arr = arr * ratio[:, :, np.newaxis]
+            # Apply vmin/vmax
+            arr = np.clip((arr - vmin) / max(vmax - vmin, 0.001), 0, 1)
+            # Apply brightness/contrast
+            arr = np.clip((arr - 0.5) * contrast + 0.5 + brightness, 0, 1)
+            if invert:
+                arr = 1.0 - arr
+
+        # Build cache key to avoid unnecessary redraws
+        cache_key = (source_name, self.coord_system, self.projection,
+                     round(opp_offset), round(opacity * 100),
+                     round(brightness * 100), round(contrast * 100),
+                     scaling, round(vmin * 100), round(vmax * 100),
+                     invert, res)
+        if cache_key == self._mw_last_key and self._mw_artist is not None:
+            return  # Nothing changed
+
+        self._clear_milkyway_artist()
+
+        ny, nx = arr.shape[:2]
+        if self.projection in ['hammer', 'aitoff', 'mollweide']:
+            # pcolormesh for curved projections
+            lons = np.linspace(-np.pi, np.pi, nx + 1)
+            lats = np.linspace(-np.pi / 2, np.pi / 2, ny + 1)
+            lon2d, lat2d = np.meshgrid(lons, lats)
+
+            if arr.ndim == 2:
+                # Use colormap
+                self._mw_artist = self.ax.pcolormesh(
+                    lon2d, lat2d, arr, cmap='gray',
+                    vmin=0, vmax=1, alpha=opacity,
+                    shading='flat', zorder=MW_ZORDER, rasterized=True)
+            else:
+                # RGB: create RGBA array with uniform alpha
+                rgba = np.ones((ny, nx, 4), dtype=np.float32)
+                rgba[:, :, :3] = arr
+                rgba[:, :, 3] = opacity
+                # pcolormesh needs cell centers for facecolors
+                lon_centers = (lons[:-1] + lons[1:]) / 2
+                lat_centers = (lats[:-1] + lats[1:]) / 2
+                lc2d, la2d = np.meshgrid(lon_centers, lat_centers)
+                self._mw_artist = self.ax.pcolormesh(
+                    lon2d, lat2d, rgba[:, :, 0], alpha=opacity,
+                    shading='flat', zorder=MW_ZORDER, rasterized=True)
+                # Set face colors from RGBA
+                self._mw_artist.set_array(None)
+                self._mw_artist.set_facecolors(rgba.reshape(-1, 4))
+        else:
+            # imshow for rectangular projection
+            # Longitude is pre-flipped in resampler (East on left).
+            # Flip rows only: imshow puts row 0 at top, our array has row 0 = b=-90.
+            extent = [180, -180, -90, 90]  # East on left
+            if arr.ndim == 2:
+                self._mw_artist = self.ax.imshow(
+                    arr[::-1, :], cmap='gray',
+                    vmin=0, vmax=1, alpha=opacity,
+                    extent=extent, aspect='auto',
+                    zorder=MW_ZORDER, interpolation='bilinear')
+            else:
+                # For RGB with invert already applied
+                self._mw_artist = self.ax.imshow(
+                    arr[::-1, :], alpha=opacity,
+                    extent=extent, aspect='auto',
+                    zorder=MW_ZORDER, interpolation='bilinear')
+
+        self._mw_last_key = cache_key
+        logger.debug(f"Drew Milky Way background ({source_name}, {self.coord_system})")
+
+    def _draw_gc_gac_markers(self, settings):
+        """Draw Galactic Center and Anti-Center markers."""
+        if not settings.get('show_gc', False):
+            return
+
+        # GC at galactic (l=0, b=0), GAC at (l=180, b=0)
+        gc_points = [(0, 0, 'GC'), (180, 0, 'GAC')]
+
+        for gal_l, gal_b, label in gc_points:
+            # Transform from galactic to current coordinate system
+            if self.coord_system == 'galactic':
+                lon, lat = float(gal_l), float(gal_b)
+            elif self.coord_system == 'equatorial':
+                lon, lat = CoordinateTransformer.galactic_to_equatorial(
+                    np.array([gal_l]), np.array([gal_b]))
+                lon, lat = float(lon[0]), float(lat[0])
+            elif self.coord_system == 'ecliptic':
+                ra, dec = CoordinateTransformer.galactic_to_equatorial(
+                    np.array([gal_l]), np.array([gal_b]))
+                lon, lat = CoordinateTransformer.equatorial_to_ecliptic(
+                    float(ra[0]), float(dec[0]))
+            elif self.coord_system == 'opposition':
+                ra, dec = CoordinateTransformer.galactic_to_equatorial(
+                    np.array([gal_l]), np.array([gal_b]))
+                ecl_lon, ecl_lat = CoordinateTransformer.equatorial_to_ecliptic(
+                    float(ra[0]), float(dec[0]))
+                sun_ecl_lon = getattr(self, 'sun_ecl_lon', 0)
+                lon = ecl_lon - sun_ecl_lon - 180
+                while lon > 180:
+                    lon -= 360
+                while lon < -180:
+                    lon += 360
+                lat = ecl_lat
+
+            # Convert to plot coordinates
+            if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                lon_plot = lon if lon <= 180 else lon - 360
+                x = np.radians(-lon_plot)
+                y = np.radians(lat)
+            else:
+                x = lon - 360 if lon > 180 else lon
+                y = lat
+
+            marker = self.ax.plot(x, y, '+', color='cyan', markersize=10,
+                                  markeredgewidth=1.5, zorder=16)[0]
+            self.overlay_artists.append(marker)
+            txt = self.ax.annotate(label, (x, y),
+                                   textcoords='offset points', xytext=(6, 6),
+                                   color='cyan', fontsize=8, fontweight='bold',
+                                   zorder=16)
+            self.overlay_artists.append(txt)
+
+    def _clear_milkyway_artist(self):
+        """Remove the current MW background artist."""
+        if self._mw_artist is not None:
+            try:
+                self._mw_artist.remove()
+            except Exception:
+                pass
+            self._mw_artist = None
+        self._mw_last_key = None
 
     def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True,
                     h_min=None, h_max=None, selected_classes=None,
@@ -10532,6 +10927,169 @@ class SettingsDialog(QDialog):
         self._layout.addWidget(constellations_group)
         self.collapsible_sections.append(constellations_group)
 
+        # Milky Way Background section
+        mw_group = CollapsibleGroupBox("Milky Way Background")
+        mw_layout = QVBoxLayout()
+        mw_layout.setSpacing(3)
+
+        # Enable checkbox
+        mw_enable_row = QHBoxLayout()
+        self.mw_enable_check = QCheckBox("Enable Milky Way background")
+        self.mw_enable_check.setChecked(False)
+        self.mw_enable_check.setToolTip("Display stellar density or photometry behind the sky map")
+        self.mw_enable_check.stateChanged.connect(self.on_milkyway_changed)
+        mw_enable_row.addWidget(self.mw_enable_check)
+        mw_enable_row.addStretch()
+        mw_layout.addLayout(mw_enable_row)
+
+        # Source selector
+        source_row = QHBoxLayout()
+        source_row.addSpacing(20)
+        source_row.addWidget(QLabel("Source:"))
+        self.mw_source_combo = QComboBox()
+        self.mw_source_combo.addItem("Gaia Color (all stars)", "gaia_color")
+        self.mw_source_combo.addItem("Gaia Density (all stars)", "gaia_density")
+        self.mw_source_combo.addItem("Gaia Density Image (all stars)", "gaia_density_image")
+        self.mw_source_combo.addItem("Hipparcos (bright stars)", "hipparcos")
+        self.mw_source_combo.setToolTip(
+            "Gaia: 1.8 billion stars from ESA Gaia EDR3 (requires download)\n"
+            "Hipparcos: ~118k bright stars (built-in, coarser)")
+        self.mw_source_combo.currentIndexChanged.connect(self.on_milkyway_changed)
+        source_row.addWidget(self.mw_source_combo)
+        source_row.addStretch()
+        mw_layout.addLayout(source_row)
+
+        # Opacity
+        opacity_row = QHBoxLayout()
+        opacity_row.addSpacing(20)
+        opacity_row.addWidget(QLabel("Opacity:"))
+        self.mw_opacity_spin = QSpinBox()
+        self.mw_opacity_spin.setRange(5, 100)
+        self.mw_opacity_spin.setValue(100)
+        self.mw_opacity_spin.setSuffix("%")
+        self.mw_opacity_spin.setMaximumWidth(60)
+        self.mw_opacity_spin.setToolTip("Background transparency (5-100%)")
+        self.mw_opacity_spin.valueChanged.connect(self.on_milkyway_changed)
+        opacity_row.addWidget(self.mw_opacity_spin)
+        opacity_row.addStretch()
+        mw_layout.addLayout(opacity_row)
+
+        # Brightness and Contrast
+        bc_row = QHBoxLayout()
+        bc_row.addSpacing(20)
+        bc_row.addWidget(QLabel("Bright:"))
+        self.mw_brightness_spin = QDoubleSpinBox()
+        self.mw_brightness_spin.setRange(-0.5, 0.5)
+        self.mw_brightness_spin.setValue(-0.25)
+        self.mw_brightness_spin.setSingleStep(0.05)
+        self.mw_brightness_spin.setDecimals(2)
+        self.mw_brightness_spin.setMaximumWidth(60)
+        self.mw_brightness_spin.setToolTip("Brightness offset (-0.5 to +0.5)")
+        self.mw_brightness_spin.valueChanged.connect(self.on_milkyway_changed)
+        bc_row.addWidget(self.mw_brightness_spin)
+        bc_row.addWidget(QLabel("Contrast:"))
+        self.mw_contrast_spin = QDoubleSpinBox()
+        self.mw_contrast_spin.setRange(0.1, 3.0)
+        self.mw_contrast_spin.setValue(1.5)
+        self.mw_contrast_spin.setSingleStep(0.1)
+        self.mw_contrast_spin.setDecimals(1)
+        self.mw_contrast_spin.setMaximumWidth(60)
+        self.mw_contrast_spin.setToolTip("Contrast multiplier (0.1 to 3.0)")
+        self.mw_contrast_spin.valueChanged.connect(self.on_milkyway_changed)
+        bc_row.addWidget(self.mw_contrast_spin)
+        bc_row.addStretch()
+        mw_layout.addLayout(bc_row)
+
+        # Scaling and min/max
+        scale_row = QHBoxLayout()
+        scale_row.addSpacing(20)
+        scale_row.addWidget(QLabel("Scale:"))
+        self.mw_scale_combo = QComboBox()
+        self.mw_scale_combo.addItem("Linear", "linear")
+        self.mw_scale_combo.addItem("Log", "log")
+        self.mw_scale_combo.addItem("Sqrt", "sqrt")
+        self.mw_scale_combo.addItem("Asinh", "asinh")
+        self.mw_scale_combo.setMaximumWidth(70)
+        self.mw_scale_combo.setToolTip("Intensity scaling function\nAsinh handles large dynamic range gracefully")
+        self.mw_scale_combo.currentIndexChanged.connect(self.on_milkyway_changed)
+        scale_row.addWidget(self.mw_scale_combo)
+        scale_row.addWidget(QLabel("Min:"))
+        self.mw_vmin_spin = QSpinBox()
+        self.mw_vmin_spin.setRange(0, 99)
+        self.mw_vmin_spin.setValue(0)
+        self.mw_vmin_spin.setSuffix("%")
+        self.mw_vmin_spin.setMaximumWidth(55)
+        self.mw_vmin_spin.setToolTip("Floor level for display (clips below)")
+        self.mw_vmin_spin.valueChanged.connect(self.on_milkyway_changed)
+        scale_row.addWidget(self.mw_vmin_spin)
+        scale_row.addWidget(QLabel("Max:"))
+        self.mw_vmax_spin = QSpinBox()
+        self.mw_vmax_spin.setRange(1, 100)
+        self.mw_vmax_spin.setValue(100)
+        self.mw_vmax_spin.setSuffix("%")
+        self.mw_vmax_spin.setMaximumWidth(55)
+        self.mw_vmax_spin.setToolTip("Ceiling level for display (clips above)")
+        self.mw_vmax_spin.valueChanged.connect(self.on_milkyway_changed)
+        scale_row.addWidget(self.mw_vmax_spin)
+        scale_row.addStretch()
+        mw_layout.addLayout(scale_row)
+
+        # Buttons row: Equalize, Invert, Reset
+        btn_row = QHBoxLayout()
+        btn_row.addSpacing(20)
+        self.mw_invert_check = QCheckBox("Invert")
+        self.mw_invert_check.setToolTip("Invert light/dark (swap black and white)")
+        self.mw_invert_check.stateChanged.connect(self.on_milkyway_changed)
+        btn_row.addWidget(self.mw_invert_check)
+        self.mw_equalize_btn = QPushButton("Equalize")
+        self.mw_equalize_btn.setMaximumWidth(65)
+        self.mw_equalize_btn.setToolTip("Auto-adjust min/max and scaling for best dynamic range")
+        self.mw_equalize_btn.clicked.connect(self._mw_equalize)
+        btn_row.addWidget(self.mw_equalize_btn)
+        self.mw_reset_btn = QPushButton("Reset")
+        self.mw_reset_btn.setMaximumWidth(50)
+        self.mw_reset_btn.setToolTip("Reset all Milky Way display settings to defaults")
+        self.mw_reset_btn.clicked.connect(self._mw_reset_display)
+        btn_row.addWidget(self.mw_reset_btn)
+        btn_row.addStretch()
+        mw_layout.addLayout(btn_row)
+
+        # Galactic center / anti-center markers
+        gc_row = QHBoxLayout()
+        gc_row.addSpacing(20)
+        self.mw_show_gc_check = QCheckBox("Show Galactic center / anti-center")
+        self.mw_show_gc_check.setChecked(False)
+        self.mw_show_gc_check.setToolTip("Mark the Galactic center (GC) and anti-center (GAC)")
+        self.mw_show_gc_check.stateChanged.connect(self.on_milkyway_changed)
+        gc_row.addWidget(self.mw_show_gc_check)
+        gc_row.addStretch()
+        mw_layout.addLayout(gc_row)
+
+        # Animation and resolution
+        anim_row = QHBoxLayout()
+        anim_row.addSpacing(20)
+        self.mw_animation_check = QCheckBox("Show during animation")
+        self.mw_animation_check.setChecked(True)
+        self.mw_animation_check.setToolTip("Keep Milky Way visible during playback")
+        self.mw_animation_check.stateChanged.connect(self.on_milkyway_changed)
+        anim_row.addWidget(self.mw_animation_check)
+        anim_row.addWidget(QLabel("Res:"))
+        self.mw_resolution_combo = QComboBox()
+        self.mw_resolution_combo.addItem("Low", "low")
+        self.mw_resolution_combo.addItem("Medium", "medium")
+        self.mw_resolution_combo.addItem("High", "high")
+        self.mw_resolution_combo.setCurrentIndex(1)  # Medium default
+        self.mw_resolution_combo.setMaximumWidth(85)
+        self.mw_resolution_combo.setToolTip("Background resolution\nLow: 250x125, Medium: 500x250, High: 1000x500")
+        self.mw_resolution_combo.currentIndexChanged.connect(self.on_milkyway_changed)
+        anim_row.addWidget(self.mw_resolution_combo)
+        anim_row.addStretch()
+        mw_layout.addLayout(anim_row)
+
+        mw_group.setLayout(mw_layout)
+        self._layout.addWidget(mw_group)
+        self.collapsible_sections.append(mw_group)
+
         # Sun and Moon section
         sunmoon_group = CollapsibleGroupBox("Sun and Moon")
         sunmoon_layout = QVBoxLayout()
@@ -11600,6 +12158,22 @@ class SettingsDialog(QDialog):
         self.star_color_edit.setEnabled(stars_enabled)
         self.star_size_spin.setEnabled(stars_enabled)
 
+        # Milky Way controls
+        mw_enabled = self.mw_enable_check.isChecked()
+        self.mw_source_combo.setEnabled(mw_enabled)
+        self.mw_opacity_spin.setEnabled(mw_enabled)
+        self.mw_brightness_spin.setEnabled(mw_enabled)
+        self.mw_contrast_spin.setEnabled(mw_enabled)
+        self.mw_scale_combo.setEnabled(mw_enabled)
+        self.mw_vmin_spin.setEnabled(mw_enabled)
+        self.mw_vmax_spin.setEnabled(mw_enabled)
+        self.mw_invert_check.setEnabled(mw_enabled)
+        self.mw_show_gc_check.setEnabled(mw_enabled)
+        self.mw_equalize_btn.setEnabled(mw_enabled)
+        self.mw_reset_btn.setEnabled(mw_enabled)
+        self.mw_animation_check.setEnabled(mw_enabled)
+        self.mw_resolution_combo.setEnabled(mw_enabled)
+
         # Planet controls
         self._update_planet_controls_state()
 
@@ -11892,6 +12466,66 @@ class SettingsDialog(QDialog):
         parent = self.parent()
         if parent and hasattr(parent, 'on_stars_changed'):
             parent.on_stars_changed()
+
+    def get_milkyway_settings(self):
+        """Return current Milky Way background display settings"""
+        return {
+            'enabled': self.mw_enable_check.isChecked(),
+            'source': self.mw_source_combo.currentData(),
+            'opacity': self.mw_opacity_spin.value(),
+            'brightness': self.mw_brightness_spin.value(),
+            'contrast': self.mw_contrast_spin.value(),
+            'scaling': self.mw_scale_combo.currentData(),
+            'vmin': self.mw_vmin_spin.value(),
+            'vmax': self.mw_vmax_spin.value(),
+            'invert': self.mw_invert_check.isChecked(),
+            'show_gc': self.mw_show_gc_check.isChecked(),
+            'show_during_animation': self.mw_animation_check.isChecked(),
+            'resolution': self.mw_resolution_combo.currentData()
+        }
+
+    def on_milkyway_changed(self):
+        """Handle changes to Milky Way background settings"""
+        enabled = self.mw_enable_check.isChecked()
+        self.mw_source_combo.setEnabled(enabled)
+        self.mw_opacity_spin.setEnabled(enabled)
+        self.mw_brightness_spin.setEnabled(enabled)
+        self.mw_contrast_spin.setEnabled(enabled)
+        self.mw_scale_combo.setEnabled(enabled)
+        self.mw_vmin_spin.setEnabled(enabled)
+        self.mw_vmax_spin.setEnabled(enabled)
+        self.mw_invert_check.setEnabled(enabled)
+        self.mw_show_gc_check.setEnabled(enabled)
+        self.mw_equalize_btn.setEnabled(enabled)
+        self.mw_reset_btn.setEnabled(enabled)
+        self.mw_animation_check.setEnabled(enabled)
+        self.mw_resolution_combo.setEnabled(enabled)
+
+        parent = self.parent()
+        if parent and hasattr(parent, 'on_milkyway_changed'):
+            parent.on_milkyway_changed()
+
+    def _mw_equalize(self):
+        """Auto-adjust MW display settings for best dynamic range"""
+        self.mw_scale_combo.setCurrentIndex(
+            self.mw_scale_combo.findData('asinh'))
+        self.mw_vmin_spin.setValue(2)
+        self.mw_vmax_spin.setValue(85)
+        self.mw_brightness_spin.setValue(0.0)
+        self.mw_contrast_spin.setValue(1.5)
+
+    def _mw_reset_display(self):
+        """Reset MW display settings to defaults"""
+        self.mw_opacity_spin.setValue(100)
+        self.mw_brightness_spin.setValue(-0.25)
+        self.mw_contrast_spin.setValue(1.5)
+        self.mw_scale_combo.setCurrentIndex(0)  # Linear
+        self.mw_vmin_spin.setValue(0)
+        self.mw_vmax_spin.setValue(100)
+        self.mw_invert_check.setChecked(False)
+        self.mw_show_gc_check.setChecked(False)
+        self.mw_animation_check.setChecked(True)
+        self.mw_resolution_combo.setCurrentIndex(1)  # Medium
 
     def get_horizon_settings(self):
         """Return current horizon/twilight display settings"""
@@ -12440,6 +13074,22 @@ class SettingsDialog(QDialog):
                 'size': self.star_size_spin.value()
             }
 
+            # Milky Way background
+            state['milkyway'] = {
+                'enabled': self.mw_enable_check.isChecked(),
+                'source': self.mw_source_combo.currentData(),
+                'opacity': self.mw_opacity_spin.value(),
+                'brightness': self.mw_brightness_spin.value(),
+                'contrast': self.mw_contrast_spin.value(),
+                'scaling': self.mw_scale_combo.currentData(),
+                'vmin': self.mw_vmin_spin.value(),
+                'vmax': self.mw_vmax_spin.value(),
+                'invert': self.mw_invert_check.isChecked(),
+                'show_gc': self.mw_show_gc_check.isChecked(),
+                'show_during_animation': self.mw_animation_check.isChecked(),
+                'resolution': self.mw_resolution_combo.currentData()
+            }
+
         try:
             loop_enabled = self.script_loop_check.isChecked()
             all_points = existing_points + self._script_buffer
@@ -12787,6 +13437,31 @@ class SettingsDialog(QDialog):
                 self.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
                 self.star_color_edit.setText(s.get('color', '#FFFFFF'))
                 self.star_size_spin.setValue(s.get('size', 5))
+
+            # Milky Way background
+            if 'milkyway' in state:
+                mw = state['milkyway']
+                self.mw_enable_check.setChecked(mw.get('enabled', False))
+                src = mw.get('source', 'hipparcos')
+                idx = self.mw_source_combo.findData(src)
+                if idx >= 0:
+                    self.mw_source_combo.setCurrentIndex(idx)
+                self.mw_opacity_spin.setValue(mw.get('opacity', 30))
+                self.mw_brightness_spin.setValue(mw.get('brightness', 0.0))
+                self.mw_contrast_spin.setValue(mw.get('contrast', 1.0))
+                sc = mw.get('scaling', 'linear')
+                idx = self.mw_scale_combo.findData(sc)
+                if idx >= 0:
+                    self.mw_scale_combo.setCurrentIndex(idx)
+                self.mw_vmin_spin.setValue(mw.get('vmin', 0))
+                self.mw_vmax_spin.setValue(mw.get('vmax', 100))
+                self.mw_invert_check.setChecked(mw.get('invert', False))
+                self.mw_show_gc_check.setChecked(mw.get('show_gc', False))
+                self.mw_animation_check.setChecked(mw.get('show_during_animation', True))
+                res = mw.get('resolution', 'medium')
+                idx = self.mw_resolution_combo.findData(res)
+                if idx >= 0:
+                    self.mw_resolution_combo.setCurrentIndex(idx)
 
             # Update control states and display
             self._initialize_control_states()
@@ -13454,6 +14129,16 @@ class NEOVisualizer(QMainWindow):
                 except Exception:
                     pass
             self.canvas.overlay_artists = []
+        self.update_display()
+
+    def on_milkyway_changed(self):
+        """Handle changes to Milky Way background settings"""
+        # MW background has its own artist management; just force overlay redraw
+        if hasattr(self.canvas, 'last_jd'):
+            self.canvas.last_jd = None
+        # Clear the MW artist cache so it redraws with new settings
+        if hasattr(self.canvas, '_mw_last_key'):
+            self.canvas._mw_last_key = None
         self.update_display()
 
     def on_appearance_changed(self):
@@ -15059,6 +15744,13 @@ class NEOVisualizer(QMainWindow):
                 star_settings = {'show_stars': False, 'mag_limit': 4.0, 'color': '#FF99FF', 'size': 5}
             self.canvas.star_settings = star_settings
 
+            # Milky Way background settings
+            if self.settings_dialog and hasattr(self.settings_dialog, 'get_milkyway_settings'):
+                milkyway_settings = self.settings_dialog.get_milkyway_settings()
+            else:
+                milkyway_settings = {'enabled': False}
+            self.canvas.milkyway_settings = milkyway_settings
+
             # Galactic exclusion settings (affects overlay boundaries)
             if self.settings_dialog and hasattr(self.settings_dialog, 'get_galactic_settings'):
                 galactic_settings = self.settings_dialog.get_galactic_settings()
@@ -15514,6 +16206,7 @@ class NEOVisualizer(QMainWindow):
         <li><b>Hide unnumbered:</b> Filter to show only numbered asteroids</li>
         <li><b>Constellation boundaries:</b> IAU constellation boundary overlay</li>
         <li><b>Background stars:</b> Bright star display with magnitude filtering</li>
+        <li><b>Milky Way background:</b> Gaia EDR3 or Hipparcos stellar density/color overlay with adjustable opacity, scaling, and contrast</li>
         </ul>
 
         <h3>New in v3.04</h3>
@@ -15809,6 +16502,21 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.star_color_edit.setText("#FF99FF")
                 self.settings_dialog.star_size_spin.setValue(5)
 
+                # Milky Way background (off by default)
+                self.settings_dialog.mw_enable_check.setChecked(False)
+                self.settings_dialog.mw_source_combo.setCurrentIndex(
+                    self.settings_dialog.mw_source_combo.findData('hipparcos'))
+                self.settings_dialog.mw_opacity_spin.setValue(100)
+                self.settings_dialog.mw_brightness_spin.setValue(-0.25)
+                self.settings_dialog.mw_contrast_spin.setValue(1.5)
+                self.settings_dialog.mw_scale_combo.setCurrentIndex(0)
+                self.settings_dialog.mw_vmin_spin.setValue(0)
+                self.settings_dialog.mw_vmax_spin.setValue(100)
+                self.settings_dialog.mw_invert_check.setChecked(False)
+                self.settings_dialog.mw_show_gc_check.setChecked(False)
+                self.settings_dialog.mw_animation_check.setChecked(True)
+                self.settings_dialog.mw_resolution_combo.setCurrentIndex(1)
+
                 # Alternate Catalogs / Diff Mode
                 self.settings_dialog.diff_enable_check.setChecked(False)
                 self.settings_dialog.diff_type_combo.setCurrentIndex(0)  # "All differences"
@@ -16099,6 +16807,22 @@ class NEOVisualizer(QMainWindow):
                     'size': self.settings_dialog.star_size_spin.value()
                 }
 
+                # Milky Way background
+                settings['milkyway'] = {
+                    'enabled': self.settings_dialog.mw_enable_check.isChecked(),
+                    'source': self.settings_dialog.mw_source_combo.currentData(),
+                    'opacity': self.settings_dialog.mw_opacity_spin.value(),
+                    'brightness': self.settings_dialog.mw_brightness_spin.value(),
+                    'contrast': self.settings_dialog.mw_contrast_spin.value(),
+                    'scaling': self.settings_dialog.mw_scale_combo.currentData(),
+                    'vmin': self.settings_dialog.mw_vmin_spin.value(),
+                    'vmax': self.settings_dialog.mw_vmax_spin.value(),
+                    'invert': self.settings_dialog.mw_invert_check.isChecked(),
+                    'show_gc': self.settings_dialog.mw_show_gc_check.isChecked(),
+                    'show_during_animation': self.settings_dialog.mw_animation_check.isChecked(),
+                    'resolution': self.settings_dialog.mw_resolution_combo.currentData()
+                }
+
                 # Alternate Catalogs / Diff Mode
                 settings['alternate_catalogs'] = {
                     'diff_enabled': self.settings_dialog.diff_enable_check.isChecked(),
@@ -16373,6 +17097,31 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
                     self.settings_dialog.star_color_edit.setText(s.get('color', '#FFFFFF'))
                     self.settings_dialog.star_size_spin.setValue(s.get('size', 5))
+
+                # Milky Way background
+                if 'milkyway' in settings:
+                    mw = settings['milkyway']
+                    self.settings_dialog.mw_enable_check.setChecked(mw.get('enabled', False))
+                    src = mw.get('source', 'hipparcos')
+                    idx = self.settings_dialog.mw_source_combo.findData(src)
+                    if idx >= 0:
+                        self.settings_dialog.mw_source_combo.setCurrentIndex(idx)
+                    self.settings_dialog.mw_opacity_spin.setValue(mw.get('opacity', 30))
+                    self.settings_dialog.mw_brightness_spin.setValue(mw.get('brightness', 0.0))
+                    self.settings_dialog.mw_contrast_spin.setValue(mw.get('contrast', 1.0))
+                    sc = mw.get('scaling', 'linear')
+                    idx = self.settings_dialog.mw_scale_combo.findData(sc)
+                    if idx >= 0:
+                        self.settings_dialog.mw_scale_combo.setCurrentIndex(idx)
+                    self.settings_dialog.mw_vmin_spin.setValue(mw.get('vmin', 0))
+                    self.settings_dialog.mw_vmax_spin.setValue(mw.get('vmax', 100))
+                    self.settings_dialog.mw_invert_check.setChecked(mw.get('invert', False))
+                    self.settings_dialog.mw_show_gc_check.setChecked(mw.get('show_gc', False))
+                    self.settings_dialog.mw_animation_check.setChecked(mw.get('show_during_animation', True))
+                    res = mw.get('resolution', 'medium')
+                    idx = self.settings_dialog.mw_resolution_combo.findData(res)
+                    if idx >= 0:
+                        self.settings_dialog.mw_resolution_combo.setCurrentIndex(idx)
 
                 # Alternate Catalogs / Diff Mode
                 if 'alternate_catalogs' in settings:
