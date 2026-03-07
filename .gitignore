@@ -7,6 +7,7 @@ alt_data/
 
 # Data files: generated/downloaded (reference files like stars, constellations are tracked)
 data/asteroids.db
+hip_main.dat
 data/neo_catalog.db
 data/NEA.txt
 data/MPC/
