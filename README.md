@@ -78,6 +78,9 @@ Platform-specific notes in [PLATFORM_NOTES.txt](PLATFORM_NOTES.txt).
 - **Alternate catalogs:** Load and compare multiple catalog versions
 - **Catalog blinking:** Rapidly toggle between catalogs for comparison
 - **Non-discovery overlay:** Show not-yet-discovered NEOs as diamonds during lunation filter
+- **Milky Way background:** Multiple sources — ESA Gaia EDR3 (color flux, density), Hipparcos density
+- **Drop shadow effect:** Adaptive shadow on NEO markers for depth against background imagery
+- **Configurable grid color:** Adjustable grid line color for visibility against backgrounds
 
 ---
 
@@ -274,6 +277,10 @@ In `~/.skyfield/` in your home directory. These are shared across projects and n
 - **[Matplotlib](https://matplotlib.org/)** — Scientific visualization
 - **[h5py](https://docs.h5py.org/)** — HDF5 position cache storage
 
+## Data Credits
+
+- **[ESA Gaia EDR3](https://sci.esa.int/web/gaia/)** — All-sky maps from 1.8 billion stars (CC BY-SA 3.0 IGO). Gaia Collaboration et al. (2021), A&A 649, A1.
+- **[ESA Hipparcos](https://www.cosmos.esa.int/web/hipparcos)** — Bright star catalog (~118,218 stars). ESA (1997), The Hipparcos and Tycho Catalogues, ESA SP-1200.
 ---
 
 ## License

@@ -34,17 +34,25 @@ neolyzer/
 │   ├── setup_database.py       # Initial setup (download data, build cache)
 │   ├── update_catalog.py       # Update catalog from MPC
 │   ├── build_cache.py          # Rebuild position cache
+│   ├── load_alt_catalog.py     # Load alternate catalogs for comparison/blinking
+│   ├── partition_mpcorb.py     # Partition MPC orbit files by object type
 │   ├── verify_installation.py  # Verify installation
 │   └── verify_fixes.py         # Verification tests
 ├── data/                       # Data files
-│   └── NEO_discovery_tracklets.csv  # Discovery circumstances data (replaces NEA_)
+│   ├── NEO_discovery_tracklets.csv  # Discovery circumstances data
+│   ├── hipparcos_density.npz   # Pre-built Hipparcos density grid
+│   ├── bright_stars.csv        # Bright star catalog for overlay
+│   ├── iau_*.csv/.dat          # IAU constellation boundary data
+│   └── Gaia_EDR3_*.png         # Gaia sky maps (downloaded during setup)
+├── docs/                       # Design documentation
+│   └── milky_way_background_design.txt
 ├── assets/                     # UI assets
 │   └── CSS_logo_transparent.png     # Catalina Sky Survey logo
 ├── diagnose_*.py               # Diagnostic scripts (CLN, missing NEOs, SBDB)
 ├── install.sh                  # Cross-platform installation script
 ├── requirements.txt            # Python dependencies
 ├── CLAUDE.md                   # This file
-├── README.txt                  # User documentation
+├── README.md                   # User documentation (GitHub)
 └── PLATFORM_NOTES.txt          # Platform-specific notes
 ```
 
@@ -75,6 +83,8 @@ Key components:
 # Maintenance
 ./venv/bin/python scripts/update_catalog.py   # Update from MPC
 ./venv/bin/python scripts/build_cache.py      # Rebuild position cache
+./venv/bin/python scripts/load_alt_catalog.py # Load alternate catalogs
+./venv/bin/python scripts/partition_mpcorb.py # Partition MPC orbit files
 
 # Verification
 ./venv/bin/python scripts/verify_installation.py
@@ -97,9 +107,14 @@ python diagnose_sbdb.py     # SBDB/JPL data diagnostics
 - Dual magnitude filtering (V and H magnitudes, min and max)
 - Animation controls with variable rate (hours/days/months per second)
 - Negative rate support for backwards playback
-- Moon phase display (CLN — Catalina Lunation Number)
+- Moon phase display (CLN — Catalina Lunation Number) with accurate phase rendering
 - Discovery tracklet integration (hide objects before discovery date)
+- Non-discovery overlay (show not-yet-discovered NEOs as diamonds)
 - Earth MOID filtering via JPL SBDB API
+- Alternate catalog loading, comparison, and catalog blinking
+- Milky Way background (Gaia EDR3 color/density, Hipparcos density)
+- Drop shadow effect on NEO markers (adaptive color for light/dark backgrounds)
+- Configurable grid color
 - Cross-platform support (macOS, Linux, Raspberry Pi)
 
 **Needs work:**

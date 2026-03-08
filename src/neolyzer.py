@@ -566,6 +566,7 @@ class SkyMapCanvas(FigureCanvas):
         self.h_resolution = 30  # Horizontal grid spacing in degrees
         self.v_resolution = 15  # Vertical grid spacing in degrees
         self.show_grid = True   # Grid visibility
+        self.grid_color = '#888888'  # Grid line color
 
         # Plot elements
         self.ax = None
@@ -710,7 +711,7 @@ class SkyMapCanvas(FigureCanvas):
                 self._draw_transformed_grid()
             else:
                 # Use native matplotlib grid
-                self.ax.grid(True, alpha=0.3, linestyle='--')
+                self.ax.grid(True, alpha=1.0, linestyle='--', color=self.grid_color)
         else:
             self.ax.grid(False)
 
@@ -752,12 +753,12 @@ class SkyMapCanvas(FigureCanvas):
 
         # Create empty scatter for near-side NEOs (filled circles)
         self.scatter = self.ax.scatter(
-            [], [], s=10, c=[], 
+            [], [], s=10, c=[],
             cmap=self.cmap, alpha=0.7,
             vmin=self.cbar_min, vmax=self.cbar_max,
             zorder=10
         )
-        
+
         # Create empty scatter for far-side NEOs (hollow circles)
         self.scatter_far = self.ax.scatter(
             [], [], s=10,
@@ -946,8 +947,8 @@ class SkyMapCanvas(FigureCanvas):
 
         # Draw each segment and store the line artists
         for seg_x, seg_y in segments:
-            line, = self.ax.plot(seg_x, seg_y, color='gray', linestyle='--',
-                                 linewidth=0.5, alpha=0.3, zorder=1)
+            line, = self.ax.plot(seg_x, seg_y, color=self.grid_color, linestyle='--',
+                                 linewidth=0.5, alpha=1.0, zorder=1)
             self.grid_lines.append(line)
 
     def _transform_grid_coords(self, lon, lat, source_system, dest_system):
@@ -959,6 +960,15 @@ class SkyMapCanvas(FigureCanvas):
             ra, dec = CoordinateTransformer.ecliptic_to_equatorial(lon, lat)
         elif source_system == 'galactic':
             ra, dec = CoordinateTransformer.galactic_to_equatorial(lon, lat)
+        elif source_system == 'opposition':
+            # Opposition coords are ecliptic with longitude offset by opposition point
+            sun_ecl_lon = getattr(self, 'sun_ecl_lon', 0)
+            opposition_lon = (sun_ecl_lon + 180) % 360
+            ecl_lon = lon + opposition_lon
+            # Normalize to 0-360
+            ecl_lon = np.where(ecl_lon > 360, ecl_lon - 360, ecl_lon)
+            ecl_lon = np.where(ecl_lon < 0, ecl_lon + 360, ecl_lon)
+            ra, dec = CoordinateTransformer.ecliptic_to_equatorial(ecl_lon, lat)
         else:
             ra, dec = lon, lat  # Unknown system, pass through
 
@@ -1039,6 +1049,11 @@ class SkyMapCanvas(FigureCanvas):
     def set_grid_visible(self, visible):
         """Set grid visibility"""
         self.show_grid = visible
+        self.setup_plot()
+
+    def set_grid_color(self, color):
+        """Set grid line color"""
+        self.grid_color = color
         self.setup_plot()
 
     def set_grid_coordinate_system(self, coord_system):
@@ -2108,62 +2123,92 @@ class SkyMapCanvas(FigureCanvas):
                     show_phases = sunmoon_settings.get('show_phases', True)
                     
                     if show_phases:
-                        # Draw realistic moon phase using patches
+                        # Draw moon phase using pixel-space patches (avoids projection distortion)
                         from matplotlib.patches import Circle, Path as MplPath, PathPatch
-                        transform = self.ax.transData
-                        
-                        # Base dark circle with forest green border
-                        dark_circle = Circle((lon_moon_rad, lat_moon_rad), moon_radius,
-                                            facecolor='#1a3a1a', edgecolor='#228B22',  # Dark green base, forest green border
-                                            linewidth=1.5, zorder=19, transform=transform)
-                        self.ax.add_patch(dark_circle)
-                        self.overlay_artists.append(dark_circle)
-                        
-                        # Draw illuminated portion (pale green)
+                        from matplotlib.transforms import Affine2D
+
+                        # Use offset transform: data position + pixel offset
+                        # This keeps the moon round regardless of projection
+                        pixel_radius = 8  # radius in points
+                        offset_transform = self.ax.transData + Affine2D().translate(0, 0)
+
+                        # Get display position of moon center
+                        display_xy = self.ax.transData.transform((lon_moon_rad, lat_moon_rad))
+                        cx_px, cy_px = display_xy
+
+                        # Use figure pixel transform for round patches
+                        fig_transform = self.figure.transFigure.inverted()
+                        cx_fig, cy_fig = fig_transform.transform(display_xy)
+
+                        # Pixel-space transform centered on moon position
+                        px_transform = (Affine2D().scale(1.0) +
+                                       self.figure.dpi_scale_trans +
+                                       Affine2D().translate(0, 0))
+
+                        # Draw in display (pixel) coordinates via transData
+                        # Use a helper transform: offset from data point in points
+                        from matplotlib.offsetbox import AnnotationBbox, DrawingArea
+                        da_size = pixel_radius * 2 + 2
+                        da = DrawingArea(da_size, da_size, 0, 0)
+                        c_off = da_size / 2  # center offset within DrawingArea
+
+                        # Base dark circle
+                        dark_circle = Circle((c_off, c_off), pixel_radius,
+                                            facecolor='#1a3a1a', edgecolor='#228B22',
+                                            linewidth=1.5)
+                        da.add_artist(dark_circle)
+
+                        # Illuminated portion
                         if illumination > 0.03:
-                            n_points = 30
-                            theta = np.linspace(-np.pi/2, np.pi/2, n_points)
-                            
                             if illumination >= 0.97:
-                                # Full moon - pale green
-                                bright_circle = Circle((lon_moon_rad, lat_moon_rad), moon_radius * 0.95,
-                                                      facecolor='#98FB98', edgecolor='none',
-                                                      zorder=19.5, transform=transform)
-                                self.ax.add_patch(bright_circle)
-                                self.overlay_artists.append(bright_circle)
+                                bright_circle = Circle((c_off, c_off), pixel_radius * 0.95,
+                                                      facecolor='#98FB98', edgecolor='none')
+                                da.add_artist(bright_circle)
                             else:
-                                # Crescent/Quarter/Gibbous
-                                if illumination < 0.5:
-                                    curve = -(1 - 2*illumination)
+                                n_points = 30
+                                theta = np.linspace(-np.pi/2, np.pi/2, n_points)
+
+                                # Terminator position: +1 at new (no lit area),
+                                # 0 at quarter (half lit), -1 at full (all lit)
+                                curve = 1 - 2 * illumination
+
+                                # Lit side faces the Sun. Compare display x-coords
+                                # to determine which side of the patch to illuminate.
+                                dx = lon_sun_rad - lon_moon_rad
+                                # Handle wrap-around
+                                if self.projection in ['hammer', 'aitoff', 'mollweide']:
+                                    if dx > np.pi: dx -= 2 * np.pi
+                                    if dx < -np.pi: dx += 2 * np.pi
                                 else:
-                                    curve = 2*illumination - 1
-                                
-                                lit_side = 1 if waxing else -1
-                                
-                                outer_x = lit_side * moon_radius * np.cos(theta)
-                                outer_y = moon_radius * np.sin(theta)
-                                inner_x = lit_side * moon_radius * curve * np.cos(theta)
-                                inner_y = moon_radius * np.sin(theta)
-                                
+                                    if dx > 180: dx -= 360
+                                    if dx < -180: dx += 360
+                                lit_side = 1 if dx > 0 else -1
+
+                                outer_x = lit_side * pixel_radius * np.cos(theta)
+                                outer_y = pixel_radius * np.sin(theta)
+                                inner_x = lit_side * curve * pixel_radius * np.cos(theta)
+                                inner_y = pixel_radius * np.sin(theta)
+
                                 verts = []
                                 codes = []
-                                
                                 for i, (ox, oy) in enumerate(zip(outer_x, outer_y)):
-                                    verts.append((lon_moon_rad + ox, lat_moon_rad + oy))
+                                    verts.append((c_off + ox, c_off + oy))
                                     codes.append(MplPath.MOVETO if i == 0 else MplPath.LINETO)
-                                
                                 for ix, iy in zip(inner_x[::-1], inner_y[::-1]):
-                                    verts.append((lon_moon_rad + ix, lat_moon_rad + iy))
+                                    verts.append((c_off + ix, c_off + iy))
                                     codes.append(MplPath.LINETO)
-                                
                                 codes.append(MplPath.CLOSEPOLY)
                                 verts.append(verts[0])
-                                
+
                                 path = MplPath(verts, codes)
-                                patch = PathPatch(path, facecolor='#98FB98', edgecolor='none',
-                                                 zorder=19.5, transform=transform)
-                                self.ax.add_patch(patch)
-                                self.overlay_artists.append(patch)
+                                patch = PathPatch(path, facecolor='#98FB98', edgecolor='none')
+                                da.add_artist(patch)
+
+                        ab = AnnotationBbox(da, (lon_moon_rad, lat_moon_rad),
+                                           frameon=False, zorder=19,
+                                           box_alignment=(0.5, 0.5))
+                        self.ax.add_artist(ab)
+                        self.overlay_artists.append(ab)
                     else:
                         # Simple circle (no phase detail) - pale green
                         moon_marker = self.ax.plot(lon_moon_rad, lat_moon_rad, 'o',
@@ -2354,11 +2399,14 @@ class SkyMapCanvas(FigureCanvas):
                         logger.debug(f"Could not draw Milky Way background: {e}")
                 else:
                     self._clear_milkyway_artist()
-                # GC/GAC markers (drawn even when MW background is off)
+                # GC/GAC markers
                 try:
                     self._draw_gc_gac_markers(mw_settings)
                 except Exception as e:
                     logger.debug(f"Could not draw GC/GAC markers: {e}")
+            else:
+                # MW disabled — clear any existing artist
+                self._clear_milkyway_artist()
 
             # === CONSTELLATION BOUNDARIES ===
             constellation_settings = getattr(self, 'constellation_settings', None)
@@ -2800,6 +2848,7 @@ class SkyMapCanvas(FigureCanvas):
 
         shade_night_color = horizon_settings.get('shade_night_color', '#E8E8E8')
         shade_day_color = horizon_settings.get('shade_day_color', '#FFFDE8')
+        shade_alpha = horizon_settings.get('shade_opacity', 50) / 100.0
 
         observer_lat = horizon_settings.get('observer_lat', 32.2226)
         observer_lon = horizon_settings.get('observer_lon', -110.9747)
@@ -2959,33 +3008,27 @@ class SkyMapCanvas(FigureCanvas):
             return  # Nothing to shade
 
         try:
-            from matplotlib.colors import ListedColormap, to_rgba
-
-            # Create a single-color colormap with the shade color and alpha
-            rgba = to_rgba(shade_color, alpha=0.3)
-            cmap = ListedColormap([rgba])
-
-            # Use masked array with pcolormesh - masked values are transparent
-            masked_data = np.ma.array(np.ones_like(observable_mask, dtype=float),
-                                      mask=~observable_mask)
+            # Use contourf instead of pcolormesh to avoid cell-boundary seam
+            # artifacts. pcolormesh composites each cell individually, causing
+            # visible gaps between semi-transparent quads on Qt/macOS backends.
+            # contourf renders filled paths with no cell structure.
+            binary = np.where(observable_mask, 1.0, 0.0)
 
             if self.projection in ['hammer', 'aitoff', 'mollweide']:
-                # Convert to radians, flip longitude for East-left convention
                 lon_rad = np.radians(-lon_2d)
                 lat_rad = np.radians(lat_2d)
-
-                mesh = self.ax.pcolormesh(lon_rad, lat_rad, masked_data,
-                                         cmap=cmap, vmin=0, vmax=1,
-                                         shading='auto', zorder=SHADE_ZORDER)
-                self._shading_artists.append(mesh)
-                self.overlay_artists.append(mesh)
+                cs = self.ax.contourf(lon_rad, lat_rad, binary,
+                                      levels=[0.5, 1.5],
+                                      colors=[shade_color], alpha=shade_alpha,
+                                      zorder=SHADE_ZORDER)
             else:
-                # Rectangular projection
-                mesh = self.ax.pcolormesh(lon_2d, lat_2d, masked_data,
-                                         cmap=cmap, vmin=0, vmax=1,
-                                         shading='auto', zorder=SHADE_ZORDER)
-                self._shading_artists.append(mesh)
-                self.overlay_artists.append(mesh)
+                cs = self.ax.contourf(lon_2d, lat_2d, binary,
+                                      levels=[0.5, 1.5],
+                                      colors=[shade_color], alpha=shade_alpha,
+                                      zorder=SHADE_ZORDER)
+
+            self._shading_artists.append(cs)
+            self.overlay_artists.append(cs)
 
             logger.debug(f"Drew observable shading ({'day' if is_daytime else 'night'})")
         except Exception as e:
@@ -3338,6 +3381,7 @@ class SkyMapCanvas(FigureCanvas):
             return
 
         source_name = settings.get('source', 'hipparcos')
+
         source_arr = self._load_milkyway_source(source_name)
         if source_arr is None:
             return
@@ -3397,7 +3441,8 @@ class SkyMapCanvas(FigureCanvas):
                 elif scaling == 'asinh':
                     lum = np.arcsinh(lum * 10) / np.arcsinh(10)
                 # Scale RGB by luminance ratio
-                ratio = np.where(lum_orig > 1e-6, lum / lum_orig, 1.0)
+                safe_orig = np.where(lum_orig > 1e-6, lum_orig, 1.0)
+                ratio = np.where(lum_orig > 1e-6, lum / safe_orig, 1.0)
                 arr = arr * ratio[:, :, np.newaxis]
             # Apply vmin/vmax
             arr = np.clip((arr - vmin) / max(vmax - vmin, 0.001), 0, 1)
@@ -3429,7 +3474,8 @@ class SkyMapCanvas(FigureCanvas):
                 self._mw_artist = self.ax.pcolormesh(
                     lon2d, lat2d, arr, cmap='gray',
                     vmin=0, vmax=1, alpha=opacity,
-                    shading='flat', zorder=MW_ZORDER, rasterized=True)
+                    shading='flat', zorder=MW_ZORDER, rasterized=True,
+                    edgecolors='none', linewidth=0)
             else:
                 # RGB: create RGBA array with uniform alpha
                 rgba = np.ones((ny, nx, 4), dtype=np.float32)
@@ -3441,7 +3487,8 @@ class SkyMapCanvas(FigureCanvas):
                 lc2d, la2d = np.meshgrid(lon_centers, lat_centers)
                 self._mw_artist = self.ax.pcolormesh(
                     lon2d, lat2d, rgba[:, :, 0], alpha=opacity,
-                    shading='flat', zorder=MW_ZORDER, rasterized=True)
+                    shading='flat', zorder=MW_ZORDER, rasterized=True,
+                    edgecolors='none', linewidth=0)
                 # Set face colors from RGBA
                 self._mw_artist.set_array(None)
                 self._mw_artist.set_facecolors(rgba.reshape(-1, 4))
@@ -3526,6 +3573,13 @@ class SkyMapCanvas(FigureCanvas):
             except Exception:
                 pass
             self._mw_artist = None
+        # Clean up outline patches if any
+        for patch in getattr(self, '_mw_outline_patches', []):
+            try:
+                patch.remove()
+            except Exception:
+                pass
+        self._mw_outline_patches = []
         self._mw_last_key = None
 
     def update_plot(self, positions, mag_min, mag_max, jd=None, show_hollow=True,
@@ -4866,6 +4920,9 @@ class SkyMapCanvas(FigureCanvas):
         Shift+Click identifies constellation at click location.
         Regular click identifies nearest NEO.
         """
+        # Grab keyboard focus so Shift+[/] shortcuts work after clicking the plot
+        self.setFocus()
+
         # Don't process clicks while animation is playing
         if getattr(self, 'animation_playing', False):
             return
@@ -8695,11 +8752,8 @@ class ControlsPanel(QWidget):
             n_points = 20
             theta = np.linspace(-np.pi/2, np.pi/2, n_points)
             
-            # Terminator curve
-            if illumination < 0.5:
-                curve = -(1 - 2*illumination)
-            else:
-                curve = 2*illumination - 1
+            # Terminator position: +1 at new, 0 at quarter, -1 at full
+            curve = 1 - 2 * illumination
             
             lit_side = 1 if waxing else -1
             
@@ -9937,6 +9991,12 @@ class ProjectionPanel(QWidget):
         self.v_resolution.setToolTip("Vertical grid spacing in degrees")
         self.v_resolution.valueChanged.connect(self.on_settings_changed)
         res_row.addWidget(self.v_resolution)
+        res_row.addWidget(QLabel("Color:"))
+        self.grid_color_edit = QLineEdit("#888888")
+        self.grid_color_edit.setMaximumWidth(60)
+        self.grid_color_edit.setToolTip("Grid line color (hex)")
+        self.grid_color_edit.editingFinished.connect(self.on_settings_changed)
+        res_row.addWidget(self.grid_color_edit)
         res_row.addStretch()  # Left-justify
         proj_layout.addLayout(res_row)
 
@@ -9969,11 +10029,17 @@ class ProjectionPanel(QWidget):
             return None
         return text.lower()
 
+    def get_grid_color(self):
+        """Return grid line color"""
+        return self.grid_color_edit.text().strip() or '#888888'
+
     def reset_defaults(self):
         """Reset to default values"""
         self.proj_combo.setCurrentText('Hammer')
         self.coord_combo.setCurrentText('Equatorial')
         self.show_grid_check.setChecked(True)
+        self.grid_coord_combo.setCurrentText('Same as plot')
+        self.grid_color_edit.setText('#888888')
         self.h_resolution.setValue(30)
         self.v_resolution.setValue(15)
     
@@ -10481,11 +10547,42 @@ class SettingsDialog(QDialog):
         self.colorbar_panel = colorbar_panel
         self._layout = None
         self.setup_ui()
-        
+        self._protect_scroll_widgets()
+
         # Connect coordinate system changes to update defaults
         if hasattr(proj_panel, 'coord_combo'):
             proj_panel.coord_combo.currentTextChanged.connect(self.update_plane_defaults)
     
+    def _protect_scroll_widgets(self):
+        """Prevent scroll wheel from accidentally modifying spinboxes and combos.
+
+        When the user scrolls the Settings dialog with a trackpad or mouse wheel,
+        any spinbox or combobox under the cursor would otherwise capture the event
+        and change its value. This sets all such widgets to require explicit focus
+        (click) before accepting wheel events.
+        """
+        if PYQT_VERSION == 6:
+            focus_policy = Qt.FocusPolicy.StrongFocus
+        else:
+            focus_policy = Qt.StrongFocus
+        for widget in self.findChildren((QSpinBox, QDoubleSpinBox, QComboBox)):
+            widget.setFocusPolicy(focus_policy)
+            widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        """Block wheel events on unfocused spinboxes and comboboxes."""
+        if PYQT_VERSION == 6:
+            from PyQt6.QtCore import QEvent
+            is_wheel = (event.type() == QEvent.Type.Wheel)
+        else:
+            from PyQt5.QtCore import QEvent
+            is_wheel = (event.type() == QEvent.Wheel)
+        if is_wheel and isinstance(obj, (QSpinBox, QDoubleSpinBox, QComboBox)):
+            if not obj.hasFocus():
+                event.ignore()
+                return True
+        return super().eventFilter(obj, event)
+
     def setup_ui(self):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(450)
@@ -10947,10 +11044,10 @@ class SettingsDialog(QDialog):
         source_row.addSpacing(20)
         source_row.addWidget(QLabel("Source:"))
         self.mw_source_combo = QComboBox()
-        self.mw_source_combo.addItem("Gaia Color (all stars)", "gaia_color")
-        self.mw_source_combo.addItem("Gaia Density (all stars)", "gaia_density")
-        self.mw_source_combo.addItem("Gaia Density Image (all stars)", "gaia_density_image")
+        self.mw_source_combo.addItem("Gaia Color", "gaia_color")
+        self.mw_source_combo.addItem("Gaia Density", "gaia_density")
         self.mw_source_combo.addItem("Hipparcos (bright stars)", "hipparcos")
+        self.mw_source_combo.setCurrentIndex(1)  # Default: Gaia Density
         self.mw_source_combo.setToolTip(
             "Gaia: 1.8 billion stars from ESA Gaia EDR3 (requires download)\n"
             "Hipparcos: ~118k bright stars (built-in, coarser)")
@@ -11038,6 +11135,7 @@ class SettingsDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addSpacing(20)
         self.mw_invert_check = QCheckBox("Invert")
+        self.mw_invert_check.setChecked(True)  # Default: inverted (light MW on dark)
         self.mw_invert_check.setToolTip("Invert light/dark (swap black and white)")
         self.mw_invert_check.stateChanged.connect(self.on_milkyway_changed)
         btn_row.addWidget(self.mw_invert_check)
@@ -11054,7 +11152,7 @@ class SettingsDialog(QDialog):
         btn_row.addStretch()
         mw_layout.addLayout(btn_row)
 
-        # Galactic center / anti-center markers
+        # Galactic center / anti-center markers and shadow effect
         gc_row = QHBoxLayout()
         gc_row.addSpacing(20)
         self.mw_show_gc_check = QCheckBox("Show Galactic center / anti-center")
@@ -11064,6 +11162,16 @@ class SettingsDialog(QDialog):
         gc_row.addWidget(self.mw_show_gc_check)
         gc_row.addStretch()
         mw_layout.addLayout(gc_row)
+
+        shadow_row = QHBoxLayout()
+        shadow_row.addSpacing(20)
+        self.mw_shadow_check = QCheckBox("Drop shadow on NEOs")
+        self.mw_shadow_check.setChecked(False)
+        self.mw_shadow_check.setToolTip("Add drop shadow to NEO markers (makes them appear to hover above the background)")
+        self.mw_shadow_check.stateChanged.connect(self.on_milkyway_changed)
+        shadow_row.addWidget(self.mw_shadow_check)
+        shadow_row.addStretch()
+        mw_layout.addLayout(shadow_row)
 
         # Animation and resolution
         anim_row = QHBoxLayout()
@@ -11557,6 +11665,16 @@ class SettingsDialog(QDialog):
         self.shade_day_color_edit.textChanged.connect(lambda text, w=self.shade_day_color_edit: self._update_color_edit_style(w))
         shade_color_row.addWidget(self.shade_day_color_edit)
         self._update_color_edit_style(self.shade_day_color_edit)
+        shade_color_row.addWidget(QLabel("Opacity:"))
+        self.shade_opacity_spin = QSpinBox()
+        self.shade_opacity_spin.setRange(10, 100)
+        self.shade_opacity_spin.setValue(50)
+        self.shade_opacity_spin.setSuffix("%")
+        self.shade_opacity_spin.setSingleStep(5)
+        self.shade_opacity_spin.setMaximumWidth(70)
+        self.shade_opacity_spin.setToolTip("Opacity of observable region shading (10-100%)")
+        self.shade_opacity_spin.valueChanged.connect(self.on_horizon_changed)
+        shade_color_row.addWidget(self.shade_opacity_spin)
         shade_color_row.addStretch()
         horizon_layout.addLayout(shade_color_row)
 
@@ -12169,6 +12287,7 @@ class SettingsDialog(QDialog):
         self.mw_vmax_spin.setEnabled(mw_enabled)
         self.mw_invert_check.setEnabled(mw_enabled)
         self.mw_show_gc_check.setEnabled(mw_enabled)
+        self.mw_shadow_check.setEnabled(mw_enabled)
         self.mw_equalize_btn.setEnabled(mw_enabled)
         self.mw_reset_btn.setEnabled(mw_enabled)
         self.mw_animation_check.setEnabled(mw_enabled)
@@ -12480,6 +12599,7 @@ class SettingsDialog(QDialog):
             'vmax': self.mw_vmax_spin.value(),
             'invert': self.mw_invert_check.isChecked(),
             'show_gc': self.mw_show_gc_check.isChecked(),
+            'shadow': self.mw_shadow_check.isChecked(),
             'show_during_animation': self.mw_animation_check.isChecked(),
             'resolution': self.mw_resolution_combo.currentData()
         }
@@ -12496,6 +12616,7 @@ class SettingsDialog(QDialog):
         self.mw_vmax_spin.setEnabled(enabled)
         self.mw_invert_check.setEnabled(enabled)
         self.mw_show_gc_check.setEnabled(enabled)
+        self.mw_shadow_check.setEnabled(enabled)
         self.mw_equalize_btn.setEnabled(enabled)
         self.mw_reset_btn.setEnabled(enabled)
         self.mw_animation_check.setEnabled(enabled)
@@ -12522,8 +12643,9 @@ class SettingsDialog(QDialog):
         self.mw_scale_combo.setCurrentIndex(0)  # Linear
         self.mw_vmin_spin.setValue(0)
         self.mw_vmax_spin.setValue(100)
-        self.mw_invert_check.setChecked(False)
+        self.mw_invert_check.setChecked(True)
         self.mw_show_gc_check.setChecked(False)
+        self.mw_shadow_check.setChecked(False)
         self.mw_animation_check.setChecked(True)
         self.mw_resolution_combo.setCurrentIndex(1)  # Medium
 
@@ -12552,7 +12674,8 @@ class SettingsDialog(QDialog):
             'zenith_color': self.zenith_color_edit.text(),
             'shade_enabled': self.shade_observable_check.isChecked(),
             'shade_night_color': self.shade_night_color_edit.text(),
-            'shade_day_color': self.shade_day_color_edit.text()
+            'shade_day_color': self.shade_day_color_edit.text(),
+            'shade_opacity': self.shade_opacity_spin.value()
         }
 
     def _update_airmass_label(self, value=None):
@@ -12593,6 +12716,7 @@ class SettingsDialog(QDialog):
         shade_enabled = enabled and self.shade_observable_check.isChecked()
         self.shade_night_color_edit.setEnabled(shade_enabled)
         self.shade_day_color_edit.setEnabled(shade_enabled)
+        self.shade_opacity_spin.setEnabled(shade_enabled)
 
         parent = self.parent()
         if parent and hasattr(parent, 'on_horizon_changed'):
@@ -12882,7 +13006,11 @@ class SettingsDialog(QDialog):
                 state['projection'] = {
                     'type': parent.proj_panel.proj_combo.currentText(),
                     'coord_system': parent.proj_panel.coord_combo.currentText(),
-                    'show_grid': parent.proj_panel.show_grid_check.isChecked()
+                    'show_grid': parent.proj_panel.show_grid_check.isChecked(),
+                    'grid_coord': parent.proj_panel.grid_coord_combo.currentText(),
+                    'grid_color': parent.proj_panel.get_grid_color(),
+                    'h_resolution': parent.proj_panel.h_resolution.value(),
+                    'v_resolution': parent.proj_panel.v_resolution.value()
                 }
 
             # Colorbar and symbol size
@@ -13027,6 +13155,8 @@ class SettingsDialog(QDialog):
             state['advanced'] = {
                 'lr_increment': self.lr_increment_spin.value(),
                 'lr_unit': self.lr_unit_combo.currentText(),
+                'ud_increment': self.ud_increment_spin.value(),
+                'ud_unit': self.ud_unit_combo.currentText(),
                 'mag_hysteresis': self.mag_hysteresis_spin.value(),
                 'nd_latency': self.nd_latency_spin.value(),
                 'nd_mag_offset': self.nd_mag_offset_spin.value()
@@ -13037,6 +13167,7 @@ class SettingsDialog(QDialog):
                 'enabled': self.horizon_enable_check.isChecked(),
                 'observer_lat': self.observer_lat_spin.value(),
                 'observer_lon': self.observer_lon_spin.value(),
+                'location_preset': self.location_preset_combo.currentText(),
                 'timezone': self.timezone_combo.currentText(),
                 'show_horizon': self.show_horizon_check.isChecked(),
                 'horizon_color': self.horizon_color_edit.text(),
@@ -13056,7 +13187,8 @@ class SettingsDialog(QDialog):
                 'zenith_color': self.zenith_color_edit.text(),
                 'shade_enabled': self.shade_observable_check.isChecked(),
                 'shade_night_color': self.shade_night_color_edit.text(),
-                'shade_day_color': self.shade_day_color_edit.text()
+                'shade_day_color': self.shade_day_color_edit.text(),
+                'shade_opacity': self.shade_opacity_spin.value()
             }
 
             # Constellations
@@ -13086,6 +13218,7 @@ class SettingsDialog(QDialog):
                 'vmax': self.mw_vmax_spin.value(),
                 'invert': self.mw_invert_check.isChecked(),
                 'show_gc': self.mw_show_gc_check.isChecked(),
+                'shadow': self.mw_shadow_check.isChecked(),
                 'show_during_animation': self.mw_animation_check.isChecked(),
                 'resolution': self.mw_resolution_combo.currentData()
             }
@@ -13241,6 +13374,10 @@ class SettingsDialog(QDialog):
                 parent.proj_panel.proj_combo.setCurrentText(p.get('type', 'Aitoff'))
                 parent.proj_panel.coord_combo.setCurrentText(p.get('coord_system', 'Equatorial'))
                 parent.proj_panel.show_grid_check.setChecked(p.get('show_grid', True))
+                parent.proj_panel.grid_coord_combo.setCurrentText(p.get('grid_coord', 'Same as plot'))
+                parent.proj_panel.grid_color_edit.setText(p.get('grid_color', '#888888'))
+                parent.proj_panel.h_resolution.setValue(p.get('h_resolution', 30))
+                parent.proj_panel.v_resolution.setValue(p.get('v_resolution', 15))
 
             # Colorbar and symbol size
             if 'colorbar' in state and hasattr(parent, 'colorbar_panel'):
@@ -13392,6 +13529,8 @@ class SettingsDialog(QDialog):
                 a = state['advanced']
                 self.lr_increment_spin.setValue(a.get('lr_increment', 1.0))
                 self.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
+                self.ud_increment_spin.setValue(a.get('ud_increment', 1))
+                self.ud_unit_combo.setCurrentText(a.get('ud_unit', 'lunation'))
                 self.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
                 self.nd_latency_spin.setValue(a.get('nd_latency', 0))
                 self.nd_mag_offset_spin.setValue(a.get('nd_mag_offset', 0.0))
@@ -13402,6 +13541,8 @@ class SettingsDialog(QDialog):
                 self.horizon_enable_check.setChecked(h.get('enabled', False))
                 self.observer_lat_spin.setValue(h.get('observer_lat', 32.2226))
                 self.observer_lon_spin.setValue(h.get('observer_lon', -110.9747))
+                if 'location_preset' in h:
+                    self.location_preset_combo.setCurrentText(h['location_preset'])
                 self.timezone_combo.setCurrentText(h.get('timezone', 'UTC-7 (MST)'))
                 self.show_horizon_check.setChecked(h.get('show_horizon', True))
                 self.horizon_color_edit.setText(h.get('horizon_color', '#FF6600'))
@@ -13422,6 +13563,7 @@ class SettingsDialog(QDialog):
                 self.shade_observable_check.setChecked(h.get('shade_enabled', False))
                 self.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
                 self.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
+                self.shade_opacity_spin.setValue(h.get('shade_opacity', 50))
 
             # Constellations
             if 'constellations' in state:
@@ -13457,6 +13599,7 @@ class SettingsDialog(QDialog):
                 self.mw_vmax_spin.setValue(mw.get('vmax', 100))
                 self.mw_invert_check.setChecked(mw.get('invert', False))
                 self.mw_show_gc_check.setChecked(mw.get('show_gc', False))
+                self.mw_shadow_check.setChecked(mw.get('shadow', False))
                 self.mw_animation_check.setChecked(mw.get('show_during_animation', True))
                 res = mw.get('resolution', 'medium')
                 idx = self.mw_resolution_combo.findData(res)
@@ -15634,6 +15777,7 @@ class NEOVisualizer(QMainWindow):
         h_res, v_res = self.proj_panel.get_resolution()
         display_mode = self.get_display_mode()
         show_grid = self.proj_panel.get_grid_visible()
+        grid_color = self.proj_panel.get_grid_color()
 
         grid_coord = self.proj_panel.get_grid_coordinate_system()
 
@@ -15642,6 +15786,7 @@ class NEOVisualizer(QMainWindow):
         self.canvas.set_colormap(cmap)
         self.canvas.set_resolution(h_res, v_res)
         self.canvas.set_grid_visible(show_grid)
+        self.canvas.set_grid_color(grid_color)
         self.canvas.set_grid_coordinate_system(grid_coord)
         self.canvas.set_display_mode(display_mode)
 
@@ -15750,6 +15895,22 @@ class NEOVisualizer(QMainWindow):
             else:
                 milkyway_settings = {'enabled': False}
             self.canvas.milkyway_settings = milkyway_settings
+
+            # Apply drop shadow on NEO scatter if requested
+            import matplotlib.patheffects as pe
+            if milkyway_settings.get('shadow', False):
+                # Light shadow on dark background, dark shadow on light background
+                shadow_color = 'black' if milkyway_settings.get('invert', False) else 'white'
+                shadow_fx = [
+                    pe.SimplePatchShadow(offset=(1.5, -1.5), shadow_rgbFace=shadow_color, alpha=0.5),
+                    pe.Normal()
+                ]
+            else:
+                shadow_fx = [pe.Normal()]
+            if hasattr(self.canvas, 'scatter') and self.canvas.scatter is not None:
+                self.canvas.scatter.set_path_effects(shadow_fx)
+                # Make NEOs more opaque when shadow is active so they pop above it
+                self.canvas.scatter.set_alpha(1.0 if milkyway_settings.get('shadow', False) else 0.7)
 
             # Galactic exclusion settings (affects overlay boundaries)
             if self.settings_dialog and hasattr(self.settings_dialog, 'get_galactic_settings'):
@@ -16490,6 +16651,7 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.shade_observable_check.setChecked(False)
                 self.settings_dialog.shade_night_color_edit.setText("#E8E8E8")
                 self.settings_dialog.shade_day_color_edit.setText("#FFFDE8")
+                self.settings_dialog.shade_opacity_spin.setValue(50)
 
                 # Constellations (off by default)
                 self.settings_dialog.show_constellation_bounds.setChecked(False)
@@ -16505,15 +16667,16 @@ class NEOVisualizer(QMainWindow):
                 # Milky Way background (off by default)
                 self.settings_dialog.mw_enable_check.setChecked(False)
                 self.settings_dialog.mw_source_combo.setCurrentIndex(
-                    self.settings_dialog.mw_source_combo.findData('hipparcos'))
+                    self.settings_dialog.mw_source_combo.findData('gaia_density'))
                 self.settings_dialog.mw_opacity_spin.setValue(100)
                 self.settings_dialog.mw_brightness_spin.setValue(-0.25)
                 self.settings_dialog.mw_contrast_spin.setValue(1.5)
                 self.settings_dialog.mw_scale_combo.setCurrentIndex(0)
                 self.settings_dialog.mw_vmin_spin.setValue(0)
                 self.settings_dialog.mw_vmax_spin.setValue(100)
-                self.settings_dialog.mw_invert_check.setChecked(False)
+                self.settings_dialog.mw_invert_check.setChecked(True)
                 self.settings_dialog.mw_show_gc_check.setChecked(False)
+                self.settings_dialog.mw_shadow_check.setChecked(False)
                 self.settings_dialog.mw_animation_check.setChecked(True)
                 self.settings_dialog.mw_resolution_combo.setCurrentIndex(1)
 
@@ -16611,7 +16774,11 @@ class NEOVisualizer(QMainWindow):
                 'projection': {
                     'type': self.proj_panel.proj_combo.currentText(),
                     'coord_system': self.proj_panel.coord_combo.currentText(),
-                    'show_grid': self.proj_panel.show_grid_check.isChecked()
+                    'show_grid': self.proj_panel.show_grid_check.isChecked(),
+                    'grid_coord': self.proj_panel.grid_coord_combo.currentText(),
+                    'grid_color': self.proj_panel.get_grid_color(),
+                    'h_resolution': self.proj_panel.h_resolution.value(),
+                    'v_resolution': self.proj_panel.v_resolution.value()
                 },
                 'colorbar': {
                     'color_by': self.colorbar_panel.color_by_combo.currentText(),
@@ -16738,6 +16905,8 @@ class NEOVisualizer(QMainWindow):
                 settings['advanced'] = {
                     'lr_increment': self.settings_dialog.lr_increment_spin.value(),
                     'lr_unit': self.settings_dialog.lr_unit_combo.currentText(),
+                    'ud_increment': self.settings_dialog.ud_increment_spin.value(),
+                    'ud_unit': self.settings_dialog.ud_unit_combo.currentText(),
                     'mag_hysteresis': self.settings_dialog.mag_hysteresis_spin.value(),
                     'nd_latency': self.settings_dialog.nd_latency_spin.value(),
                     'nd_mag_offset': self.settings_dialog.nd_mag_offset_spin.value()
@@ -16770,6 +16939,7 @@ class NEOVisualizer(QMainWindow):
                     'enabled': self.settings_dialog.horizon_enable_check.isChecked(),
                     'observer_lat': self.settings_dialog.observer_lat_spin.value(),
                     'observer_lon': self.settings_dialog.observer_lon_spin.value(),
+                    'location_preset': self.settings_dialog.location_preset_combo.currentText(),
                     'timezone': self.settings_dialog.timezone_combo.currentText(),
                     'show_horizon': self.settings_dialog.show_horizon_check.isChecked(),
                     'horizon_color': self.settings_dialog.horizon_color_edit.text(),
@@ -16789,7 +16959,8 @@ class NEOVisualizer(QMainWindow):
                     'zenith_color': self.settings_dialog.zenith_color_edit.text(),
                     'shade_enabled': self.settings_dialog.shade_observable_check.isChecked(),
                     'shade_night_color': self.settings_dialog.shade_night_color_edit.text(),
-                    'shade_day_color': self.settings_dialog.shade_day_color_edit.text()
+                    'shade_day_color': self.settings_dialog.shade_day_color_edit.text(),
+                    'shade_opacity': self.settings_dialog.shade_opacity_spin.value()
                 }
 
                 # Constellations
@@ -16819,6 +16990,7 @@ class NEOVisualizer(QMainWindow):
                     'vmax': self.settings_dialog.mw_vmax_spin.value(),
                     'invert': self.settings_dialog.mw_invert_check.isChecked(),
                     'show_gc': self.settings_dialog.mw_show_gc_check.isChecked(),
+                    'shadow': self.settings_dialog.mw_shadow_check.isChecked(),
                     'show_during_animation': self.settings_dialog.mw_animation_check.isChecked(),
                     'resolution': self.settings_dialog.mw_resolution_combo.currentData()
                 }
@@ -16888,6 +17060,10 @@ class NEOVisualizer(QMainWindow):
                 self.proj_panel.proj_combo.setCurrentText(p.get('type', 'Aitoff'))
                 self.proj_panel.coord_combo.setCurrentText(p.get('coord_system', 'Equatorial'))
                 self.proj_panel.show_grid_check.setChecked(p.get('show_grid', True))
+                self.proj_panel.grid_coord_combo.setCurrentText(p.get('grid_coord', 'Same as plot'))
+                self.proj_panel.grid_color_edit.setText(p.get('grid_color', '#888888'))
+                self.proj_panel.h_resolution.setValue(p.get('h_resolution', 30))
+                self.proj_panel.v_resolution.setValue(p.get('v_resolution', 15))
 
             # Colorbar
             if 'colorbar' in settings:
@@ -17038,6 +17214,8 @@ class NEOVisualizer(QMainWindow):
                     a = settings['advanced']
                     self.settings_dialog.lr_increment_spin.setValue(a.get('lr_increment', 1))
                     self.settings_dialog.lr_unit_combo.setCurrentText(a.get('lr_unit', 'hour'))
+                    self.settings_dialog.ud_increment_spin.setValue(a.get('ud_increment', 1))
+                    self.settings_dialog.ud_unit_combo.setCurrentText(a.get('ud_unit', 'lunation'))
                     self.settings_dialog.mag_hysteresis_spin.setValue(a.get('mag_hysteresis', 0.10))
                     self.settings_dialog.nd_latency_spin.setValue(a.get('nd_latency', 0))
                     self.settings_dialog.nd_mag_offset_spin.setValue(a.get('nd_mag_offset', 0.0))
@@ -17062,6 +17240,8 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.horizon_enable_check.setChecked(h.get('enabled', False))
                     self.settings_dialog.observer_lat_spin.setValue(h.get('observer_lat', 32.2226))
                     self.settings_dialog.observer_lon_spin.setValue(h.get('observer_lon', -110.9747))
+                    if 'location_preset' in h:
+                        self.settings_dialog.location_preset_combo.setCurrentText(h['location_preset'])
                     self.settings_dialog.timezone_combo.setCurrentText(h.get('timezone', 'UTC-7 (MST)'))
                     self.settings_dialog.show_horizon_check.setChecked(h.get('show_horizon', True))
                     self.settings_dialog.horizon_color_edit.setText(h.get('horizon_color', '#FF6600'))
@@ -17082,6 +17262,7 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.shade_observable_check.setChecked(h.get('shade_enabled', False))
                     self.settings_dialog.shade_night_color_edit.setText(h.get('shade_night_color', '#E8E8E8'))
                     self.settings_dialog.shade_day_color_edit.setText(h.get('shade_day_color', '#FFFDE8'))
+                    self.settings_dialog.shade_opacity_spin.setValue(h.get('shade_opacity', 50))
 
                 # Constellations
                 if 'constellations' in settings:
@@ -17095,7 +17276,7 @@ class NEOVisualizer(QMainWindow):
                     s = settings['stars']
                     self.settings_dialog.show_stars_check.setChecked(s.get('show_stars', False))
                     self.settings_dialog.star_mag_limit_spin.setValue(s.get('mag_limit', 4.0))
-                    self.settings_dialog.star_color_edit.setText(s.get('color', '#FFFFFF'))
+                    self.settings_dialog.star_color_edit.setText(s.get('color', '#FF99FF'))
                     self.settings_dialog.star_size_spin.setValue(s.get('size', 5))
 
                 # Milky Way background
@@ -17117,6 +17298,7 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.mw_vmax_spin.setValue(mw.get('vmax', 100))
                     self.settings_dialog.mw_invert_check.setChecked(mw.get('invert', False))
                     self.settings_dialog.mw_show_gc_check.setChecked(mw.get('show_gc', False))
+                    self.settings_dialog.mw_shadow_check.setChecked(mw.get('shadow', False))
                     self.settings_dialog.mw_animation_check.setChecked(mw.get('show_during_animation', True))
                     res = mw.get('resolution', 'medium')
                     idx = self.settings_dialog.mw_resolution_combo.findData(res)
@@ -17155,25 +17337,49 @@ class NEOVisualizer(QMainWindow):
             self.status_label.setText(f"Error restoring settings: {e}")
     
     def eventFilter(self, obj, event):
-        """Release focus from input widgets on Enter/Return.
+        """Release focus from toolbar widgets back to the canvas.
 
-        When the user presses Enter in a QSpinBox, QDoubleSpinBox, or QLineEdit,
-        focus returns to the canvas so keyboard shortcuts (Shift+[/]) work immediately.
+        Triggers on Enter/Return in spinboxes/line edits, and when the mouse
+        leaves a combo box after selection. This ensures keyboard shortcuts
+        (Shift+[/]) work without needing to click the canvas first.
         """
         if PYQT_VERSION == 6:
             from PyQt6.QtCore import QEvent
             key_press_type = QEvent.Type.KeyPress
             enter_keys = (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            hide_type = QEvent.Type.HideToParent
         else:
             from PyQt5.QtCore import QEvent
             key_press_type = QEvent.KeyPress
             enter_keys = (Qt.Key_Return, Qt.Key_Enter)
+            hide_type = QEvent.HideToParent
 
+        # Release focus on Enter in spinboxes and line edits
         if event.type() == key_press_type and isinstance(obj, (QSpinBox, QDoubleSpinBox, QLineEdit)):
             if event.key() in enter_keys:
-                # Let the widget process Enter first, then release focus
                 QTimer.singleShot(0, lambda: self.canvas.setFocus() if hasattr(self, 'canvas') else None)
+
+        # Release focus when combo box popup closes (selection made or dismissed)
+        if isinstance(obj, QComboBox) and event.type() == hide_type:
+            QTimer.singleShot(50, lambda: self.canvas.setFocus() if hasattr(self, 'canvas') else None)
+
+        # Also release focus when a combo box loses its popup (mouse click elsewhere)
+        if PYQT_VERSION == 6:
+            focus_out_type = QEvent.Type.FocusOut
+        else:
+            focus_out_type = QEvent.FocusOut
+        if isinstance(obj, (QSpinBox, QDoubleSpinBox, QComboBox)) and event.type() == focus_out_type:
+            # If focus isn't going to another input widget, return to canvas
+            QTimer.singleShot(50, self._return_focus_to_canvas)
+
         return super().eventFilter(obj, event)
+
+    def _return_focus_to_canvas(self):
+        """Return keyboard focus to the canvas unless another input widget has it."""
+        focus = QApplication.focusWidget()
+        if not isinstance(focus, (QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox)):
+            if hasattr(self, 'canvas'):
+                self.canvas.setFocus()
 
     def keyPressEvent(self, event):
         """Handle keyboard events.
