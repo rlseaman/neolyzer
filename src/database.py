@@ -8,7 +8,7 @@ from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timezone
 import numpy as np
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Index, ForeignKey, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 import pandas as pd

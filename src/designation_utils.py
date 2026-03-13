@@ -110,9 +110,9 @@ def pack_provisional_designation(desig):
     
     Examples:
     - 1979 XB → J79X00B
-    - 1998 SQ108 → J98SQ8H
+    - 1998 SQ108 → J98SA8Q
     - 2024 AA → K24A00A
-    - 2007 TA418 → K07Ts8I
+    - 2007 TA418 → K07Tf8A
     
     Format: CYYHC##L where:
     - C: century (I=18, J=19, K=20)
@@ -187,9 +187,9 @@ def unpack_provisional_designation(packed):
     
     Examples:
     - J79X00B → 1979 XB
-    - J98SQ8H → 1998 SQ108
+    - J98SA8Q → 1998 SQ108
     - K24A00A → 2024 AA
-    - K07Ts8I → 2007 TA418
+    - K07Tf8A → 2007 TA418
     
     Format: CYYHMLLN where:
     - C: century (I=18, J=19, K=20)
@@ -385,47 +385,3 @@ def normalize_designation(desig):
             pass
     
     return variations
-
-
-if __name__ == '__main__':
-    # Test cases
-    test_cases = [
-        ('433', '00433'),
-        ('1036', '01036'),
-        ('100004', 'A0004'),
-        ('620000', '~0000'),
-        ('620061', '~000z'),
-        ('3140113', '~AZaz'),
-        ('1979 XB', 'J79X00B'),
-        ('2024 AA', 'K24A00A'),
-        ('6344 P-L', 'PLS6344'),  # Palomar-Leiden Survey
-    ]
-    
-    print("Testing pack/unpack functions:")
-    print("=" * 60)
-    
-    for unpacked, expected_packed in test_cases:
-        print(f"\nTest: {unpacked} ↔ {expected_packed}")
-        
-        # Test packing
-        try:
-            packed = pack_designation(unpacked)
-            print(f"  Pack: {unpacked} → {packed} {'✓' if packed == expected_packed else '✗ Expected: ' + expected_packed}")
-        except Exception as e:
-            print(f"  Pack error: {e}")
-        
-        # Test unpacking
-        try:
-            result = unpack_designation(expected_packed)
-            print(f"  Unpack: {expected_packed} → {result} {'✓' if result == unpacked else '✗ Expected: ' + unpacked}")
-        except Exception as e:
-            print(f"  Unpack error: {e}")
-        
-        # Test normalization
-        try:
-            vars_from_unpacked = normalize_designation(unpacked)
-            vars_from_packed = normalize_designation(expected_packed)
-            common = vars_from_unpacked & vars_from_packed
-            print(f"  Common variations: {common}")
-        except Exception as e:
-            print(f"  Normalization error: {e}")

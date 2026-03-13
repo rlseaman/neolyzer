@@ -48,6 +48,13 @@ neolyzer/
 │   └── milky_way_background_design.txt
 ├── assets/                     # UI assets
 │   └── CSS_logo_transparent.png     # Catalina Sky Survey logo
+├── tests/                      # Pytest test suite
+│   ├── conftest.py                  # Shared config (src/ path setup)
+│   ├── test_designation_utils.py    # MPC packed designation format
+│   ├── test_kepler_solver.py        # Kepler equation, coordinate transforms
+│   ├── test_orbit_positions.py      # FastOrbitCalculator vs JPL Horizons
+│   ├── test_database.py             # DatabaseManager with in-memory SQLite
+│   └── test_cache_manager.py        # HDF5 position cache
 ├── diagnose_*.py               # Diagnostic scripts (CLN, missing NEOs, SBDB)
 ├── install.sh                  # Cross-platform installation script
 ├── requirements.txt            # Python dependencies
@@ -85,6 +92,10 @@ Key components:
 ./venv/bin/python scripts/build_cache.py      # Rebuild position cache
 ./venv/bin/python scripts/load_alt_catalog.py # Load alternate catalogs
 ./venv/bin/python scripts/partition_mpcorb.py # Partition MPC orbit files
+
+# Tests
+./venv/bin/python -m pytest tests/ -v          # Full test suite (134 tests)
+./venv/bin/python -m pytest tests/ -q          # Quiet mode
 
 # Verification
 ./venv/bin/python scripts/verify_installation.py
