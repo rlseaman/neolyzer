@@ -27,7 +27,7 @@ import argparse
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from mpc_loader import load_asteroids_from_mpc
-from database import DatabaseManager, Asteroid, fetch_moid_batch
+from database import DatabaseManager, Asteroid, fetch_moid_batch, load_discovery_tracklets, recompute_pha_flags
 from cache_manager import PositionCache, CacheBuilder
 from orbit_calculator import FastOrbitCalculator
 from skyfield.api import load
@@ -136,6 +136,22 @@ def update_catalog(
         logger.error(f"Failed to download data: {e}")
         return False
 
+    # Merge discovery tracklet data from CSV before DB update
+    # This ensures discovery_mjd, discovery_site, etc. are populated for new objects
+    try:
+        data_dir = Path(__file__).parent.parent / 'data'
+        tracklet_csv = data_dir / 'NEO_discovery_tracklets.csv'
+        if not tracklet_csv.exists():
+            tracklet_csv = data_dir / 'NEA_discovery_tracklets.csv'
+        if tracklet_csv.exists():
+            matched = load_discovery_tracklets(asteroids, str(tracklet_csv), show_progress=not quiet)
+            logger.info(f"Merged discovery tracklets for {matched}/{len(asteroids)} asteroids")
+        else:
+            logger.warning(f"Discovery tracklet CSV not found in {data_dir}")
+    except Exception as e:
+        logger.warning(f"Discovery tracklet loading failed: {e}")
+        # Continue - not fatal
+
     # Create set of designations in new catalog for quick lookup
     new_designations = {ast['designation'] for ast in asteroids}
 
@@ -206,7 +222,17 @@ def update_catalog(
                     # 'update' falls through to normal update
 
                 # Update existing object
+                # Skip overwriting discovery fields with None — preserve
+                # existing tracklet data if the CSV didn't have a match
+                discovery_fields = {
+                    'discovery_mjd', 'discovery_cln', 'discovery_ra',
+                    'discovery_dec', 'discovery_vmag', 'discovery_site',
+                    'discovery_nobs', 'discovery_span_hours',
+                    'discovery_rate', 'discovery_pa', 'discovery_site_name',
+                }
                 for key, value in ast_data.items():
+                    if value is None and key in discovery_fields:
+                        continue  # Don't overwrite existing discovery data with None
                     setattr(existing, key, value)
                 existing.is_stale = False
                 existing.stale_detected_at = None
@@ -284,7 +310,50 @@ def update_catalog(
             # Re-query asteroids from database for MOID fetch
             db_asteroids = db.get_asteroids(neo_only=True)
             fetch_moid_batch(db_asteroids, show_progress=not quiet)
-            logger.info("MOID data updated")
+
+            # Persist MOID values back to database
+            session = db.get_session()
+            moid_updated = 0
+            try:
+                for ast in db_asteroids:
+                    moid_val = ast.get('earth_moid')
+                    if moid_val is not None:
+                        obj = session.query(Asteroid).filter_by(
+                            designation=ast['designation']
+                        ).first()
+                        if obj and obj.earth_moid != moid_val:
+                            obj.earth_moid = moid_val
+                            moid_updated += 1
+                session.commit()
+                logger.info(f"Persisted MOID values: {moid_updated} updated in database")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Failed to persist MOID values: {e}")
+            finally:
+                session.close()
+
+            # Recompute PHA flags now that MOID is available
+            pha_count = recompute_pha_flags(db_asteroids, show_progress=not quiet)
+
+            # Persist PHA flags to database
+            session = db.get_session()
+            try:
+                pha_updated = 0
+                for ast in db_asteroids:
+                    obj = session.query(Asteroid).filter_by(
+                        designation=ast['designation']
+                    ).first()
+                    if obj and obj.pha_flag != ast.get('pha_flag', False):
+                        obj.pha_flag = ast['pha_flag']
+                        pha_updated += 1
+                session.commit()
+                logger.info(f"Persisted PHA flags: {pha_updated} updated in database")
+            except Exception as e:
+                session.rollback()
+                logger.error(f"Failed to persist PHA flags: {e}")
+            finally:
+                session.close()
+
             # Update primary catalog metadata
             db.update_primary_catalog(has_moid=True)
         except Exception as e:

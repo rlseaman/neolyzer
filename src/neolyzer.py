@@ -1,5 +1,5 @@
 """
-NEOlyzer v3.07 - Near-Earth Object Visualization and Analysis
+NEOlyzer v3.08 - Near-Earth Object Visualization and Analysis
 
 FEATURES:
 - Horizontal control layout (compact, filters on top, time/animation below)
@@ -38,7 +38,8 @@ try:
         QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox,
         QCheckBox, QGroupBox, QDateTimeEdit, QSplitter, QStatusBar, QGridLayout,
         QScrollArea, QSizePolicy, QDialog, QTextBrowser, QLineEdit,
-        QTableWidget, QTableWidgetItem, QMenu, QFrame
+        QTableWidget, QTableWidgetItem, QMenu, QFrame,
+        QListWidget, QListWidgetItem, QAbstractItemView
     )
     from PyQt6.QtCore import Qt, QDateTime, QTimer, pyqtSignal, QDate, QTime
     from PyQt6.QtGui import QFont, QPixmap, QCursor, QShortcut, QKeySequence, QColor
@@ -76,7 +77,8 @@ except ImportError:
         QLabel, QPushButton, QSlider, QSpinBox, QDoubleSpinBox, QComboBox,
         QCheckBox, QGroupBox, QDateTimeEdit, QSplitter, QStatusBar, QGridLayout,
         QScrollArea, QSizePolicy, QDialog, QTextBrowser, QLineEdit,
-        QTableWidget, QTableWidgetItem, QMenu, QFrame, QShortcut
+        QTableWidget, QTableWidgetItem, QMenu, QFrame, QShortcut,
+        QListWidget, QListWidgetItem, QAbstractItemView
     )
     from PyQt5.QtCore import Qt, QDateTime, QTimer, pyqtSignal, QDate, QTime
     from PyQt5.QtGui import QFont, QPixmap, QCursor, QKeySequence, QColor
@@ -8367,6 +8369,434 @@ class ControlsPanel(QWidget):
         dialog.setLayout(layout)
         dialog.show()
 
+    def show_discovery_stats_table(self):
+        """Show discovery statistics table broken down by site, year, and orbit class"""
+        if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
+            return
+
+        import numpy as np
+        from collections import defaultdict
+
+        canvas = self.parent_window.canvas
+        if canvas.current_asteroids is None:
+            self.parent_window.status_label.setText("No asteroid data loaded.")
+            return
+
+        from datetime import datetime, timedelta
+
+        # MJD epoch: 1858-11-17
+        MJD_EPOCH = datetime(1858, 11, 17)
+
+        def mjd_to_date(mjd):
+            return MJD_EPOCH + timedelta(days=float(mjd))
+
+        def date_to_mjd(dt):
+            return (dt - MJD_EPOCH).days
+
+        # Gather all unique sites and date range from data
+        site_counts = defaultdict(int)  # (code, name) -> count
+        min_mjd = float('inf')
+        max_mjd = float('-inf')
+
+        for ast in canvas.current_asteroids:
+            disc_mjd = ast.get('discovery_mjd')
+            if disc_mjd is None:
+                continue
+            site_code = ast.get('discovery_site') or '???'
+            site_name = ast.get('discovery_site_name') or '(Unknown)'
+            site_counts[(site_code, site_name)] += 1
+            min_mjd = min(min_mjd, disc_mjd)
+            max_mjd = max(max_mjd, disc_mjd)
+
+        if not site_counts:
+            self.parent_window.status_label.setText("No discovery data available.")
+            return
+
+        # Sort sites by count descending
+        sorted_sites = sorted(site_counts.items(), key=lambda x: -x[1])
+
+        # Create dialog
+        dialog = QDialog(self.parent_window)
+        dialog.setWindowTitle("Discovery Statistics by Site")
+        dialog.setMinimumSize(950, 650)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        main_layout = QVBoxLayout()
+
+        # --- Filter controls ---
+        filter_layout = QHBoxLayout()
+
+        # Site selection panel
+        site_group = QGroupBox("Sites")
+        site_vlayout = QVBoxLayout()
+
+        site_search = QLineEdit()
+        site_search.setPlaceholderText("Search sites...")
+        site_vlayout.addWidget(site_search)
+
+        btn_row = QHBoxLayout()
+        select_all_btn = QPushButton("All")
+        select_none_btn = QPushButton("None")
+        select_all_btn.setMaximumWidth(60)
+        select_none_btn.setMaximumWidth(60)
+        btn_row.addWidget(select_all_btn)
+        btn_row.addWidget(select_none_btn)
+        btn_row.addStretch()
+        site_vlayout.addLayout(btn_row)
+
+        site_list = QListWidget()
+        site_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        site_list.setMinimumWidth(250)
+        site_list.setMinimumHeight(200)
+
+        for (code, name), count in sorted_sites:
+            item = QListWidgetItem(f"{code} — {name} ({count:,})")
+            item.setData(Qt.ItemDataRole.UserRole, code)
+            site_list.addItem(item)
+
+        site_vlayout.addWidget(site_list)
+        site_group.setLayout(site_vlayout)
+        filter_layout.addWidget(site_group)
+
+        # Date range and granularity panel
+        options_group = QGroupBox("Options")
+        options_vlayout = QVBoxLayout()
+
+        min_date = mjd_to_date(min_mjd)
+        max_date = mjd_to_date(max_mjd)
+        min_qdate = QDate(min_date.year, min_date.month, min_date.day)
+        max_qdate = QDate(max_date.year, max_date.month, max_date.day)
+
+        all_time_check = QCheckBox("All time")
+        all_time_check.setChecked(True)
+        options_vlayout.addWidget(all_time_check)
+
+        date_grid = QGridLayout()
+        date_grid.addWidget(QLabel("Start date:"), 0, 0)
+        start_date_edit = QDateTimeEdit()
+        start_date_edit.setDisplayFormat("yyyy-MM-dd")
+        start_date_edit.setCalendarPopup(True)
+        start_date_edit.setDate(min_qdate)
+        start_date_edit.setEnabled(False)
+        date_grid.addWidget(start_date_edit, 0, 1)
+
+        date_grid.addWidget(QLabel("End date:"), 1, 0)
+        end_date_edit = QDateTimeEdit()
+        end_date_edit.setDisplayFormat("yyyy-MM-dd")
+        end_date_edit.setCalendarPopup(True)
+        end_date_edit.setDate(max_qdate)
+        end_date_edit.setEnabled(False)
+        date_grid.addWidget(end_date_edit, 1, 1)
+        options_vlayout.addLayout(date_grid)
+
+        def toggle_date_range(checked):
+            start_date_edit.setEnabled(not checked)
+            end_date_edit.setEnabled(not checked)
+        all_time_check.toggled.connect(toggle_date_range)
+
+        options_vlayout.addWidget(QLabel("Granularity:"))
+        granularity_combo = QComboBox()
+        granularity_combo.addItems(["Annual", "5-Year", "Decade", "Total Only"])
+        options_vlayout.addWidget(granularity_combo)
+
+        generate_btn = QPushButton("Generate Table")
+        generate_btn.setStyleSheet("font-weight: bold;")
+        options_vlayout.addWidget(generate_btn)
+
+        options_vlayout.addStretch()
+        options_group.setLayout(options_vlayout)
+        filter_layout.addWidget(options_group)
+
+        main_layout.addLayout(filter_layout)
+
+        # --- Results table ---
+        table = QTableWidget()
+        table.setAlternatingRowColors(True)
+        table.setSortingEnabled(False)  # Enable after populate
+        table.horizontalHeader().setStretchLastSection(False)
+        main_layout.addWidget(table, stretch=1)
+
+        # --- Summary label ---
+        summary_label = QLabel("")
+        main_layout.addWidget(summary_label)
+
+        # --- Bottom buttons ---
+        bottom_layout = QHBoxLayout()
+        copy_tsv_btn = QPushButton("Copy TSV")
+        copy_tsv_btn.setToolTip("Copy as tab-separated values (paste into spreadsheet)")
+        copy_md_btn = QPushButton("Copy for Email")
+        copy_md_btn.setToolTip("Copy as fixed-width table (paste into email or document)")
+        export_btn = QPushButton("Export CSV")
+        close_btn = QPushButton("Close")
+        bottom_layout.addWidget(copy_tsv_btn)
+        bottom_layout.addWidget(copy_md_btn)
+        bottom_layout.addWidget(export_btn)
+        bottom_layout.addStretch()
+        bottom_layout.addWidget(close_btn)
+        main_layout.addLayout(bottom_layout)
+
+        # --- Site search filter ---
+        def filter_sites(text):
+            text_lower = text.lower()
+            for i in range(site_list.count()):
+                item = site_list.item(i)
+                item.setHidden(text_lower not in item.text().lower())
+
+        site_search.textChanged.connect(filter_sites)
+
+        def select_all_sites():
+            for i in range(site_list.count()):
+                item = site_list.item(i)
+                if not item.isHidden():
+                    item.setSelected(True)
+
+        def select_no_sites():
+            site_list.clearSelection()
+
+        select_all_btn.clicked.connect(select_all_sites)
+        select_none_btn.clicked.connect(select_no_sites)
+
+        # --- Generate table logic ---
+        def generate():
+            # Get selected sites
+            selected_codes = set()
+            for item in site_list.selectedItems():
+                selected_codes.add(item.data(Qt.ItemDataRole.UserRole))
+
+            if not selected_codes:
+                summary_label.setText("No sites selected.")
+                table.setRowCount(0)
+                return
+
+            # Date range as MJD
+            if all_time_check.isChecked():
+                mjd_start = min_mjd
+                mjd_end = max_mjd
+            else:
+                sd = start_date_edit.date()
+                ed = end_date_edit.date()
+                mjd_start = date_to_mjd(datetime(sd.year(), sd.month(), sd.day()))
+                mjd_end = date_to_mjd(datetime(ed.year(), ed.month(), ed.day()))
+
+            granularity = granularity_combo.currentText()
+
+            def year_to_bucket(y):
+                if granularity == "Annual":
+                    return str(y)
+                elif granularity == "5-Year":
+                    base = (y // 5) * 5
+                    return f"{base}–{base + 4}"
+                elif granularity == "Decade":
+                    base = (y // 10) * 10
+                    return f"{base}–{base + 9}"
+                else:  # Total Only
+                    return "Total"
+
+            def bucket_sort_key(label):
+                # Extract first year from label for sorting
+                try:
+                    return int(label.split('–')[0].strip())
+                except ValueError:
+                    return 0
+
+            # Aggregate
+            # stats[bucket] = [total, h22, pha, atira, aten, apollo, amor]
+            stats = defaultdict(lambda: [0, 0, 0, 0, 0, 0, 0])
+
+            matched = 0
+            for ast in canvas.current_asteroids:
+                disc_mjd = ast.get('discovery_mjd')
+                if disc_mjd is None:
+                    continue
+                site_code = ast.get('discovery_site') or '???'
+                if site_code not in selected_codes:
+                    continue
+                if disc_mjd < mjd_start or disc_mjd > mjd_end:
+                    continue
+                year = mjd_to_date(disc_mjd).year
+
+                bucket = year_to_bucket(year)
+                row = stats[bucket]
+                row[0] += 1  # total
+                matched += 1
+
+                H = ast.get('H')
+                if H is not None and H <= 22.0:
+                    row[1] += 1  # H ≤ 22 (~140m+)
+
+                moid = ast.get('earth_moid')
+                if H is not None and H <= 22.0 and moid is not None and moid <= 0.05:
+                    row[2] += 1  # PHA (H ≤ 22 AND MOID ≤ 0.05 AU)
+
+                oc = ast.get('orbit_class', '')
+                if oc == 'Atira':
+                    row[3] += 1
+                elif oc == 'Aten':
+                    row[4] += 1
+                elif oc == 'Apollo':
+                    row[5] += 1
+                elif oc == 'Amor':
+                    row[6] += 1
+
+            # Populate table
+            columns = ['Period', 'Total', 'H≤22 (≥140m)', 'PHA',
+                        'Atira', 'Aten', 'Apollo', 'Amor']
+            table.setSortingEnabled(False)
+            table.setColumnCount(len(columns))
+            table.setHorizontalHeaderLabels(columns)
+
+            sorted_buckets = sorted(stats.keys(), key=bucket_sort_key)
+
+            # Add totals row
+            totals = [0] * 7
+            for bucket in sorted_buckets:
+                for j in range(7):
+                    totals[j] += stats[bucket][j]
+
+            all_rows = sorted_buckets
+            if len(sorted_buckets) > 1:
+                all_rows = sorted_buckets + ['TOTAL']
+
+            table.setRowCount(len(all_rows))
+
+            for r, bucket in enumerate(all_rows):
+                if bucket == 'TOTAL':
+                    vals = totals
+                    label = 'TOTAL'
+                else:
+                    vals = stats[bucket]
+                    label = bucket
+
+                item = QTableWidgetItem(label)
+                if bucket == 'TOTAL':
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                table.setItem(r, 0, item)
+
+                for c, val in enumerate(vals):
+                    cell = QTableWidgetItem()
+                    cell.setData(Qt.ItemDataRole.DisplayRole, val)
+                    cell.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                    if bucket == 'TOTAL':
+                        font = cell.font()
+                        font.setBold(True)
+                        cell.setFont(font)
+                    table.setItem(r, c + 1, cell)
+
+            table.setSortingEnabled(True)
+            table.resizeColumnsToContents()
+
+            sites_str = ', '.join(sorted(selected_codes))
+            date_start_str = mjd_to_date(mjd_start).strftime('%Y-%m-%d')
+            date_end_str = mjd_to_date(mjd_end).strftime('%Y-%m-%d')
+            summary_label.setText(
+                f"Sites: {sites_str} | Period: {date_start_str} to {date_end_str} | "
+                f"Matched: {matched:,} discoveries"
+            )
+
+        generate_btn.clicked.connect(generate)
+
+        # --- Helper to extract table data ---
+        def get_table_data():
+            if table.rowCount() == 0:
+                return None, None
+            headers = [table.horizontalHeaderItem(c).text()
+                       for c in range(table.columnCount())]
+            rows = []
+            for r in range(table.rowCount()):
+                row_data = []
+                for c in range(table.columnCount()):
+                    item = table.item(r, c)
+                    row_data.append(item.text() if item else '')
+                rows.append(row_data)
+            return headers, rows
+
+        # --- Copy as TSV (for spreadsheets) ---
+        def copy_tsv():
+            headers, rows = get_table_data()
+            if headers is None:
+                return
+            lines = ['\t'.join(headers)]
+            for row in rows:
+                lines.append('\t'.join(row))
+            QApplication.clipboard().setText('\n'.join(lines))
+            summary_label.setText(summary_label.text() + "  [Copied TSV!]")
+
+        copy_tsv_btn.clicked.connect(copy_tsv)
+
+        # --- Copy as fixed-width table (for email/documents) ---
+        def copy_for_email():
+            headers, rows = get_table_data()
+            if headers is None:
+                return
+            # Compute column widths
+            all_rows = [headers] + rows
+            col_widths = [max(len(row[c]) for row in all_rows)
+                          for c in range(len(headers))]
+            # First column left-aligned, rest right-aligned
+            def fmt_row(row):
+                parts = [row[0].ljust(col_widths[0])]
+                for c in range(1, len(row)):
+                    parts.append(row[c].rjust(col_widths[c]))
+                return '  '.join(parts)
+
+            lines = []
+            # Build header with site info
+            sites_str = ', '.join(sorted(
+                item.data(Qt.ItemDataRole.UserRole)
+                for item in site_list.selectedItems()
+            ))
+            lines.append(f"NEO Discovery Statistics — Sites: {sites_str}")
+            if all_time_check.isChecked():
+                lines.append(f"Period: All time ({mjd_to_date(min_mjd).strftime('%Y-%m-%d')} to {mjd_to_date(max_mjd).strftime('%Y-%m-%d')})")
+            else:
+                sd = start_date_edit.date()
+                ed = end_date_edit.date()
+                lines.append(f"Period: {sd.toString('yyyy-MM-dd')} to {ed.toString('yyyy-MM-dd')}")
+            lines.append('')
+            lines.append(fmt_row(headers))
+            lines.append('  '.join(['-' * w for w in col_widths]))
+            for i, row in enumerate(rows):
+                lines.append(fmt_row(row))
+                # Add separator before TOTAL row
+                if i == len(rows) - 2 and rows[-1][0].strip() == 'TOTAL':
+                    lines.append('  '.join(['-' * w for w in col_widths]))
+            lines.append('')
+            lines.append('PHA = H ≤ 22.0 AND Earth MOID ≤ 0.05 AU')
+
+            QApplication.clipboard().setText('\n'.join(lines))
+            summary_label.setText(summary_label.text() + "  [Copied for email!]")
+
+        copy_md_btn.clicked.connect(copy_for_email)
+
+        # --- Export CSV ---
+        def export_csv():
+            if table.rowCount() == 0:
+                return
+            from PyQt6.QtWidgets import QFileDialog
+            path, _ = QFileDialog.getSaveFileName(
+                dialog, "Export CSV", "discovery_stats.csv",
+                "CSV Files (*.csv)")
+            if not path:
+                return
+            with open(path, 'w') as f:
+                headers = [table.horizontalHeaderItem(c).text()
+                           for c in range(table.columnCount())]
+                f.write(','.join(headers) + '\n')
+                for r in range(table.rowCount()):
+                    row_data = []
+                    for c in range(table.columnCount()):
+                        item = table.item(r, c)
+                        row_data.append(item.text() if item else '')
+                    f.write(','.join(row_data) + '\n')
+            summary_label.setText(summary_label.text() + f"  [Exported to {path}]")
+
+        export_btn.clicked.connect(export_csv)
+        close_btn.clicked.connect(dialog.close)
+
+        dialog.setLayout(main_layout)
+        dialog.show()
+
     def show_elongation_distance_chart(self):
         """Show solar elongation vs geocentric distance for visible NEOs"""
         if not self.parent_window or not hasattr(self.parent_window, 'canvas'):
@@ -13718,7 +14148,7 @@ class NEOVisualizer(QMainWindow):
         # Auto-equalize on first data load for better default symbol sizes
         self._auto_equalize_pending = True
 
-        self.setWindowTitle("NEOlyzer v3.07")
+        self.setWindowTitle("NEOlyzer v3.08")
         
         # Dynamically size window to fit screen
         screen = QApplication.primaryScreen().geometry()
@@ -14049,6 +14479,7 @@ class NEOVisualizer(QMainWindow):
         charts_menu.addAction("📏 Distance vs Time (selected object)...", self.show_distance_time_chart)
         charts_menu.addAction("⚠️ MOID vs H (hazard space)", self.show_moid_h_chart)
         charts_menu.addAction("📅 Discovery Timeline", self.show_discovery_timeline)
+        charts_menu.addAction("📊 Discovery Statistics by Site", self.show_discovery_stats_table)
         charts_menu.addSeparator()
         charts_menu.addAction("🌍 Solar Elongation vs Distance", self.show_elongation_distance_chart)
         charts_menu.addAction("🔄 a vs e (orbital element space)", self.show_a_e_chart)
@@ -14730,6 +15161,11 @@ class NEOVisualizer(QMainWindow):
         """Show discovery timeline chart"""
         if hasattr(self, 'controls_panel'):
             self.controls_panel.show_discovery_timeline()
+
+    def show_discovery_stats_table(self):
+        """Show discovery statistics table by site"""
+        if hasattr(self, 'controls_panel'):
+            self.controls_panel.show_discovery_stats_table()
 
     def show_elongation_distance_chart(self):
         """Show solar elongation vs distance chart"""
@@ -16313,7 +16749,7 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.07</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version 3.08</b> - Near-Earth Object sky position visualization and analysis tool</p>
         <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
@@ -16328,6 +16764,13 @@ class NEOVisualizer(QMainWindow):
         <li><b>Time controls:</b> Animate, jump by day/month/year/lunation</li>
         <li><b>Scripted playback:</b> Record and replay time sequences with full state</li>
         <li><b>Catalog comparison:</b> Load alternate catalogs and blink between them</li>
+        </ul>
+
+        <h3>New in v3.08</h3>
+        <ul>
+        <li><b>Discovery Statistics by Site:</b> New chart showing per-site discovery counts broken down by orbit class, H&le;22 (&ge;140m), and PHA status, with date range filtering and email-ready export</li>
+        <li><b>PHA flag fix:</b> PHA classification now correctly uses H &le; 22.0 AND Earth MOID &le; 0.05 AU (was incorrectly using perihelion distance)</li>
+        <li><b>Catalog update fixes:</b> Discovery tracklets and MOID values now properly loaded and persisted during catalog updates (were missing for newly discovered objects)</li>
         </ul>
 
         <h3>New in v3.07</h3>

@@ -590,6 +590,29 @@ def fetch_moid_batch(asteroids: List[Dict], show_progress: bool = True, output_d
             ast['earth_moid'] = None
 
 
+def recompute_pha_flags(asteroids: List[Dict], show_progress: bool = True) -> int:
+    """
+    Recompute PHA flags from H magnitude and Earth MOID.
+
+    PHA definition: H <= 22.0 AND Earth MOID <= 0.05 AU.
+    Call after MOID data has been fetched/populated.
+
+    Returns number of PHAs found.
+    """
+    pha_count = 0
+    for ast in asteroids:
+        H = ast.get('H')
+        moid = ast.get('earth_moid')
+        is_pha = (H is not None and H <= 22.0 and
+                  moid is not None and moid <= 0.05)
+        ast['pha_flag'] = is_pha
+        if is_pha:
+            pha_count += 1
+    if show_progress:
+        logger.info(f"PHA recompute: {pha_count} of {len(asteroids)} are PHAs (H ≤ 22, MOID ≤ 0.05 AU)")
+    return pha_count
+
+
 def load_discovery_tracklets(asteroids: List[Dict], csv_path: str, show_progress: bool = True) -> int:
     """
     Load discovery tracklet data from CSV and merge into asteroid list.

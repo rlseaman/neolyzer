@@ -10,7 +10,7 @@
 
 set -e  # Exit on error
 
-VERSION="3.07"
+VERSION="3.08"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 

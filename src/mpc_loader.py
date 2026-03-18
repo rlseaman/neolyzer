@@ -398,10 +398,9 @@ class MPCLoader:
                 ast['orbit_class'] = 'Other'
                 ast['neo_flag'] = False
             
-            # PHA determination (simplified - needs MOID calculation for accuracy)
-            # H must be known and < 22.0, and close approach possible
-            if ast['neo_flag'] and ast['H'] is not None and ast['H'] < 22.0 and q < 0.05:
-                ast['pha_flag'] = True
+            # PHA requires Earth MOID from JPL SBDB — set False here,
+            # recomputed after MOID fetch in setup/update scripts
+            ast['pha_flag'] = False
 
 
 def load_asteroids_from_mpc(neo_only: bool = True, 

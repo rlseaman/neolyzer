@@ -16,7 +16,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 
 from mpc_loader import load_asteroids_from_mpc
-from database import DatabaseManager, fetch_moid_batch, load_discovery_tracklets
+from database import DatabaseManager, fetch_moid_batch, load_discovery_tracklets, recompute_pha_flags
 from orbit_calculator import FastOrbitCalculator
 from cache_manager import PositionCache, CacheBuilder
 from skyfield.api import load
@@ -236,6 +236,10 @@ def main():
             moid_count = sum(1 for ast in asteroids if ast.get('earth_moid') is not None)
             print(f"✓ Fetched MOID for {moid_count}/{len(asteroids)} asteroids")
             print(f"✓ Diagnostic files saved to {diag_dir}")
+
+            # Recompute PHA flags now that MOID is available
+            pha_count = recompute_pha_flags(asteroids, show_progress=True)
+            print(f"✓ PHA classification: {pha_count} PHAs (H ≤ 22, MOID ≤ 0.05 AU)")
             print()
         except Exception as e:
             import traceback
