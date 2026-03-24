@@ -654,6 +654,14 @@ class SkyMapCanvas(FigureCanvas):
         self.fig.clear()
         self.trail_lines = []  # Clear trail line references since fig.clear() removes them
         self.grid_lines = []   # Clear grid line references since fig.clear() removes them
+        # Reset toolbar navigation stack to prevent stale zoom/pan state
+        # from producing out-of-range coordinates after projection/system changes
+        try:
+            parent = self.parent()
+            if parent and hasattr(parent, 'toolbar'):
+                parent.toolbar.update()
+        except Exception:
+            pass
         
         # Use tight margins for all projections
         # Give more space on the right for colorbar labels
@@ -739,18 +747,99 @@ class SkyMapCanvas(FigureCanvas):
         title = f'NEO Sky Map ({self.coord_system.title()})'
         self.ax.set_title(title, fontsize=11, fontweight='bold', pad=4)
 
-        # Custom coordinate formatter to limit decimal places
-        # Use math.degrees to avoid closure issues with numpy in Python 3.12+
+        # Custom coordinate formatter for toolbar readout
+        # Displays in the grid coordinate system (which may differ from plot system)
         import math
-        if self.projection == 'rectilinear':
-            def format_coord(x, y):
-                return f'{x:.4f}°, {y:.4f}°'
-        else:
-            def format_coord(x, y):
-                # Projected coordinates are in radians
-                lon_deg = math.degrees(x)
-                lat_deg = math.degrees(y)
-                return f'{lon_deg:.4f}°, {lat_deg:.4f}°'
+        plot_sys = self.coord_system  # Capture for closure
+        grid_sys = self.grid_coord_system  # None means same as plot
+        display_sys = grid_sys if grid_sys else plot_sys
+        is_projected = self.projection in ['hammer', 'aitoff', 'mollweide']
+        canvas_ref = self  # For opposition sun_ecl_lon access
+
+        def _format_as(sys, lon, lat):
+            """Format lon/lat pair for a given coordinate system."""
+            if sys == 'equatorial':
+                ra = lon % 360
+                ra_h = ra / 15.0
+                h = int(ra_h)
+                m = int((ra_h - h) * 60)
+                s = ((ra_h - h) * 60 - m) * 60
+                if s >= 59.95:
+                    s = 0.0
+                    m += 1
+                    if m >= 60:
+                        m = 0
+                        h = (h + 1) % 24
+                dec_sign = '+' if lat >= 0 else '-'
+                dec_abs = abs(lat)
+                d = int(dec_abs)
+                dm = int((dec_abs - d) * 60)
+                return f'RA {h:02d}h{m:02d}m{s:04.1f}s  Dec {dec_sign}{d:02d}°{dm:02d}\''
+            elif sys == 'ecliptic':
+                lat_sign = '+' if lat >= 0 else ''
+                return f'\u03bb {(lon % 360):.1f}°  \u03b2 {lat_sign}{lat:.1f}°'
+            elif sys == 'galactic':
+                lat_sign = '+' if lat >= 0 else ''
+                return f'l {(lon % 360):.1f}°  b {lat_sign}{lat:.1f}°'
+            elif sys == 'opposition':
+                lon_sign = '+' if lon >= 0 else ''
+                lat_sign = '+' if lat >= 0 else ''
+                return f'\u0394\u03bb {lon_sign}{lon:.1f}°  \u03b2 {lat_sign}{lat:.1f}°'
+            else:
+                return f'{lon:.1f}°, {lat:.1f}°'
+
+        def _plot_to_equatorial(lon, lat):
+            """Convert plot-system lon/lat to equatorial RA/Dec."""
+            if plot_sys == 'equatorial':
+                return lon, lat
+            elif plot_sys == 'ecliptic':
+                ra, dec = CoordinateTransformer.ecliptic_to_equatorial(lon, lat)
+                return float(ra), float(dec)
+            elif plot_sys == 'galactic':
+                ra, dec = CoordinateTransformer.galactic_to_equatorial(lon, lat)
+                return float(ra), float(dec)
+            elif plot_sys == 'opposition':
+                sun_ecl_lon = getattr(canvas_ref, 'sun_ecl_lon', 0)
+                opp_lon = (sun_ecl_lon + 180) % 360
+                ecl_lon = (lon + opp_lon) % 360
+                ra, dec = CoordinateTransformer.ecliptic_to_equatorial(ecl_lon, lat)
+                return float(ra), float(dec)
+            return lon, lat
+
+        def _equatorial_to_display(ra, dec):
+            """Convert equatorial RA/Dec to display system."""
+            if display_sys == 'equatorial':
+                return ra, dec
+            elif display_sys == 'ecliptic':
+                lon, lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+                return float(lon), float(lat)
+            elif display_sys == 'galactic':
+                lon, lat = CoordinateTransformer.equatorial_to_galactic(ra, dec)
+                return float(lon), float(lat)
+            return ra, dec
+
+        def format_coord(x, y):
+            try:
+                if is_projected:
+                    lon = -math.degrees(x)  # Un-negate East-on-left flip
+                    lat = math.degrees(y)
+                else:
+                    lon = x
+                    lat = y
+
+                # Bounds check
+                if not (-360 <= lon <= 360 and -90 <= lat <= 90):
+                    return ''
+
+                # If display system differs from plot system, transform through equatorial
+                if display_sys != plot_sys:
+                    ra, dec = _plot_to_equatorial(lon, lat)
+                    lon, lat = _equatorial_to_display(ra, dec)
+
+                return _format_as(display_sys, lon, lat)
+            except (ValueError, TypeError, Exception):
+                return ''
+
         self.ax.format_coord = format_coord
 
         # Create empty scatter for near-side NEOs (filled circles)
@@ -5015,14 +5104,19 @@ class SkyMapCanvas(FigureCanvas):
         # Force immediate GUI update to show highlight
         QApplication.processEvents()
         
-        # Get mag_max and calculator from parent window
+        # Get mag_max, calculator, and info coord settings from main window
+        # Walk up widget hierarchy to find the main window (canvas may be nested)
         parent_window = self.parent()
+        main_window = self.window()  # QWidget.window() returns the top-level window
         mag_max = None
         calculator = None
-        if parent_window and hasattr(parent_window, 'magnitude_panel'):
-            _, mag_max = parent_window.magnitude_panel.get_magnitude_limits()
-        if parent_window and hasattr(parent_window, 'calculator'):
-            calculator = parent_window.calculator
+        info_coord_settings = None
+        if main_window and hasattr(main_window, 'magnitude_panel'):
+            _, mag_max = main_window.magnitude_panel.get_magnitude_limits()
+        if main_window and hasattr(main_window, 'calculator'):
+            calculator = main_window.calculator
+        if main_window and hasattr(main_window, 'settings_dialog') and main_window.settings_dialog:
+            info_coord_settings = main_window.settings_dialog.get_info_coord_settings()
         
         # Calculate screen position from canvas event coordinates
         # Use Qt's cursor position which is reliable across all platforms/displays
@@ -5038,9 +5132,11 @@ class SkyMapCanvas(FigureCanvas):
             pass
         
         # Show info dialog (non-blocking, passing canvas reference)
-        self.current_info_dialog = NEOInfoDialog(asteroid, current_ra, current_dec, current_dist, 
+        self.current_info_dialog = NEOInfoDialog(asteroid, current_ra, current_dec, current_dist,
                               current_mag, self.current_jd, self.parent(), canvas=self,
-                              mag_max=mag_max, calculator=calculator, click_screen_pos=click_screen_pos)
+                              mag_max=mag_max, calculator=calculator, click_screen_pos=click_screen_pos,
+                              coord_system=self.coord_system,
+                              info_coord_settings=info_coord_settings)
         self.current_info_dialog.show()
     
     def highlight_object(self, x, y):
@@ -5509,7 +5605,8 @@ class NEOInfoDialog(QDialog):
     user_position = None
 
     def __init__(self, asteroid, ra, dec, dist, mag, jd, parent=None, canvas=None,
-                 mag_max=None, calculator=None, click_screen_pos=None):
+                 mag_max=None, calculator=None, click_screen_pos=None, coord_system='equatorial',
+                 info_coord_settings=None):
         super().__init__(parent)
         self.canvas = canvas  # Reference to canvas for clearing highlight
         self.asteroid = asteroid
@@ -5518,6 +5615,9 @@ class NEOInfoDialog(QDialog):
         self.current_jd = jd
         self.click_screen_pos = click_screen_pos  # Store click position
         self._initial_position_applied = False  # Track if initial move is done
+        self.coord_system = coord_system
+        # Default: show equatorial; if settings provided, use them
+        self.info_coord_settings = info_coord_settings or {'equatorial': True, 'ecliptic': False, 'galactic': False}
         
         # Use readable_designation if available for window title
         readable = asteroid.get('readable_designation', '').strip()
@@ -5662,6 +5762,40 @@ class NEOInfoDialog(QDialog):
             self.canvas.clear_highlight()
         super().closeEvent(event)
     
+    def _format_alt_coords(self, ra, dec):
+        """Format coordinate rows for non-equatorial systems.
+
+        Shows a system if: its checkbox is checked in settings, OR it's the
+        current viewing coordinate system. This ensures the popup always
+        includes the coordinate system the user is actually looking at.
+        """
+        rows = ''
+        try:
+            show_ecliptic = (self.info_coord_settings.get('ecliptic', False)
+                             or self.coord_system in ('ecliptic', 'opposition'))
+            show_galactic = (self.info_coord_settings.get('galactic', False)
+                             or self.coord_system == 'galactic')
+
+            if show_ecliptic:
+                lon, lat = CoordinateTransformer.equatorial_to_ecliptic(ra, dec)
+                lon = float(lon) % 360
+                lat = float(lat)
+                rows += (f'<tr><td style="padding-right: 4px;"><b>Ecl. lon (\u03bb):</b></td>'
+                         f'<td>{lon:.4f}°</td></tr>'
+                         f'<tr><td style="padding-right: 4px;"><b>Ecl. lat (\u03b2):</b></td>'
+                         f'<td>{lat:+.4f}°</td></tr>')
+            if show_galactic:
+                lon, lat = CoordinateTransformer.equatorial_to_galactic(ra, dec)
+                lon = float(lon) % 360
+                lat = float(lat)
+                rows += (f'<tr><td style="padding-right: 4px;"><b>Gal. lon (l):</b></td>'
+                         f'<td>{lon:.4f}°</td></tr>'
+                         f'<tr><td style="padding-right: 4px;"><b>Gal. lat (b):</b></td>'
+                         f'<td>{lat:+.4f}°</td></tr>')
+        except Exception:
+            pass
+        return rows
+
     def _is_behind_sun(self, ra, dec, dist, jd):
         """Check if object is on far side of Sun (heliocentric distance > geocentric)"""
         try:
@@ -6111,8 +6245,9 @@ class NEOInfoDialog(QDialog):
         <h3 style="margin-bottom: 3px;">Current Position</h3>
         <table cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
         <tr><td style="padding-right: 4px;"><b>UTC:</b></td><td>{date_str}</td></tr>
-        <tr><td style="padding-right: 4px;"><b>RA:</b></td><td>{ra:.4f}° ({ra_sexagesimal})</td></tr>
-        <tr><td style="padding-right: 4px;"><b>Dec:</b></td><td>{dec:+.4f}° ({dec_sexagesimal})</td></tr>
+        {f'<tr><td style="padding-right: 4px;"><b>RA:</b></td><td>{ra:.4f}° ({ra_sexagesimal})</td></tr>' if self.info_coord_settings.get('equatorial', True) else ''}
+        {f'<tr><td style="padding-right: 4px;"><b>Dec:</b></td><td>{dec:+.4f}° ({dec_sexagesimal})</td></tr>' if self.info_coord_settings.get('equatorial', True) else ''}
+        {self._format_alt_coords(ra, dec)}
         </table>
         <table cellpadding="0" cellspacing="0" style="border-collapse: collapse; margin-top: 8px;">
         <tr><td style="padding-right: 8px;"><b>Geocentric dist (r):</b></td><td>{dist:.4f} AU</td></tr>
@@ -11454,6 +11589,34 @@ class SettingsDialog(QDialog):
         self._layout.addWidget(constellations_group)
         self.collapsible_sections.append(constellations_group)
 
+        # Info Popup Coordinates section
+        info_coords_group = CollapsibleGroupBox("Info Popup Coordinates")
+        info_coords_layout = QVBoxLayout()
+        info_coords_layout.setSpacing(3)
+
+        info_coords_label = QLabel("Coordinate systems shown in NEO info popup:")
+        info_coords_label.setWordWrap(True)
+        info_coords_layout.addWidget(info_coords_label)
+
+        self.info_show_equatorial = QCheckBox("Equatorial (RA / Dec)")
+        self.info_show_equatorial.setChecked(True)
+        self.info_show_equatorial.setToolTip("Show equatorial RA/Dec in info popup")
+        info_coords_layout.addWidget(self.info_show_equatorial)
+
+        self.info_show_ecliptic = QCheckBox("Ecliptic (\u03bb / \u03b2)")
+        self.info_show_ecliptic.setChecked(False)
+        self.info_show_ecliptic.setToolTip("Show ecliptic longitude/latitude in info popup")
+        info_coords_layout.addWidget(self.info_show_ecliptic)
+
+        self.info_show_galactic = QCheckBox("Galactic (l / b)")
+        self.info_show_galactic.setChecked(False)
+        self.info_show_galactic.setToolTip("Show galactic longitude/latitude in info popup")
+        info_coords_layout.addWidget(self.info_show_galactic)
+
+        info_coords_group.setLayout(info_coords_layout)
+        self._layout.addWidget(info_coords_group)
+        self.collapsible_sections.append(info_coords_group)
+
         # Milky Way Background section
         mw_group = CollapsibleGroupBox("Milky Way Background")
         mw_layout = QVBoxLayout()
@@ -12984,6 +13147,14 @@ class SettingsDialog(QDialog):
             'opacity': self.constellation_opacity_spin.value()
         }
 
+    def get_info_coord_settings(self):
+        """Return which coordinate systems to show in info popup"""
+        return {
+            'equatorial': self.info_show_equatorial.isChecked(),
+            'ecliptic': self.info_show_ecliptic.isChecked(),
+            'galactic': self.info_show_galactic.isChecked()
+        }
+
     def on_constellations_changed(self):
         """Emit signal when constellation settings change"""
         # Enable/disable controls based on main checkbox
@@ -13628,6 +13799,13 @@ class SettingsDialog(QDialog):
                 'opacity': self.constellation_opacity_spin.value()
             }
 
+            # Info popup coordinate systems
+            state['info_coords'] = {
+                'equatorial': self.info_show_equatorial.isChecked(),
+                'ecliptic': self.info_show_ecliptic.isChecked(),
+                'galactic': self.info_show_galactic.isChecked()
+            }
+
             # Background stars
             state['stars'] = {
                 'show_stars': self.show_stars_check.isChecked(),
@@ -14002,6 +14180,13 @@ class SettingsDialog(QDialog):
                 self.constellation_color_edit.setText(c.get('color', '#555555'))
                 self.constellation_opacity_spin.setValue(c.get('opacity', 30))
 
+            # Info popup coordinate systems
+            if 'info_coords' in state:
+                ic = state['info_coords']
+                self.info_show_equatorial.setChecked(ic.get('equatorial', True))
+                self.info_show_ecliptic.setChecked(ic.get('ecliptic', False))
+                self.info_show_galactic.setChecked(ic.get('galactic', False))
+
             # Background stars
             if 'stars' in state:
                 s = state['stars']
@@ -14316,7 +14501,7 @@ class NEOVisualizer(QMainWindow):
         # The NavigationToolbar has a locLabel QLabel that shows cursor coordinates
         # Setting a minimum width prevents it from causing layout reflows
         if hasattr(self.toolbar, 'locLabel'):
-            self.toolbar.locLabel.setMinimumWidth(180)
+            self.toolbar.locLabel.setMinimumWidth(280)
             # Use monospace font for consistent character width
             font = self.toolbar.locLabel.font()
             font.setStyleHint(QFont.StyleHint.Monospace)
@@ -17107,6 +17292,11 @@ class NEOVisualizer(QMainWindow):
                 self.settings_dialog.star_color_edit.setText("#FF99FF")
                 self.settings_dialog.star_size_spin.setValue(5)
 
+                # Info popup coordinates (equatorial only by default)
+                self.settings_dialog.info_show_equatorial.setChecked(True)
+                self.settings_dialog.info_show_ecliptic.setChecked(False)
+                self.settings_dialog.info_show_galactic.setChecked(False)
+
                 # Milky Way background (off by default)
                 self.settings_dialog.mw_enable_check.setChecked(False)
                 self.settings_dialog.mw_source_combo.setCurrentIndex(
@@ -17413,6 +17603,13 @@ class NEOVisualizer(QMainWindow):
                     'opacity': self.settings_dialog.constellation_opacity_spin.value()
                 }
 
+                # Info popup coordinate systems
+                settings['info_coords'] = {
+                    'equatorial': self.settings_dialog.info_show_equatorial.isChecked(),
+                    'ecliptic': self.settings_dialog.info_show_ecliptic.isChecked(),
+                    'galactic': self.settings_dialog.info_show_galactic.isChecked()
+                }
+
                 # Background stars
                 settings['stars'] = {
                     'show_stars': self.settings_dialog.show_stars_check.isChecked(),
@@ -17713,6 +17910,13 @@ class NEOVisualizer(QMainWindow):
                     self.settings_dialog.show_constellation_bounds.setChecked(c.get('show_boundaries', False))
                     self.settings_dialog.constellation_color_edit.setText(c.get('color', '#555555'))
                     self.settings_dialog.constellation_opacity_spin.setValue(c.get('opacity', 30))
+
+                # Info popup coordinate systems
+                if 'info_coords' in settings:
+                    ic = settings['info_coords']
+                    self.settings_dialog.info_show_equatorial.setChecked(ic.get('equatorial', True))
+                    self.settings_dialog.info_show_ecliptic.setChecked(ic.get('ecliptic', False))
+                    self.settings_dialog.info_show_galactic.setChecked(ic.get('galactic', False))
 
                 # Background stars
                 if 'stars' in settings:
