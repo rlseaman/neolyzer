@@ -617,7 +617,6 @@ install_python_packages() {
     
     # Core packages
     pip install numpy --quiet && print_status "numpy"
-    pip install cython --quiet && print_status "cython"
     pip install pandas --quiet && print_status "pandas"
     pip install sqlalchemy --quiet && print_status "sqlalchemy"
     

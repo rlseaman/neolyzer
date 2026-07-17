@@ -3,7 +3,6 @@
 
 # Core scientific computing
 numpy>=1.24.0
-cython>=3.0.0
 pandas>=2.0.0
 
 # Database

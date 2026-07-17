@@ -110,14 +110,16 @@ except ImportError:
         UTC = Qt.UTC
 
 import matplotlib
-matplotlib.use('Qt5Agg')
+# QtAgg auto-detects the imported binding (PyQt6 or the PyQt5 fallback);
+# the old hardcoded 'Qt5Agg' only worked with PyQt6 via a matplotlib shim
+matplotlib.use('QtAgg')
 # Disable matplotlib's default keybindings to prevent them from eating key events
 # (e.g., 's' for save, 'p' for pan, 'g' for grid) when the canvas has focus
 for _km in list(matplotlib.rcParams):
     if _km.startswith('keymap.'):
         matplotlib.rcParams[_km] = []
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
