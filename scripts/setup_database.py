@@ -205,27 +205,21 @@ def main():
     print()
     
     response = input("Fetch MOID data? This takes ~30 seconds. (y/n): ").lower().strip()
-    print(f"DEBUG: Response received: '{response}'")
-    
+
     if response == 'y':
         try:
             # Create diagnostics directory
             diag_dir = os.path.join(os.path.dirname(__file__), '..', 'diagnostics')
-            print(f"DEBUG: Creating diagnostics directory: {diag_dir}")
             os.makedirs(diag_dir, exist_ok=True)
-            
+
             # Also save to data directory for persistence
             data_dir = os.path.join(os.path.dirname(__file__), '..', 'data')
-            
-            print(f"DEBUG: Calling fetch_moid_batch with output_dir={diag_dir}")
+
             fetch_moid_batch(asteroids, show_progress=True, output_dir=diag_dir)
-            print("DEBUG: fetch_moid_batch completed")
-            
+
             # Copy SBDB cache to data directory for persistence
             diag_cache = os.path.join(diag_dir, 'sbdb_moid_cache.json')
             data_cache = os.path.join(data_dir, 'sbdb_moid_cache.json')
-            print(f"DEBUG: Checking for cache at {diag_cache}")
-            print(f"DEBUG: File exists: {os.path.exists(diag_cache)}")
             if os.path.exists(diag_cache):
                 import shutil
                 shutil.copy2(diag_cache, data_cache)
@@ -242,14 +236,10 @@ def main():
             print(f"✓ PHA classification: {pha_count} PHAs (H ≤ 22, MOID ≤ 0.05 AU)")
             print()
         except Exception as e:
-            import traceback
             print(f"✗ Error fetching MOID data: {e}")
-            print("DEBUG: Full traceback:")
-            traceback.print_exc()
             print("⚠ Continuing without MOID data...")
             print()
     else:
-        print(f"DEBUG: Skipping because response was '{response}', not 'y'")
         print("⚠ Skipping MOID fetch. MOID filtering will not be available.")
         print()
     
