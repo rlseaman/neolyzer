@@ -105,67 +105,13 @@ def ensure_ephemeris(filename=None):
         logger.debug(f"Ephemeris file already exists: {cache_path}")
         return cache_path
 
-    # Need to download
+    # Need to download (net_utils handles SSL fallback, retries, and
+    # rejects suspiciously small results — a real .bsp is many MB)
     url = f"https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/{filename}"
     logger.info(f"Downloading ephemeris file: {filename}")
 
-    import requests
-
-    # Try to download with SSL fallback
-    response = None
-
-    # First try: normal SSL verification
-    try:
-        response = requests.get(url, stream=True, timeout=300)
-        response.raise_for_status()
-        logger.info("Downloaded with normal SSL verification")
-    except requests.exceptions.SSLError as e:
-        logger.warning(f"SSL verification failed: {e}")
-
-        # Second try: use certifi if available
-        try:
-            import certifi
-            logger.info("Retrying with certifi certificate bundle...")
-            response = requests.get(url, stream=True, timeout=300,
-                                   verify=certifi.where())
-            response.raise_for_status()
-            logger.info("Downloaded with certifi certificates")
-        except ImportError:
-            logger.info("certifi not installed")
-            response = None
-        except requests.exceptions.SSLError:
-            logger.warning("Still failing with certifi")
-            response = None
-        except Exception:
-            response = None
-
-        # Third try: disable SSL verification
-        if response is None:
-            logger.warning("Downloading without SSL verification (less secure)...")
-            try:
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            except:
-                pass
-            response = requests.get(url, stream=True, timeout=300, verify=False)
-            response.raise_for_status()
-            logger.info("Downloaded without SSL verification")
-
-    # Save the file
-    total_size = int(response.headers.get('content-length', 0))
-    logger.info(f"Downloading {total_size / 1024 / 1024:.1f} MB...")
-
-    with open(cache_path, 'wb') as f:
-        downloaded = 0
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-            downloaded += len(chunk)
-            if total_size > 0:
-                pct = 100 * downloaded / total_size
-                if downloaded % (1024 * 1024) < 8192:  # Log every ~1MB
-                    logger.info(f"  {pct:.0f}% ({downloaded / 1024 / 1024:.1f} MB)")
-
-    logger.info(f"Ephemeris downloaded to {cache_path}")
+    from net_utils import download_file
+    download_file(url, cache_path, desc=filename, min_size=1_000_000)
     return cache_path
 
 

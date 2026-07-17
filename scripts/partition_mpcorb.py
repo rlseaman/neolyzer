@@ -22,8 +22,11 @@ import logging
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
-import urllib.request
 import shutil
+
+# Shared download helper from src/
+sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
+from net_utils import download_file
 
 # Setup logging
 logging.basicConfig(
@@ -238,26 +241,8 @@ def download_mpcorb(output_path):
     logger.info(f"URL: {MPCORB_URL}")
 
     try:
-        # Download with progress indication
-        with urllib.request.urlopen(MPCORB_URL, timeout=300) as response:
-            total_size = response.getheader('Content-Length')
-            if total_size:
-                total_size = int(total_size)
-                logger.info(f"File size: {total_size / 1024 / 1024:.1f} MB")
-
-            with open(gz_path, 'wb') as f:
-                downloaded = 0
-                while True:
-                    chunk = response.read(8192)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size and downloaded % (10 * 1024 * 1024) < 8192:
-                        pct = 100 * downloaded / total_size
-                        logger.info(f"  {pct:.0f}% ({downloaded / 1024 / 1024:.1f} MB)")
-
-        logger.info(f"Download complete: {gz_path}")
+        download_file(MPCORB_URL, gz_path, desc="MPCORB.DAT.gz",
+                      min_size=10_000_000)  # currently ~70 MB compressed
 
         # Decompress
         logger.info("Decompressing...")

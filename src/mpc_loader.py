@@ -3,7 +3,7 @@ MPC Data Loader - Download and parse Minor Planet Center orbital elements
 Supports NEA.txt and MPCORB.DAT formats
 """
 
-import requests
+from net_utils import download_file
 import logging
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -53,25 +53,11 @@ class MPCLoader:
             return filepath
         
         logger.info(f"Downloading NEA.txt from {self.NEA_URL}")
-        
+
         try:
-            # (connect, read) timeouts; read timeout applies between chunks of
-            # the streamed body, so a stalled MPC connection can't hang forever
-            response = requests.get(self.NEA_URL, stream=True, timeout=(10, 60))
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(filepath, 'wb') as f:
-                with tqdm(total=total_size, unit='B', unit_scale=True, 
-                         desc="Downloading NEA.txt") as pbar:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                        pbar.update(len(chunk))
-            
-            logger.info(f"Downloaded to {filepath}")
-            return filepath
-            
+            return download_file(self.NEA_URL, filepath,
+                                 desc="Downloading NEA.txt",
+                                 min_size=1_000_000)  # currently ~8 MB
         except Exception as e:
             logger.error(f"Error downloading NEA.txt: {e}")
             raise
@@ -97,23 +83,11 @@ class MPCLoader:
         
         logger.info(f"Downloading MPCORB.DAT from {self.MPCORB_URL}")
         logger.warning("This is a large file (~200 MB), download may take several minutes")
-        
+
         try:
-            response = requests.get(self.MPCORB_URL, stream=True, timeout=(10, 60))
-            response.raise_for_status()
-            
-            total_size = int(response.headers.get('content-length', 0))
-            
-            with open(filepath, 'wb') as f:
-                with tqdm(total=total_size, unit='B', unit_scale=True,
-                         desc="Downloading MPCORB.DAT") as pbar:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                        pbar.update(len(chunk))
-            
-            logger.info(f"Downloaded to {filepath}")
-            return filepath
-            
+            return download_file(self.MPCORB_URL, filepath,
+                                 desc="Downloading MPCORB.DAT",
+                                 min_size=50_000_000)  # currently ~200 MB
         except Exception as e:
             logger.error(f"Error downloading MPCORB.DAT: {e}")
             raise

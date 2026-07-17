@@ -357,47 +357,11 @@ def fetch_moid_batch(asteroids: List[Dict], show_progress: bool = True, output_d
         if show_progress:
             logger.info("Querying JPL SBDB for all NEO MOID values...")
         
-        # Try to make the request with SSL verification
-        # Some systems (like Raspberry Pi) may have incomplete CA certificates
-        response = None
-        ssl_error = False
-        
-        # First try: normal SSL verification
-        try:
-            response = requests.get(base_url, params=params, timeout=120)
-            response.raise_for_status()
-        except requests.exceptions.SSLError as e:
-            ssl_error = True
-            logger.warning(f"SSL certificate verification failed: {e}")
-            
-            # Second try: use certifi if available
-            try:
-                import certifi
-                logger.info("Retrying with certifi certificate bundle...")
-                response = requests.get(base_url, params=params, timeout=120, 
-                                       verify=certifi.where())
-                response.raise_for_status()
-                ssl_error = False
-            except ImportError:
-                logger.info("certifi not installed, cannot use alternative certificates")
-            except requests.exceptions.SSLError:
-                logger.warning("Still failing with certifi certificates")
-            except Exception:
-                pass
-            
-            # Third try: disable SSL verification (with warning)
-            if ssl_error:
-                logger.warning("Attempting request without SSL verification...")
-                logger.warning("*** This is less secure but may be necessary on some systems ***")
-                try:
-                    import urllib3
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-                except:
-                    pass
-                response = requests.get(base_url, params=params, timeout=120, verify=False)
-                response.raise_for_status()
-                logger.info("Request succeeded without SSL verification")
-        
+        # Shared helper: retries with backoff, and an SSL-fallback ladder
+        # for systems with incomplete CA stores (e.g. Raspberry Pi)
+        from net_utils import http_get
+        response = http_get(base_url, params=params)
+
         data = response.json()
         
         # Save raw SBDB response to data directory for future use

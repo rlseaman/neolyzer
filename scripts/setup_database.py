@@ -274,7 +274,7 @@ def main():
     else:
         response = input("Download Gaia sky maps? (y/n, default: y): ").lower().strip()
         if response != 'n':
-            import requests as req
+            from net_utils import download_file
             for filename, info in gaia_files.items():
                 filepath = os.path.join(data_dir, filename)
                 if os.path.exists(filepath):
@@ -282,10 +282,8 @@ def main():
                     continue
                 try:
                     print(f"  Downloading {info['desc']} ({info['size']})...")
-                    r = req.get(info['url'], timeout=60)
-                    r.raise_for_status()
-                    with open(filepath, 'wb') as f:
-                        f.write(r.content)
+                    download_file(info['url'], filepath, desc=filename,
+                                  min_size=100_000)
                     print(f"  ✓ Saved {filename}")
                 except Exception as e:
                     print(f"  ✗ Could not download {filename}: {e}")
