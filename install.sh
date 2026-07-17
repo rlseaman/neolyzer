@@ -682,45 +682,25 @@ install_python_packages() {
 #######################################
 create_launchers() {
     echo ""
-    echo "Creating launcher scripts..."
-    
-    # Main launcher script
-    cat > run_neolyzer.sh << 'LAUNCHER_EOF'
-#!/bin/bash
-# NEOlyzer Launcher
-# Automatically finds and uses the correct Python environment
+    echo "Checking launcher scripts..."
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+    # The launchers are tracked in the repository (single source of
+    # truth) — install.sh only ensures they are executable. They were
+    # previously also generated here by heredoc, which meant two copies
+    # that could silently drift.
+    local missing=0
+    for launcher in run_neolyzer.sh run_setup.sh; do
+        if [ -f "$launcher" ]; then
+            chmod +x "$launcher"
+        else
+            print_warning "Launcher $launcher missing (expected in repository)"
+            missing=1
+        fi
+    done
 
-# Use virtual environment Python
-if [ -f "./venv/bin/python" ]; then
-    exec ./venv/bin/python src/neolyzer.py "$@"
-else
-    echo "Error: Virtual environment not found. Run ./install.sh first."
-    exit 1
-fi
-LAUNCHER_EOF
-    chmod +x run_neolyzer.sh
-    
-    # Setup launcher
-    cat > run_setup.sh << 'SETUP_EOF'
-#!/bin/bash
-# NEOlyzer Setup Launcher
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-if [ -f "./venv/bin/python" ]; then
-    exec ./venv/bin/python scripts/setup_database.py "$@"
-else
-    echo "Error: Virtual environment not found. Run ./install.sh first."
-    exit 1
-fi
-SETUP_EOF
-    chmod +x run_setup.sh
-    
-    print_status "Launcher scripts created (run_neolyzer.sh, run_setup.sh)"
+    if [ $missing -eq 0 ]; then
+        print_status "Launcher scripts ready (run_neolyzer.sh, run_setup.sh)"
+    fi
 }
 
 #######################################
