@@ -7,6 +7,8 @@ import numpy as np
 from typing import List, Dict, Optional
 import logging
 
+from sky_math import OBLIQUITY_J2000_RAD
+
 # Use our centralized loader with SSL fallback
 from skyfield_loader import skyfield_load, load_ephemeris
 
@@ -97,8 +99,7 @@ class FastOrbitCalculator:
         earth_pos_eq = self.earth.at(t).position.au
         
         # CRITICAL FIX: Convert Earth position from equatorial to ecliptic
-        # Obliquity of ecliptic (J2000.0) = 23.43928 degrees
-        epsilon = np.radians(23.43928)
+        epsilon = OBLIQUITY_J2000_RAD
         cos_eps = np.cos(epsilon)
         sin_eps = np.sin(epsilon)
         

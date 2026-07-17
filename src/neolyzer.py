@@ -123,6 +123,8 @@ from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 
 from version import __version__
+from sky_math import (OBLIQUITY_J2000_RAD, cos_angular_separation,
+                      angular_separation_deg)
 from orbit_calculator import FastOrbitCalculator
 from database import DatabaseManager
 from cache_manager import PositionCache
@@ -428,7 +430,7 @@ class CoordinateTransformer:
     def equatorial_to_ecliptic(ra, dec):
         """Convert equatorial (RA/Dec) to ecliptic (lambda/beta)"""
         # Obliquity of ecliptic
-        eps = np.radians(23.43928)
+        eps = OBLIQUITY_J2000_RAD
         
         ra_rad = np.radians(ra)
         dec_rad = np.radians(dec)
@@ -454,7 +456,7 @@ class CoordinateTransformer:
     def ecliptic_to_equatorial(lambda_deg, beta_deg):
         """Convert ecliptic (lambda/beta) to equatorial (RA/Dec)"""
         # Obliquity of ecliptic
-        eps = np.radians(23.43928)
+        eps = OBLIQUITY_J2000_RAD
 
         lambda_rad = np.radians(lambda_deg)
         beta_rad = np.radians(beta_deg)
@@ -1719,7 +1721,7 @@ class SkyMapCanvas(FigureCanvas):
                 color = plane_settings['ecliptic']['color']
                 if self.coord_system == 'equatorial':
                     ecl_lon = np.linspace(0, 360, 360)
-                    eps = np.radians(23.43928)
+                    eps = OBLIQUITY_J2000_RAD
                     ecl_lon_rad = np.radians(ecl_lon)
                     ra = np.degrees(ecl_lon_rad)
                     dec = np.degrees(np.arcsin(np.sin(eps) * np.sin(ecl_lon_rad)))
@@ -1727,7 +1729,7 @@ class SkyMapCanvas(FigureCanvas):
                 elif self.coord_system == 'galactic':
                     # Convert ecliptic to galactic
                     ecl_lon = np.linspace(0, 360, 360)
-                    eps = np.radians(23.43928)
+                    eps = OBLIQUITY_J2000_RAD
                     ra = ecl_lon
                     dec = np.degrees(np.arcsin(np.sin(eps) * np.sin(np.radians(ecl_lon))))
                     try:
@@ -3035,9 +3037,8 @@ class SkyMapCanvas(FigureCanvas):
                 sun_dec_rad = np.radians(sun_dec)
 
                 d_ra = ra_rad - sun_ra_rad
-                a = np.sin((dec_r - sun_dec_rad)/2)**2 + \
-                    np.cos(dec_r) * np.cos(sun_dec_rad) * np.sin(d_ra/2)**2
-                angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                angular_sep = angular_separation_deg(ra_rad, dec_r,
+                                                     sun_ra_rad, sun_dec_rad)
 
                 # Determine east/west
                 d_ra_deg = np.degrees(d_ra)
@@ -3064,10 +3065,8 @@ class SkyMapCanvas(FigureCanvas):
                 moon_ra_rad = np.radians(moon_ra)
                 moon_dec_rad = np.radians(moon_dec)
 
-                d_ra = ra_rad - moon_ra_rad
-                a = np.sin((dec_r - moon_dec_rad)/2)**2 + \
-                    np.cos(dec_r) * np.cos(moon_dec_rad) * np.sin(d_ra/2)**2
-                moon_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                moon_sep = angular_separation_deg(ra_rad, dec_r,
+                                                  moon_ra_rad, moon_dec_rad)
 
                 lunar_mask = moon_sep >= scaled_radius
                 observable_mask &= lunar_mask
@@ -3866,9 +3865,7 @@ class SkyMapCanvas(FigureCanvas):
                 sun_ra_rad = np.radians(self.sun_ra)
                 sun_dec_rad = np.radians(self.sun_dec)
 
-                cos_sep = (np.sin(dec) * np.sin(sun_dec_rad) +
-                          np.cos(dec) * np.cos(sun_dec_rad) * np.cos(ra - sun_ra_rad))
-                cos_sep = np.clip(cos_sep, -1, 1)
+                cos_sep = cos_angular_separation(ra, dec, sun_ra_rad, sun_dec_rad)
 
                 helio_dist_sq = geo_dist**2 + self.sun_dist**2 - 2 * geo_dist * self.sun_dist * cos_sep
                 helio_dist = np.sqrt(np.abs(helio_dist_sq))
@@ -3906,10 +3903,9 @@ class SkyMapCanvas(FigureCanvas):
                 sun_ra_rad = np.radians(self.sun_ra)
                 sun_dec_rad = np.radians(self.sun_dec)
 
-                # Haversine formula for angular separation
                 d_ra = ra - sun_ra_rad
-                a = np.sin((dec - sun_dec_rad)/2)**2 + np.cos(dec) * np.cos(sun_dec_rad) * np.sin(d_ra/2)**2
-                angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                angular_sep = angular_separation_deg(ra, dec,
+                                                     sun_ra_rad, sun_dec_rad)
 
                 # Determine east/west: normalize RA difference to [-180, 180]
                 # Positive d_ra_deg means object RA > Sun RA
@@ -4026,13 +4022,9 @@ class SkyMapCanvas(FigureCanvas):
                 
                 if current_radius > 0.5 and current_penalty > 0.01:
                     # Angular separation from moon
-                    d_ra = np.radians(ra - self.moon_ra)
-                    d_dec = np.radians(dec - self.moon_dec)
-                    dec_rad = np.radians(dec)
-                    moon_dec_rad = np.radians(self.moon_dec)
-                    
-                    a = np.sin(d_dec/2)**2 + np.cos(dec_rad) * np.cos(moon_dec_rad) * np.sin(d_ra/2)**2
-                    angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                    angular_sep = angular_separation_deg(
+                        np.radians(ra), np.radians(dec),
+                        np.radians(self.moon_ra), np.radians(self.moon_dec))
                     
                     near_moon = angular_sep < current_radius
                     
@@ -4050,13 +4042,9 @@ class SkyMapCanvas(FigureCanvas):
             opp_dec = -self.sun_dec
             
             # Angular separation using haversine-like formula
-            d_ra = np.radians(ra - opp_ra)
-            d_dec = np.radians(dec - opp_dec)
-            dec_rad = np.radians(dec)
-            opp_dec_rad = np.radians(opp_dec)
-            
-            a = np.sin(d_dec/2)**2 + np.cos(dec_rad) * np.cos(opp_dec_rad) * np.sin(d_ra/2)**2
-            angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+            angular_sep = angular_separation_deg(
+                np.radians(ra), np.radians(dec),
+                np.radians(opp_ra), np.radians(opp_dec))
             
             near_opposition = angular_sep < radius
             
@@ -4366,10 +4354,7 @@ class SkyMapCanvas(FigureCanvas):
             ra2 = np.radians(self.sun_ra)
             dec2 = np.radians(self.sun_dec)
             
-            cos_sep = (np.sin(dec1) * np.sin(dec2) + 
-                      np.cos(dec1) * np.cos(dec2) * np.cos(ra1 - ra2))
-            # Clamp to avoid numerical errors
-            cos_sep = np.clip(cos_sep, -1, 1)
+            cos_sep = cos_angular_separation(ra1, dec1, ra2, dec2)
             
             # Law of cosines: c² = a² + b² - 2ab*cos(C)
             # where a = Earth-NEO distance, b = Earth-Sun distance, C = angular separation
@@ -4576,9 +4561,8 @@ class SkyMapCanvas(FigureCanvas):
                         sun_ra_r = np.radians(self.sun_ra)
                         sun_dec_r = np.radians(self.sun_dec)
                         d_ra = nd_ra_r - sun_ra_r
-                        a = (np.sin((nd_dec_r - sun_dec_r)/2)**2 +
-                             np.cos(nd_dec_r) * np.cos(sun_dec_r) * np.sin(d_ra/2)**2)
-                        ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                        ang_sep = angular_separation_deg(nd_ra_r, nd_dec_r,
+                                                         sun_ra_r, sun_dec_r)
                         d_ra_deg = np.degrees(d_ra)
                         d_ra_deg = np.where(d_ra_deg > 180, d_ra_deg - 360, d_ra_deg)
                         d_ra_deg = np.where(d_ra_deg < -180, d_ra_deg + 360, d_ra_deg)
@@ -4609,13 +4593,9 @@ class SkyMapCanvas(FigureCanvas):
                         cur_r = mr * self.moon_phase
                         cur_p = mp * self.moon_phase
                         if cur_r > 0.5 and cur_p > 0.01:
-                            d_ra = np.radians(nd_pos[:, 1] - self.moon_ra)
-                            d_dec = np.radians(nd_pos[:, 2] - self.moon_dec)
-                            dec_r = np.radians(nd_pos[:, 2])
-                            moon_dec_r = np.radians(self.moon_dec)
-                            a = (np.sin(d_dec/2)**2 +
-                                 np.cos(dec_r) * np.cos(moon_dec_r) * np.sin(d_ra/2)**2)
-                            ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                            ang_sep = angular_separation_deg(
+                                np.radians(nd_pos[:, 1]), np.radians(nd_pos[:, 2]),
+                                np.radians(self.moon_ra), np.radians(self.moon_dec))
                             nd_eff_mag[ang_sep < cur_r] += cur_p
 
                 if opposition_settings and opposition_settings.get('enabled', False):
@@ -4624,13 +4604,9 @@ class SkyMapCanvas(FigureCanvas):
                         opp_b = opposition_settings.get('benefit', 2.0)
                         opp_ra = (self.sun_ra + 180) % 360
                         opp_dec = -self.sun_dec
-                        d_ra = np.radians(nd_pos[:, 1] - opp_ra)
-                        d_dec = np.radians(nd_pos[:, 2] - opp_dec)
-                        dec_r = np.radians(nd_pos[:, 2])
-                        opp_dec_r = np.radians(opp_dec)
-                        a = (np.sin(d_dec/2)**2 +
-                             np.cos(dec_r) * np.cos(opp_dec_r) * np.sin(d_ra/2)**2)
-                        ang_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                        ang_sep = angular_separation_deg(
+                            np.radians(nd_pos[:, 1]), np.radians(nd_pos[:, 2]),
+                            np.radians(opp_ra), np.radians(opp_dec))
                         nd_eff_mag[ang_sep < opp_r] -= opp_b
 
                 # Effective magnitude filter (with opposition benefit + non-discovery mag offset)
@@ -5819,9 +5795,7 @@ class NEOInfoDialog(QDialog):
             ra2 = np.radians(sun_ra)
             dec2 = np.radians(sun_dec)
             
-            cos_sep = (np.sin(dec1) * np.sin(dec2) + 
-                      np.cos(dec1) * np.cos(dec2) * np.cos(ra1 - ra2))
-            cos_sep = np.clip(cos_sep, -1, 1)
+            cos_sep = cos_angular_separation(ra1, dec1, ra2, dec2)
             
             # Heliocentric distance via law of cosines
             helio_dist_sq = dist**2 + sun_dist**2 - 2 * dist * sun_dist * cos_sep
@@ -6096,9 +6070,7 @@ class NEOInfoDialog(QDialog):
                 ra2 = np.radians(sun_ra)
                 dec2 = np.radians(sun_dec)
                 
-                cos_sep = (np.sin(dec1) * np.sin(dec2) + 
-                          np.cos(dec1) * np.cos(dec2) * np.cos(ra1 - ra2))
-                cos_sep = np.clip(cos_sep, -1, 1)
+                cos_sep = cos_angular_separation(ra1, dec1, ra2, dec2)
                 
                 # Law of cosines: helio² = geo² + sun² - 2*geo*sun*cos(sep)
                 helio_dist_sq = (dist**2 + sun_dist**2 - 2 * dist * sun_dist * cos_sep)
@@ -6164,12 +6136,9 @@ class NEOInfoDialog(QDialog):
                 if hasattr(self.canvas, 'sun_ra') and hasattr(self.canvas, 'sun_dec'):
                     opp_ra = (self.canvas.sun_ra + 180) % 360
                     opp_dec = -self.canvas.sun_dec
-                    d_ra = np.radians(ra - opp_ra)
-                    d_dec = np.radians(dec - opp_dec)
-                    dec_rad = np.radians(dec)
-                    opp_dec_rad = np.radians(opp_dec)
-                    a = np.sin(d_dec/2)**2 + np.cos(dec_rad) * np.cos(opp_dec_rad) * np.sin(d_ra/2)**2
-                    angular_sep = 2 * np.degrees(np.arcsin(np.sqrt(np.clip(a, 0, 1))))
+                    angular_sep = angular_separation_deg(
+                        np.radians(ra), np.radians(dec),
+                        np.radians(opp_ra), np.radians(opp_dec))
                     near_opposition = angular_sep < radius
         
         # Calculate effective magnitude
@@ -8982,8 +8951,7 @@ class ControlsPanel(QWidget):
             ra1, dec1 = np.radians(ra), np.radians(dec)
             ra2, dec2 = np.radians(sun_ra), np.radians(sun_dec)
             
-            cos_sep = np.sin(dec1) * np.sin(dec2) + np.cos(dec1) * np.cos(dec2) * np.cos(ra1 - ra2)
-            cos_sep = np.clip(cos_sep, -1, 1)
+            cos_sep = cos_angular_separation(ra1, dec1, ra2, dec2)
             elongation = np.degrees(np.arccos(cos_sep))
             
             elongations.append(elongation)
@@ -9643,8 +9611,9 @@ class HelicentricChartDialog(QDialog):
             logger.error(f"Ephemeris error: {e}")
             return [], None
         
-        # Obliquity for ecliptic conversion
-        obliquity = np.radians(23.439)
+        # Obliquity for ecliptic conversion (shared J2000 constant — this
+        # chart previously used a coarser truncation than the sky map)
+        obliquity = OBLIQUITY_J2000_RAD
         
         # Get filters from main window
         mag_min, mag_max = self.parent_window.magnitude_panel.get_magnitude_limits()
@@ -9701,9 +9670,7 @@ class HelicentricChartDialog(QDialog):
             dec_rad = np.radians(dec)
             
             # Calculate heliocentric distance using law of cosines
-            cos_sep = (np.sin(dec_rad) * np.sin(sun_dec) + 
-                      np.cos(dec_rad) * np.cos(sun_dec) * np.cos(ra_rad - sun_ra))
-            cos_sep = np.clip(cos_sep, -1, 1)
+            cos_sep = cos_angular_separation(ra_rad, dec_rad, sun_ra, sun_dec)
             
             helio_dist_sq = geo_dist**2 + sun_dist**2 - 2 * geo_dist * sun_dist * cos_sep
             helio_dist = np.sqrt(abs(helio_dist_sq))
