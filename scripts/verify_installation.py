@@ -29,40 +29,9 @@ def check_python_version():
 
 
 def check_platform():
-    """Show platform info"""
-    system = platform.system()
-    machine = platform.machine()
-    
-    if system == "Darwin":
-        os_name = "macOS"
-        if machine == "arm64":
-            os_name += " (Apple Silicon)"
-        else:
-            os_name += " (Intel)"
-    elif system == "Linux":
-        # Try to get distribution
-        try:
-            with open('/etc/os-release') as f:
-                for line in f:
-                    if line.startswith('PRETTY_NAME='):
-                        os_name = line.split('=')[1].strip().strip('"')
-                        break
-                else:
-                    os_name = "Linux"
-        except:
-            os_name = "Linux"
-        
-        # Check for Raspberry Pi
-        try:
-            with open('/proc/device-tree/model') as f:
-                model = f.read()
-                if 'raspberry' in model.lower():
-                    os_name += " (Raspberry Pi)"
-        except:
-            pass
-    else:
-        os_name = f"{system} {machine}"
-    
+    """Show platform info (shared src/platform_info.py)"""
+    from platform_info import describe_platform
+    os_name, machine, _ = describe_platform()
     print(f"  ℹ Platform: {os_name} ({machine})")
     return True
 
