@@ -1,6 +1,9 @@
 # Position Cache Invalidation & Repack — Design (plan item 5.2)
 
-Status: **proposal for review** (no code changes). 2026-07-16.
+Status: **steps 1–3 implemented** 2026-07-16 (fingerprint metadata,
+startup warn-only check, real repack + `build_cache.py --repack`).
+Step 4 (rebuild-offer dialog) and step 5 (delta rebuild) remain, as do
+the two open questions for Rob below (§4).
 
 ## Problem
 

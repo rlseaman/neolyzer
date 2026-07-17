@@ -144,12 +144,14 @@ Legend:
       plot rendered all-NaN. *(fixed 2026-07-16, commit 59dcf3d: ported
       to `FastOrbitCalculator`, failure now logged; verified 365 finite
       distances for 433 Eros)*
-- [x] 5.2 Cache invalidation design written:
-      `docs/CACHE_INVALIDATION_DESIGN.md` (fingerprint attrs, mismatch
-      behavior, real repack via copy-rewrite, delta-rebuild hook; open
-      questions for Rob on size budget and reference-JD snapping).
-      **[DECISION]** approve design → implement in the listed order.
-      *(investigation done 2026-07-16)*
+- [x] 5.2 Cache invalidation designed AND steps 1–3 implemented
+      (2026-07-16): provenance fingerprints written at build time,
+      warn-only startup staleness check, real repack (optimize_cache
+      was a no-op flush) + `build_cache.py --repack`; build_cache.py
+      also gained argparse (it previously ignored argv). Live cache
+      stamped and verified. Remaining: design step 4 (rebuild-offer
+      dialog), step 5 (delta rebuild), and the two open questions for
+      Rob (cache size budget; reference-JD snapping).
 - [x] 5.3 Settings registry design written:
       `docs/SETTINGS_REGISTRY_DESIGN.md` (one table drives save/restore/
       reset/script-state; prototype scope = Milky Way group; QSettings
