@@ -24,9 +24,10 @@ from datetime import datetime
 from collections import defaultdict
 import shutil
 
-# Shared download helper from src/
+# Shared helpers from src/
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
 from net_utils import download_file
+from mpc_loader import parse_mpcorb_line
 
 # Setup logging
 logging.basicConfig(
@@ -79,102 +80,28 @@ def is_numbered_asteroid(packed):
 
 def parse_mpc_line(line):
     """
-    Parse a line from MPCORB.DAT in MPC orbit format.
+    Parse a line from MPCORB.DAT via the shared parser in
+    src/mpc_loader.py (single source of truth for the fixed-width
+    column offsets), then add the derived quantities this script's
+    classification logic needs.
 
     Returns dict with orbital elements or None if line is a header/invalid.
     """
-    # Skip empty lines and header lines
-    if len(line) < 160:
-        return None
-
-    # Header lines typically start with specific patterns
-    if line.startswith('-----') or line.startswith('Des\'t'):
-        return None
-
     try:
-        # MPC orbit format (fixed-width columns)
-        # See: https://minorplanetcenter.net/iau/info/MPOrbitFormat.html
-
-        packed_desig = line[0:7].strip()
-
-        # Parse H magnitude (can be blank)
-        h_str = line[8:13].strip()
-        H = float(h_str) if h_str else None
-
-        # Parse G slope (can be blank)
-        g_str = line[14:19].strip()
-        G = float(g_str) if g_str else 0.15
-
-        # Epoch (packed format)
-        epoch = line[20:25].strip()
-
-        # Mean anomaly (degrees)
-        M_str = line[26:35].strip()
-        M = float(M_str) if M_str else None
-
-        # Argument of perihelion (degrees)
-        arg_peri_str = line[37:46].strip()
-        arg_peri = float(arg_peri_str) if arg_peri_str else None
-
-        # Longitude of ascending node (degrees)
-        node_str = line[48:57].strip()
-        node = float(node_str) if node_str else None
-
-        # Inclination (degrees)
-        inc_str = line[59:68].strip()
-        i = float(inc_str) if inc_str else None
-
-        # Eccentricity
-        e_str = line[70:79].strip()
-        e = float(e_str) if e_str else None
-
-        # Mean daily motion (degrees/day) - can be used to get semi-major axis
-        n_str = line[80:91].strip()
-        n = float(n_str) if n_str else None
-
-        # Semi-major axis (AU)
-        a_str = line[92:103].strip()
-        a = float(a_str) if a_str else None
-
-        # If a is missing but n is available, calculate a
-        if a is None and n is not None and n > 0:
-            # n (deg/day) -> period (years) -> a (AU)
-            # n = 0.9856076686 / a^1.5 (Gauss's constant)
-            # a = (0.9856076686 / n)^(2/3)
-            k = 0.9856076686  # degrees per day for a=1 AU
-            a = (k / n) ** (2/3)
-
-        if a is None or e is None or i is None:
-            return None
-
-        # Calculate derived quantities
-        q = a * (1 - e)  # Perihelion
-        Q = a * (1 + e)  # Aphelion
-        P = a ** 1.5     # Orbital period in years
-
-        # Check if numbered or provisional
-        numbered = is_numbered_asteroid(packed_desig)
-
-        return {
-            'designation': packed_desig,
-            'H': H,
-            'G': G,
-            'a': a,
-            'e': e,
-            'i': i,
-            'q': q,
-            'Q': Q,
-            'P': P,
-            'M': M,
-            'arg_peri': arg_peri,
-            'node': node,
-            'numbered': numbered,
-            'line': line,
-        }
-
+        obj = parse_mpcorb_line(line)
     except (ValueError, IndexError) as ex:
         logger.debug(f"Failed to parse line: {line[:50]}... ({ex})")
         return None
+    if obj is None:
+        return None
+
+    a, e = obj['a'], obj['e']
+    obj['q'] = a * (1 - e)   # Perihelion
+    obj['Q'] = a * (1 + e)   # Aphelion
+    obj['P'] = a ** 1.5      # Orbital period in years
+    obj['numbered'] = is_numbered_asteroid(obj['designation'])
+    obj['line'] = line
+    return obj
 
 
 def classify_object(obj):

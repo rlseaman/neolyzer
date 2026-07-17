@@ -50,12 +50,14 @@ def analyze_line(line):
         issues.append("Can't read epoch")
     
     for name, start, end in [
+        # Offsets must match the canonical parser in src/mpc_loader.py
+        # (parse_mpcorb_line) — do not edit independently
         ('mean anomaly', 26, 35),
         ('arg_peri', 37, 46),
         ('node', 48, 57),
         ('inclination', 59, 68),
         ('eccentricity', 70, 79),
-        ('semi-major axis', 91, 103),
+        ('semi-major axis', 92, 103),
     ]:
         try:
             val = line[start:end].strip()

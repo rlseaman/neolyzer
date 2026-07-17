@@ -141,12 +141,11 @@ class MPCLoader:
                 if max_records and line_count >= max_records:
                     break
                 
-                if len(line.strip()) < 160:  # Minimum line length
-                    continue
-                
                 try:
-                    asteroid = self._parse_mpc_line(line)
-                    
+                    asteroid = parse_mpcorb_line(line)
+                    if asteroid is None:  # header/blank/short line
+                        continue
+
                     # Filter NEOs if requested
                     # NEO definition: perihelion q < 1.3 AU
                     # q = a * (1 - e)
@@ -170,10 +169,16 @@ class MPCLoader:
         
         return asteroids
     
-    def _parse_mpc_line(self, line: str) -> Dict:
+    @staticmethod
+    def _parse_mpc_line(line: str) -> Optional[Dict]:
         """
-        Parse a single line from MPC format
-        
+        Parse a single line from MPC format. This is THE MPCORB
+        fixed-width parser — scripts must import it (as the module-level
+        `parse_mpcorb_line`) rather than hardcoding their own column
+        offsets, which historically drifted out of sync.
+
+        Returns None for header, blank, or too-short lines.
+
         Format positions (1-indexed, converted to 0-indexed for Python):
         1-7:     Packed designation
         9-13:    Absolute magnitude H
@@ -199,16 +204,21 @@ class MPCLoader:
         167-194: Readable designation
         195-202: Date of last observation (YYYYMMDD)
         """
+        if len(line.strip()) < 160:  # blank or too short
+            return None
+        if line.startswith('-----') or line.startswith("Des't") or line.startswith('Des '):
+            return None  # header line
+
         designation = line[0:7].strip()
-        
+
         # Magnitude and slope - H can be missing for newly discovered objects
         h_str = line[8:13].strip()
         H = float(h_str) if h_str else None
         G = float(line[14:19].strip()) if line[14:19].strip() else 0.15
-        
+
         # Epoch (packed format - convert to JD)
         epoch_str = line[20:25].strip()
-        epoch_jd = self._unpack_epoch(epoch_str)
+        epoch_jd = MPCLoader._unpack_epoch(epoch_str)
         
         # Orbital elements
         M = float(line[26:35].strip())  # Mean anomaly
@@ -220,7 +230,14 @@ class MPCLoader:
         # Mean motion and semi-major axis
         n_str = line[80:91].strip()
         mean_motion = float(n_str) if n_str else None
-        a = float(line[92:103].strip())  # Semi-major axis
+        a_str = line[92:103].strip()
+        if a_str:
+            a = float(a_str)  # Semi-major axis
+        elif mean_motion:
+            # Derive a from mean motion: n = 0.9856076686 / a^1.5 deg/day
+            a = (0.9856076686 / mean_motion) ** (2.0 / 3.0)
+        else:
+            raise ValueError(f"No semi-major axis or mean motion: {designation}")
         
         # Uncertainty parameter (single character)
         uncertainty = line[105:106].strip() if len(line) > 105 else ''
@@ -387,6 +404,13 @@ class MPCLoader:
             # PHA requires Earth MOID from JPL SBDB — set False here,
             # recomputed after MOID fetch in setup/update scripts
             ast['pha_flag'] = False
+
+
+# The single source of truth for MPCORB fixed-width parsing.
+# Scripts (partition_mpcorb, diagnostics) import this rather than
+# hardcoding their own column offsets.
+parse_mpcorb_line = MPCLoader._parse_mpc_line
+unpack_mpc_epoch = MPCLoader._unpack_epoch
 
 
 def load_asteroids_from_mpc(neo_only: bool = True, 
