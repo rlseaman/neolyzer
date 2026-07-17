@@ -36,24 +36,21 @@ Legend:
       `asteroids.db`. Also fix the `run_visualizer.sh`/`src/visualizer.py`
       references at `verify_installation.py:247`. *(done 2026-07-16,
       commit a0f7ae9; script now passes all checks end-to-end)*
-- [ ] 1.2 **[DECISION]** Retire `scripts/verify_fixes.py` (hardcoded Jan-2026
-      bug greps, references retired filenames), or modernize it. Recommended:
-      delete; the pytest suite is the regression net now. Update
-      CLAUDE.md/README accordingly.
-- [ ] 1.3 Add `CHANGELOG.md`; backfill from git tags/commit messages
-      (v3.07, v3.08). Going forward, one entry per version bump.
-- [ ] 1.4 Single source of truth for the version string: define once (e.g.
-      `src/version.py` or a constant in `neolyzer.py`), use it in
-      `save_settings` (currently hardcoded `'3.06'` at `neolyzer.py:17383`),
-      the About text, and CHANGELOG discipline.
-- [ ] 1.5 Document the discovery-tracklets CSV: format (12 columns, dtypes,
-      time scale of `avg_mjd_discovery_tracklet`), provenance (psql query
-      against mpc_sbn replica on sibyl), and refresh procedure. Check the
-      generating `discovery_tracklets.sql` into `scripts/` or `docs/` if
-      recoverable.
-- [ ] 1.6 Update CLAUDE.md: mention the root-level design docs (ASTRONOMY,
-      EPHEMERIS, DATA_FUSION, DELTA_CACHING, etc.), reconcile the Windows
-      claim with README's WSL-only stance, drop verify_fixes.py if retired.
+- [x] 1.2 **[DECISION: delete — per plan recommendation]** Retired
+      `scripts/verify_fixes.py`. *(done 2026-07-16, commit 133a330)*
+- [x] 1.3 `CHANGELOG.md` added; 3.07/3.08 backfilled from git history,
+      3.09 documents the correctness fixes. *(done 2026-07-16, b1d3717)*
+- [x] 1.4 Version single-sourced in `src/version.py` (`__version__ =
+      "3.09"`); About dialog, saved settings, and recorded scripts all
+      read it (previously 3.08/3.06/3.06). *(done 2026-07-16, b1d3717)*
+- [x] 1.5 `docs/DISCOVERY_TRACKLETS.md`: 12-column format, provenance
+      (all_neas_from_nea_txt_v4.sql in the sibling NEA_discovery_tracklets
+      project, run against mpc_sbn on sibyl), refresh procedure. SQL left
+      in its home project (single source of truth) rather than copied.
+      *(done 2026-07-16, 5907de9)*
+- [x] 1.6 CLAUDE.md updated: three-table DB reality, Windows=WSL-only,
+      verify_fixes removed, docs/ contents and root design docs listed,
+      test_mpc_loader added. *(done 2026-07-16, 133a330)*
 - [ ] 1.7 **[DECISION]** Move root-level design `.txt` docs into `docs/`?
       Low cost, breaks any external links/habits. Rob's call.
 
@@ -63,15 +60,16 @@ Legend:
       (`src/mpc_loader.py:58,100`) — the primary catalog path can currently
       hang forever. *(done 2026-07-16, commit a0f7ae9; (10s connect, 60s
       read) on both)*
-- [ ] 2.2 Factor a single shared download helper in `src/` (requests, tqdm
-      progress, consistent timeout policy, simple retry-with-backoff).
-      Migrate `mpc_loader`, the Gaia download in `setup_database.py:287-302`,
-      and `partition_mpcorb.py`'s urllib stack onto it.
-- [ ] 2.3 Consolidate the duplicated SSL-fallback ladder
-      (`database.py:366-399`, `skyfield_loader.py:145-150`) into the shared
-      helper. Make the `verify=False` fallback loud (logger.warning + one-time
-      console notice), and add a checksum/size sanity check on downloaded
-      `.bsp` files before trusting them.
+- [x] 2.2 Shared download helper: `src/net_utils.py` (`http_get` +
+      `download_file`: one timeout policy, retry with backoff, tqdm,
+      atomic .part+rename). All six HTTP call sites migrated (MPC NEA/
+      MPCORB, JPL ephemeris, JPL SBDB, Gaia maps, MPCORB.gz partition).
+      9 new tests. *(done 2026-07-16, commit 71887ea)*
+- [x] 2.3 SSL-fallback ladder consolidated into `net_utils`; unverified
+      rung logs a prominent warning; `download_file(min_size=...)` size
+      sanity check applied to `.bsp` and all data downloads (true
+      checksums unavailable — JPL doesn't publish them for bsp files).
+      *(done 2026-07-16, commit 71887ea)*
 - [ ] 2.4 **[DECISION]** Whether `verify=False` should require explicit
       opt-in (env var or config flag) vs remain automatic-but-loud. Tension:
       Raspberry Pi users with broken cert stores vs supply-chain integrity.
