@@ -8243,30 +8243,45 @@ class ControlsPanel(QWidget):
         from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
         import numpy as np
         
-        # Get orbital elements
-        from orbit_calculator import OrbitCalculator
-        calculator = OrbitCalculator()
-        
+        # Reuse the main window's calculator (avoids reloading the
+        # ephemeris); fall back to a fresh instance if unavailable
+        calculator = getattr(self.parent_window, 'calculator', None)
+        if calculator is None:
+            from orbit_calculator import FastOrbitCalculator
+            calculator = FastOrbitCalculator()
+
         # Time range: 1 year centered on current time
         current_jd = self.time_panel.current_jd
         jd_start = current_jd - 182.5  # 6 months ago
         jd_end = current_jd + 182.5    # 6 months ahead
-        
-        # Calculate positions at 1-day intervals
+
+        # Calculate positions at 1-day intervals (single-object arrays)
         jd_range = np.arange(jd_start, jd_end, 1.0)
+        a_arr = np.array([ast['a']], dtype=float)
+        e_arr = np.array([ast['e']], dtype=float)
+        i_arr = np.array([ast['i']], dtype=float)
+        node_arr = np.array([ast['node']], dtype=float)
+        argp_arr = np.array([ast['arg_peri']], dtype=float)
+        M_arr = np.array([ast['M']], dtype=float)
+        H_arr = np.array([ast.get('H', 20.0)], dtype=float)
+        epoch_arr = np.array([ast['epoch_jd']], dtype=float)
+
         distances = []
-        
-        elements = {
-            'a': ast['a'], 'e': ast['e'], 'i': ast['i'],
-            'node': ast['node'], 'arg_peri': ast['arg_peri'],
-            'M': ast['M'], 'epoch_jd': ast['epoch_jd']
-        }
-        
+        calc_error_logged = False
         for jd in jd_range:
             try:
-                ra, dec, dist, mag = calculator.calculate_position(elements, jd, ast.get('H', 20), ast.get('G', 0.15))
-                distances.append(dist)
-            except Exception:
+                pos = calculator.calculate_positions_vectorized(
+                    a_arr, e_arr, i_arr, node_arr, argp_arr, M_arr,
+                    H_arr, epoch_arr, jd)
+                distances.append(float(pos[0, 2]))
+            except Exception as e:
+                # log once, not 365 times; a systematic failure must not
+                # be invisible (an unlogged AttributeError once made this
+                # plot silently render all-NaN)
+                if not calc_error_logged:
+                    logger.warning(f"Distance-time plot: position "
+                                   f"calculation failed: {e}")
+                    calc_error_logged = True
                 distances.append(np.nan)
         
         # Convert JD to dates for x-axis

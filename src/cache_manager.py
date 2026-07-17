@@ -340,7 +340,7 @@ class CacheBuilder:
         -----------
         cache : PositionCache
             Position cache instance
-        orbit_calculator : OrbitCalculator
+        orbit_calculator : FastOrbitCalculator
             Orbit calculator instance
         """
         self.cache = cache
