@@ -11,11 +11,11 @@ NEOlyzer visualizes NEOs — asteroids and comets approaching within 1.3 AU of t
 ## Tech Stack
 
 - **Language:** Python 3.10+ (3.12+ recommended)
-- **Database:** SQLite via SQLAlchemy (single table currently; multi-table normalization planned)
+- **Database:** SQLite via SQLAlchemy (three tables: `asteroids`, `catalogs`, `alternate_asteroids`; ad-hoc additive migrations in `DatabaseManager._check_migrations`)
 - **GUI:** PyQt6 (with PyQt5 fallback) + matplotlib (Qt5Agg backend) for visualization
 - **Caching:** HDF5 via h5py for pre-computed positions
 - **Astronomy:** Skyfield + configurable JPL ephemeris (DE440 default: 1550–2650)
-- **Platforms:** macOS (Intel/Apple Silicon), Linux (RHEL, Debian/Ubuntu, Raspberry Pi), Windows
+- **Platforms:** macOS (Intel/Apple Silicon), Linux (RHEL, Debian/Ubuntu, Raspberry Pi), Windows via WSL only (no native Windows support)
 
 ## Project Structure
 
@@ -36,15 +36,18 @@ neolyzer/
 │   ├── build_cache.py          # Rebuild position cache
 │   ├── load_alt_catalog.py     # Load alternate catalogs for comparison/blinking
 │   ├── partition_mpcorb.py     # Partition MPC orbit files by object type
-│   ├── verify_installation.py  # Verify installation
-│   └── verify_fixes.py         # Verification tests
+│   └── verify_installation.py  # Verify installation
 ├── data/                       # Data files
 │   ├── NEO_discovery_tracklets.csv  # Discovery circumstances data
 │   ├── hipparcos_density.npz   # Pre-built Hipparcos density grid
 │   ├── bright_stars.csv        # Bright star catalog for overlay
 │   ├── iau_*.csv/.dat          # IAU constellation boundary data
 │   └── Gaia_EDR3_*.png         # Gaia sky maps (downloaded during setup)
-├── docs/                       # Design documentation
+├── docs/                       # Design docs, reviews, improvement plan
+│   ├── IMPROVEMENT_PLAN.md          # Living plan of incremental updates
+│   ├── PROJECT_REVIEW_16Jul26.md    # Full project audit (snapshot)
+│   ├── EPOCH_TT_INVESTIGATION_16Jul26.md  # TT/UTC epoch bug investigation
+│   ├── DISCOVERY_TRACKLETS.md       # Tracklets CSV format and provenance
 │   └── milky_way_background_design.txt
 ├── assets/                     # UI assets
 │   └── CSS_logo_transparent.png     # Catalina Sky Survey logo
@@ -52,15 +55,20 @@ neolyzer/
 │   ├── conftest.py                  # Shared config (src/ path setup)
 │   ├── test_designation_utils.py    # MPC packed designation format
 │   ├── test_kepler_solver.py        # Kepler equation, coordinate transforms
+│   ├── test_mpc_loader.py           # MPC packed epoch parsing (TT)
 │   ├── test_orbit_positions.py      # FastOrbitCalculator vs JPL Horizons
 │   ├── test_database.py             # DatabaseManager with in-memory SQLite
 │   └── test_cache_manager.py        # HDF5 position cache
 ├── diagnose_*.py               # Diagnostic scripts (CLN, missing NEOs, SBDB)
 ├── install.sh                  # Cross-platform installation script
 ├── requirements.txt            # Python dependencies
+├── CHANGELOG.md                # Release history
 ├── CLAUDE.md                   # This file
 ├── README.md                   # User documentation (GitHub)
-└── PLATFORM_NOTES.txt          # Platform-specific notes
+├── PLATFORM_NOTES.txt          # Platform-specific notes
+└── *.txt                       # Root-level design docs (ASTRONOMY, EPHEMERIS,
+                                #   DATA_FUSION, DELTA_CACHING, MINOR_PLANET_CLASSES,
+                                #   ADDING_A_FEATURE, GETTING_STARTED.md, DECISIONS.md)
 ```
 
 Key components:
@@ -94,12 +102,11 @@ Key components:
 ./venv/bin/python scripts/partition_mpcorb.py # Partition MPC orbit files
 
 # Tests
-./venv/bin/python -m pytest tests/ -v          # Full test suite (134 tests)
+./venv/bin/python -m pytest tests/ -v          # Full test suite
 ./venv/bin/python -m pytest tests/ -q          # Quiet mode
 
 # Verification
 ./venv/bin/python scripts/verify_installation.py
-./venv/bin/python scripts/verify_fixes.py
 
 # Diagnostics (run from project root)
 python diagnose_cln.py      # CLN calculation methods comparison
