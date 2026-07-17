@@ -69,8 +69,8 @@ def analyze_line(line):
     return issues
 
 def main():
-    script_dir = Path(__file__).parent
-    data_dir = script_dir / 'data'
+    repo_root = Path(__file__).parent.parent.parent
+    data_dir = repo_root / 'data'
     nea_file = data_dir / 'NEA.txt'
     db_file = data_dir / 'asteroids.db'
     

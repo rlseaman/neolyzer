@@ -219,9 +219,9 @@ Load historical or comparison catalogs for side-by-side analysis:
 Diagnostic scripts for investigating specific issues (run from project root):
 
 ```bash
-./venv/bin/python diagnose_cln.py      # Compare CLN calculation methods
-./venv/bin/python diagnose_missing.py  # Check for missing NEOs in database
-./venv/bin/python diagnose_sbdb.py     # JPL SBDB data diagnostics
+./venv/bin/python scripts/diagnostics/diagnose_cln.py      # Compare CLN calculation methods
+./venv/bin/python scripts/diagnostics/diagnose_missing.py  # Check for missing NEOs in database
+./venv/bin/python scripts/diagnostics/diagnose_sbdb.py     # JPL SBDB data diagnostics
 ```
 
 ---

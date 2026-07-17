@@ -31,16 +31,16 @@ This discrepancy is acceptable because:
 
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 import numpy as np
 from datetime import datetime, timedelta
 from skyfield.api import load as skyfield_load
 from skyfield.api import utc
 
-# CLN constants
-CLN_EPOCH_JD = 2444240.0076
-SYNODIC_MONTH = 29.530588853
+# CLN constants — single source of truth is src/database.py
+from database import CLN_EPOCH_JD, SYNODIC_MONTH
 
 
 def jd_to_cln_average(jd):

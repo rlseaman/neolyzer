@@ -22,7 +22,7 @@ from pathlib import Path
 from collections import defaultdict
 
 # Add src to path for designation_utils
-sys.path.insert(0, str(Path(__file__).parent / 'src'))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / 'src'))
 
 def load_nea_designations(nea_file):
     """Load all designations from NEA.txt"""
@@ -37,19 +37,18 @@ def load_nea_designations(nea_file):
 
 def fetch_sbdb_data(output_file):
     """Fetch fresh SBDB data from JPL"""
-    import requests
-    
+    from net_utils import http_get
+
     print("Fetching SBDB data from JPL...", flush=True)
-    
+
     base_url = "https://ssd-api.jpl.nasa.gov/sbdb_query.api"
     params = {
         'fields': 'spkid,pdes,name,full_name,class,moid,H',
         'sb-class': 'IEO,ATE,APO,AMO,MCA'
     }
-    
+
     try:
-        response = requests.get(base_url, params=params, timeout=120)
-        response.raise_for_status()
+        response = http_get(base_url, params=params)
         data = response.json()
         
         with open(output_file, 'w') as f:
@@ -342,9 +341,9 @@ def main():
     parser.add_argument('--analyze', action='store_true', help='Analyze existing data')
     args = parser.parse_args()
     
-    script_dir = Path(__file__).parent
-    data_dir = script_dir / 'data'
-    diag_dir = script_dir / 'diagnostics'
+    repo_root = Path(__file__).parent.parent.parent
+    data_dir = repo_root / 'data'
+    diag_dir = repo_root / 'diagnostics'
     
     nea_file = data_dir / 'NEA.txt'
     cache_file = data_dir / 'sbdb_moid_cache.json'

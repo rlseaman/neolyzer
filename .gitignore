@@ -12,7 +12,8 @@ data/NEA.txt
 data/NEO_discovery_tracklets_*.csv
 data/MPC/
 data/sbdb_moid_cache.json
-diagnostics/
+# Root-level diagnostic OUTPUT directory only (scripts/diagnostics/ is code)
+/diagnostics/
 recordings/
 logs/
 *.bsp

@@ -36,7 +36,8 @@ neolyzer/
 │   ├── build_cache.py          # Rebuild position cache
 │   ├── load_alt_catalog.py     # Load alternate catalogs for comparison/blinking
 │   ├── partition_mpcorb.py     # Partition MPC orbit files by object type
-│   └── verify_installation.py  # Verify installation
+│   ├── verify_installation.py  # Verify installation
+│   └── diagnostics/            # Diagnostic scripts (CLN, missing NEOs, SBDB)
 ├── data/                       # Data files
 │   ├── NEO_discovery_tracklets.csv  # Discovery circumstances data
 │   ├── hipparcos_density.npz   # Pre-built Hipparcos density grid
@@ -59,7 +60,6 @@ neolyzer/
 │   ├── test_orbit_positions.py      # FastOrbitCalculator vs JPL Horizons
 │   ├── test_database.py             # DatabaseManager with in-memory SQLite
 │   └── test_cache_manager.py        # HDF5 position cache
-├── diagnose_*.py               # Diagnostic scripts (CLN, missing NEOs, SBDB)
 ├── install.sh                  # Cross-platform installation script
 ├── requirements.txt            # Python dependencies
 ├── CHANGELOG.md                # Release history
@@ -109,9 +109,9 @@ Key components:
 ./venv/bin/python scripts/verify_installation.py
 
 # Diagnostics (run from project root)
-python diagnose_cln.py      # CLN calculation methods comparison
-python diagnose_missing.py  # Check for missing NEOs
-python diagnose_sbdb.py     # SBDB/JPL data diagnostics
+./venv/bin/python scripts/diagnostics/diagnose_cln.py      # CLN calculation methods comparison
+./venv/bin/python scripts/diagnostics/diagnose_missing.py  # Check for missing NEOs
+./venv/bin/python scripts/diagnostics/diagnose_sbdb.py     # SBDB/JPL data diagnostics
 ```
 
 ## Current State
