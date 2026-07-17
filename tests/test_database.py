@@ -224,3 +224,23 @@ class TestDataFrameExport:
     def test_neo_only_dataframe(self, populated_db):
         df = populated_db.get_all_orbital_elements(neo_only=True)
         assert len(df) == 5  # all are NEOs in fixture
+
+
+# ── Designation unpacking routes to designation_utils ────────────
+
+class TestDesignationRouting:
+    """database.py must not carry its own (formerly naive and wrong)
+    packed-designation decoder — it re-exports designation_utils'."""
+
+    def test_same_implementation(self):
+        import database
+        import designation_utils
+        assert database.unpack_provisional_designation is \
+            designation_utils.unpack_provisional_designation
+
+    def test_normalize_designation_unpacks_correctly(self):
+        from database import normalize_designation
+        # the old naive decoder produced '2024 A00A' here
+        assert "2024 AA" in normalize_designation("K24A00A")
+        # base-62 cycle count (the naive decoder couldn't handle these)
+        assert "2007 TA418" in normalize_designation("K07Tf8A")

@@ -220,44 +220,11 @@ class AlternateAsteroid(Base):
     )
 
 
-def unpack_provisional_designation(packed: str) -> str:
-    """
-    Unpack a provisional designation from MPC packed format
-    
-    Examples:
-    - 'K24A00A' -> '2024 AA'
-    - 'J99X12B' -> '1999 XB12'
-    """
-    if not packed or len(packed) < 7:
-        return packed
-    
-    try:
-        # First character encodes century
-        century_map = {'I': '18', 'J': '19', 'K': '20'}
-        century = century_map.get(packed[0], '20')
-        
-        # Next two characters are year
-        year = century + packed[1:3]
-        
-        # Next character is half-month
-        half_month = packed[3]
-        
-        # Next two characters are cycle and cycle_number
-        cycle = packed[4:6]
-        
-        # Last character is order in half-month
-        order = packed[6] if len(packed) > 6 else ''
-        
-        # Convert cycle number (A=1, B=2, etc., but some have numbers)
-        if cycle[1].isdigit():
-            cycle_str = cycle
-        else:
-            cycle_num = ord(cycle[1]) - ord('A') + 1 if cycle[1].isalpha() else 0
-            cycle_str = cycle[0] + str(cycle_num) if cycle_num > 0 else cycle[0]
-        
-        return f"{year} {half_month}{cycle_str}{order}".strip()
-    except:
-        return packed
+# Packed-designation decoding lives in designation_utils (the full
+# base-62 implementation). A naive local copy previously here mis-unpacked
+# every provisional designation (e.g. 'K24A00A' -> '2024 A00A' instead of
+# '2024 AA').
+from designation_utils import unpack_provisional_designation
 
 
 def normalize_designation(des: str) -> set:
