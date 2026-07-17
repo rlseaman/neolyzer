@@ -16322,6 +16322,26 @@ class NEOVisualizer(QMainWindow):
             self.cache = PositionCache() if self.use_cache else None
             self.calculator = FastOrbitCalculator()
 
+            # Cache provenance check: warn if the position cache was
+            # built from a different catalog or ephemeris
+            # (docs/CACHE_INVALIDATION_DESIGN.md — warn only, no dialog)
+            if self.cache is not None:
+                try:
+                    fp = self.db.get_catalog_fingerprint()
+                    problems = self.cache.check_provenance(
+                        eph_file, fp['count'], fp['fingerprint'])
+                    if problems:
+                        for p in problems:
+                            logger.warning(f"Position cache: {p}")
+                        logger.warning(
+                            "Cached positions may be stale — rebuild with "
+                            "scripts/build_cache.py")
+                        QTimer.singleShot(3000, lambda: self.status_label.setText(
+                            "⚠ Position cache may be stale (see log; "
+                            "rebuild with build_cache.py)"))
+                except Exception as e:
+                    logger.debug(f"Cache provenance check skipped: {e}")
+
             # Populate alternate catalogs dropdown
             self.refresh_catalog_list()
 

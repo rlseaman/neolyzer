@@ -24,12 +24,29 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Build the position cache"""
-    
+    import argparse
+    parser = argparse.ArgumentParser(
+        description="Build (or repack) the NEO position cache")
+    parser.add_argument('--repack', action='store_true',
+                        help="Repack the existing cache to reclaim dead "
+                             "space (HDF5 never frees space in place); "
+                             "does not recompute positions")
+    parser.add_argument('--high-precision-only', action='store_true',
+                        help="Build only the ±1 year daily tier "
+                             "(faster, for testing)")
+    args = parser.parse_args()
+
     logger.info("=" * 70)
     logger.info("NEO Position Cache Builder")
     logger.info("=" * 70)
     logger.info("")
-    
+
+    if args.repack:
+        cache = PositionCache()
+        old, new = cache.optimize_cache()
+        logger.info(f"Repack complete: {(old - new) / 1e6:.0f} MB reclaimed")
+        return 0
+
     # Check database
     db = DatabaseManager(use_sqlite=True)
     stats = db.get_statistics()
@@ -71,8 +88,20 @@ def main():
     logger.info("  • Low precision (±27 years): monthly positions")
     logger.info("")
     
+    # Provenance: record what this cache is computed from so the app
+    # can detect catalog/ephemeris drift (docs/CACHE_INVALIDATION_DESIGN.md)
+    from skyfield_loader import get_current_ephemeris
+    fp = db.get_catalog_fingerprint()
+    provenance = {
+        'ephemeris_file': get_current_ephemeris(),
+        'catalog_count': fp['count'],
+        'catalog_fingerprint': fp['fingerprint'],
+    }
+
     try:
-        builder.build_cache(asteroids, reference_jd, show_progress=True)
+        builder.build_cache(asteroids, reference_jd, show_progress=True,
+                            high_precision_only=args.high_precision_only,
+                            provenance=provenance)
         
         # Show stats
         cache_stats = cache.get_cache_statistics()

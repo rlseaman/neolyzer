@@ -244,3 +244,16 @@ class TestDesignationRouting:
         assert "2024 AA" in normalize_designation("K24A00A")
         # base-62 cycle count (the naive decoder couldn't handle these)
         assert "2007 TA418" in normalize_designation("K07Tf8A")
+
+
+# ── Catalog fingerprint (cache provenance) ───────────────────────
+
+class TestCatalogFingerprint:
+    def test_fingerprint_changes_on_insert(self, populated_db):
+        fp1 = populated_db.get_catalog_fingerprint()
+        assert fp1['count'] == 5
+        assert fp1['fingerprint'].startswith('5:')
+
+    def test_fingerprint_stable_when_unchanged(self, populated_db):
+        assert (populated_db.get_catalog_fingerprint() ==
+                populated_db.get_catalog_fingerprint())

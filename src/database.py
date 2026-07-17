@@ -1044,6 +1044,28 @@ class DatabaseManager:
         finally:
             session.close()
     
+    def get_catalog_fingerprint(self) -> Dict:
+        """
+        Compact identity of the current catalog state, used to detect
+        that the position cache was built from a different catalog
+        (docs/CACHE_INVALIDATION_DESIGN.md).
+
+        Returns {'count': int, 'fingerprint': str} where fingerprint
+        combines the row count with the newest updated_at timestamp —
+        any insert, delete, or orbit update changes it.
+        """
+        session = self.get_session()
+        try:
+            count = session.query(Asteroid).count()
+            max_updated = session.query(
+                func.max(Asteroid.updated_at)).scalar()
+            return {
+                'count': count,
+                'fingerprint': f"{count}:{max_updated}",
+            }
+        finally:
+            session.close()
+
     def get_statistics(self) -> Dict:
         """Get database statistics"""
         session = self.get_session()

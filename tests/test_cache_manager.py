@@ -270,3 +270,63 @@ class TestEdgeCases:
         # HDF5+gzip should compress the random data somewhat
         # (random floats don't compress well, but the overhead should still be finite)
         assert file_size < raw_size * 2  # generous — just verifies it's not corrupt
+
+
+# ── Provenance (docs/CACHE_INVALIDATION_DESIGN.md) ───────────────
+
+class TestProvenance:
+    def test_roundtrip_consistent(self, cache):
+        cache.write_provenance('de440.bsp', 41441, '41441:2026-07-16')
+        assert cache.check_provenance('de440.bsp', 41441,
+                                      '41441:2026-07-16') == []
+
+    def test_legacy_cache_reports_unknown(self, cache):
+        problems = cache.check_provenance('de440.bsp', 41441, 'x')
+        assert len(problems) == 1
+        assert 'no provenance' in problems[0]
+
+    def test_detects_ephemeris_switch(self, cache):
+        cache.write_provenance('de440.bsp', 100, '100:t1')
+        problems = cache.check_provenance('de441.bsp', 100, '100:t1')
+        assert any('de440.bsp' in p and 'de441.bsp' in p for p in problems)
+
+    def test_detects_catalog_growth(self, cache):
+        cache.write_provenance('de440.bsp', 100, '100:t1')
+        problems = cache.check_provenance('de440.bsp', 105, '105:t1')
+        assert any('105' in p and '100' in p for p in problems)
+
+    def test_detects_orbit_updates_same_count(self, cache):
+        cache.write_provenance('de440.bsp', 100, '100:t1')
+        problems = cache.check_provenance('de440.bsp', 100, '100:t2')
+        assert any('changed' in p for p in problems)
+
+
+# ── Repack ───────────────────────────────────────────────────────
+
+class TestRepack:
+    def test_repack_reclaims_space_and_preserves_data(self, cache):
+        import h5py
+        cache.set_reference_date(2461238.5)
+        pos = make_positions(2000)
+        # store, delete, re-store — HDF5 leaves the deleted space as holes
+        for jd in (2461238.5, 2461239.5, 2461240.5):
+            cache.store_positions(jd, pos, ['x'] * 2000)
+        with h5py.File(cache.cache_file, 'a') as f:
+            del f['high_precision']['JD2461239']
+        bloated = cache.cache_file.stat().st_size
+
+        old, new = cache.optimize_cache()
+        assert old == bloated
+        assert new < old  # dead space actually reclaimed
+
+        # surviving data intact after repack
+        got = cache.get_positions(2461238.5)
+        np.testing.assert_allclose(got, pos)
+        # metadata attrs survive the copy
+        with h5py.File(cache.cache_file, 'r') as f:
+            assert f['metadata'].attrs['reference_jd'] == 2461238.5
+
+    def test_repack_preserves_provenance(self, cache):
+        cache.write_provenance('de440.bsp', 10, '10:t')
+        cache.optimize_cache()
+        assert cache.check_provenance('de440.bsp', 10, '10:t') == []

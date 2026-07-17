@@ -321,12 +321,89 @@ class PositionCache:
         else:
             logger.info(f"Cache cleared: {', '.join(groups)}")
     
-    def optimize_cache(self):
-        """Repack HDF5 file to reclaim space"""
-        logger.info("Optimizing cache file...")
+    # ── Provenance (docs/CACHE_INVALIDATION_DESIGN.md) ────────────────
+
+    CACHE_FORMAT_VERSION = 1
+
+    def write_provenance(self, ephemeris_file: str,
+                         catalog_count: int,
+                         catalog_fingerprint: str):
+        """
+        Record what this cache was computed from, so a later run can
+        detect that the catalog or ephemeris changed underneath it.
+        Called by CacheBuilder after a successful build.
+        """
         with h5py.File(self.cache_file, 'a') as f:
-            f.flush()
-        logger.info("Cache optimized")
+            meta = f['metadata']
+            meta.attrs['cache_format_version'] = self.CACHE_FORMAT_VERSION
+            meta.attrs['ephemeris_file'] = ephemeris_file
+            meta.attrs['catalog_count'] = catalog_count
+            meta.attrs['catalog_fingerprint'] = catalog_fingerprint
+            meta.attrs['epoch_policy'] = 'TT'
+        logger.info(f"Cache provenance recorded: {ephemeris_file}, "
+                    f"{catalog_count} objects, fp={catalog_fingerprint}")
+
+    def check_provenance(self, ephemeris_file: str,
+                         catalog_count: int,
+                         catalog_fingerprint: str) -> List[str]:
+        """
+        Compare the cache's recorded provenance against the current
+        catalog/ephemeris state. Returns a list of human-readable
+        mismatch descriptions (empty = cache is consistent). A cache
+        built before provenance existed reports itself as unknown.
+        """
+        problems = []
+        with h5py.File(self.cache_file, 'r') as f:
+            meta = f['metadata'].attrs
+            if 'cache_format_version' not in meta:
+                return ["cache has no provenance metadata (built before "
+                        "v3.09) — cannot verify it matches the catalog"]
+            if int(meta['cache_format_version']) != self.CACHE_FORMAT_VERSION:
+                problems.append(
+                    f"cache format v{meta['cache_format_version']} != "
+                    f"expected v{self.CACHE_FORMAT_VERSION}")
+            if str(meta.get('ephemeris_file', '')) != ephemeris_file:
+                problems.append(
+                    f"cache built with {meta.get('ephemeris_file')} but "
+                    f"{ephemeris_file} is configured")
+            if int(meta.get('catalog_count', -1)) != catalog_count:
+                problems.append(
+                    f"catalog has {catalog_count} objects but cache was "
+                    f"built from {meta.get('catalog_count')}")
+            elif str(meta.get('catalog_fingerprint', '')) != catalog_fingerprint:
+                problems.append(
+                    "catalog contents changed since the cache was built "
+                    "(orbit updates)")
+        return problems
+
+    def optimize_cache(self):
+        """
+        Repack the cache file to reclaim space.
+
+        HDF5 never frees space in place — deleted or rewritten datasets
+        leave holes, so the file only grows (an interrupted rebuild once
+        added 660 MB of dead space). Copies all live objects to a new
+        file and atomically replaces the old one.
+
+        Returns (old_size_bytes, new_size_bytes).
+        """
+        old_size = self.cache_file.stat().st_size
+        tmp = self.cache_file.with_name(self.cache_file.name + '.repack')
+        logger.info(f"Repacking cache ({old_size / 1e9:.2f} GB)...")
+        try:
+            with h5py.File(self.cache_file, 'r') as src, \
+                 h5py.File(tmp, 'w') as dst:
+                for name in src:
+                    src.copy(name, dst, name=name)
+            tmp.replace(self.cache_file)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        new_size = self.cache_file.stat().st_size
+        logger.info(f"Repacked: {old_size / 1e9:.2f} GB → "
+                    f"{new_size / 1e9:.2f} GB "
+                    f"({(old_size - new_size) / 1e6:.0f} MB reclaimed)")
+        return old_size, new_size
 
 
 class CacheBuilder:
@@ -346,11 +423,12 @@ class CacheBuilder:
         self.cache = cache
         self.calc = orbit_calculator
     
-    def build_cache(self, 
+    def build_cache(self,
                    asteroids: List[Dict],
                    reference_jd: float,
                    show_progress: bool = True,
-                   high_precision_only: bool = False):
+                   high_precision_only: bool = False,
+                   provenance: Optional[Dict] = None):
         """
         Build complete cache for all asteroids
         
@@ -364,6 +442,10 @@ class CacheBuilder:
             Show progress bar
         high_precision_only : bool
             If True, only build ±1 year high-precision cache (faster for testing)
+        provenance : dict, optional
+            {'ephemeris_file', 'catalog_count', 'catalog_fingerprint'} —
+            recorded in cache metadata after a successful build so later
+            runs can detect catalog/ephemeris drift
         """
         from tqdm import tqdm
         
@@ -394,6 +476,12 @@ class CacheBuilder:
                 pbar.update(1)
         
         pbar.close()
+
+        if provenance is not None:
+            self.cache.write_provenance(provenance['ephemeris_file'],
+                                        provenance['catalog_count'],
+                                        provenance['catalog_fingerprint'])
+
         logger.info("Cache build complete")
     
     def _generate_date_ranges(self, reference_jd: float, high_precision_only: bool = False) -> Dict[str, List[float]]:
