@@ -102,10 +102,11 @@ Legend:
 - [ ] 3.7 Launcher scripts: make `install.sh` the single source (stop
       tracking the generated `run_*.sh`), or stop generating them and track
       only the committed copies. Either way, one source of truth.
-- [ ] 3.8 Remove dead code: `CacheBuilder` if truly uncalled (verify
-      `scripts/build_cache.py` first); evaluate collapsing scalar
-      `OrbitCalculator` into `FastOrbitCalculator` (single caller at
-      `neolyzer.py:8247`).
+- [x] 3.8 Remove dead code. *(done 2026-07-16, commit 59dcf3d: scalar
+      `OrbitCalculator` deleted — it was internally broken and its only
+      caller invoked a nonexistent method, see 5.1b. NOTE: `CacheBuilder`
+      is NOT dead — `scripts/build_cache.py` uses it; the review's "no
+      callers in src/" was literally true but wrong in conclusion.)*
 
 ## Phase 4 — Test coverage where bugs actually live
 
@@ -115,8 +116,9 @@ Legend:
 - [ ] 4.2 Headless GUI smoke test in CI: `QT_QPA_PLATFORM=offscreen`, import
       `neolyzer`, instantiate `SkyMapCanvas`, render one frame. Catches
       import-time and first-render regressions cheaply.
-- [ ] 4.3 Epoch time-scale regression test (lands with the 5.1 fix): a known
-      MPCORB line's epoch must equal the documented TT JD exactly.
+- [x] 4.3 Epoch time-scale regression test. *(done 2026-07-16 with the 5.1
+      fix: `tests/test_mpc_loader.py` — known packed epochs → exact TT JD,
+      `.0 TT` invariant, malformed-input default)*
 - [ ] 4.4 Optional: coverage reporting in CI (informational, no gate yet).
 
 ## Phase 5 — Investigations (findings before fixes)
@@ -129,21 +131,23 @@ Legend:
       approachers ~125″ — sub-pixel visually, relevant for quantitative
       use. Tests miss it because fixtures hardcode `epoch_jd` and tolerance
       is 0.5°. Proposed fix + migration in the write-up, §6.
-      **[DECISION]** approve fix: direct TT→JD in `_unpack_epoch`, one-time
-      epoch snap in DB, cache rebuild, regression test (4.3).
-- [ ] 5.1a **Kepler solver silently diverges** (found during 5.1; see
-      write-up §4). `_solve_kepler_vectorized` and `_solve_kepler` don't
-      normalize M and never check convergence; up to ~23 high-e (≥0.81)
-      NEOs render at garbage positions on some dates in today's app.
-      Fix verified: normalize M into [0, 2π) → 0 failures over 2.5 M
-      solves, residual ~1e-16. **[DECISION]** approve fix (normalize M in
-      both solvers + convergence warning + regression test).
-- [ ] 5.1b **Distance-vs-time plot is dead** (found during 5.1; see
-      write-up §5). `neolyzer.py:8267` calls nonexistent
-      `calculate_position()`; the AttributeError is swallowed and the plot
-      renders all-NaN. Fix by porting to `FastOrbitCalculator`; fold into
-      3.8 (delete scalar `OrbitCalculator` — confirmed broken and never
-      successfully executed).
+      **[DECISION: approved — Rob, 2026-07-16]** Fix landed (commit
+      f795386): direct TT→JD in `_unpack_epoch` (verified identical to
+      skyfield `ts.tt()`), idempotent DB migration snapped 41,441 primary
+      + 193,685 alternate epochs to `.0 TT`, regression tests in new
+      `tests/test_mpc_loader.py` (covers 4.3), cache rebuilt from scratch.
+- [x] 5.1a **Kepler solver silently diverges** (found during 5.1; see
+      write-up §4). Solvers didn't normalize M and never checked
+      convergence; up to ~23 high-e (≥0.81) NEOs rendered at garbage
+      positions on some dates. *(fixed 2026-07-16, commit 921cfd3:
+      normalize M into [0, 2π) + convergence warning; regression tests;
+      tests now import the real solver instead of local copies)*
+- [x] 5.1b **Distance-vs-time plot is dead** (found during 5.1; see
+      write-up §5). `neolyzer.py` called nonexistent
+      `calculate_position()`; the AttributeError was swallowed and the
+      plot rendered all-NaN. *(fixed 2026-07-16, commit 59dcf3d: ported
+      to `FastOrbitCalculator`, failure now logged; verified 365 finite
+      distances for 433 Eros)*
 - [ ] 5.2 **[INVESTIGATE] Cache invalidation design.** What fingerprint
       belongs in HDF5 metadata (format version, DE kernel name/hash, catalog
       row count + max(updated_at))? How should the app react to a mismatch
