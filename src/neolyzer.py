@@ -8270,8 +8270,9 @@ class ControlsPanel(QWidget):
         calc_error_logged = False
         for jd in jd_range:
             try:
+                # signature order: (a, e, i, omega=arg_peri, Omega=node, M0)
                 pos = calculator.calculate_positions_vectorized(
-                    a_arr, e_arr, i_arr, node_arr, argp_arr, M_arr,
+                    a_arr, e_arr, i_arr, argp_arr, node_arr, M_arr,
                     H_arr, epoch_arr, jd)
                 distances.append(float(pos[0, 2]))
             except Exception as e:

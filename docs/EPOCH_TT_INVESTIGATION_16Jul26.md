@@ -31,21 +31,21 @@ excess *is* the bug, row by row.
 ## 2. Quantified effect on sky positions
 
 Method: computed geocentric RA/Dec for the full catalog (41,439 elliptic
-orbits) with `FastOrbitCalculator` at JD 2461238.0 (≈ 2026-07-16 TT), using
-stored epochs vs corrected epochs (excess removed). Script preserved at the
-session scratchpad (`epoch_error_measure.py`); statistics exclude two
-objects whose separations were Kepler-solver artifacts (§4):
+orbits) with `FastOrbitCalculator` at JD 2461238.0 (≈ 2026-07-16 TT), with
+and without the ΔT excess on the epoch. (Re-measured after the fix landed,
+with the ω/Ω argument order corrected relative to the first-pass script;
+statistics changed negligibly.)
 
 | statistic | error |
 |---|---|
 | median | 0.86″ |
 | p95 | 3.5″ |
-| p99 | 9.1″ |
-| worst close approachers (d < 0.08 AU) | 45–125″ |
+| p99 | 8.9″ |
+| worst close approachers (d < 0.05 AU) | ~50–155″ |
 | 1 display pixel, full-sky map (~2000 px) | ~648″ |
 
 Interpretation: **visually negligible** — even the worst real case
-(~125″ for 2022 WG15-class close approachers) is a fifth of a display
+(~155″ for a close approacher at 0.018 AU) is a quarter of a display
 pixel. **Scientifically relevant** for any quantitative use: Horizons
 comparisons, discovery-circumstance matching, or future features that
 report coordinates (the info popup shows RA/Dec to arcsecond precision).
