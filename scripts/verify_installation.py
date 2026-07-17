@@ -94,7 +94,7 @@ def check_pyqt6():
 
 def check_database():
     """Check database exists and has data"""
-    db_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'neo_orbits.db')
+    db_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'asteroids.db')
     if os.path.exists(db_path):
         size_mb = os.path.getsize(db_path) / (1024 * 1024)
         print(f"  {check_mark(True)} Database: {size_mb:.1f} MB")
@@ -243,9 +243,9 @@ def main():
         if display_ok:
             print()
             print("Ready to run:")
-            print("  ./run_visualizer.sh")
+            print("  ./run_neolyzer.sh")
             print("  # or")
-            print("  ./venv/bin/python src/visualizer.py")
+            print("  ./venv/bin/python src/neolyzer.py")
         else:
             print()
             print("⚠ No display available. For remote Linux systems:")

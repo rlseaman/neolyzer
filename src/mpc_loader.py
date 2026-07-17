@@ -55,7 +55,9 @@ class MPCLoader:
         logger.info(f"Downloading NEA.txt from {self.NEA_URL}")
         
         try:
-            response = requests.get(self.NEA_URL, stream=True)
+            # (connect, read) timeouts; read timeout applies between chunks of
+            # the streamed body, so a stalled MPC connection can't hang forever
+            response = requests.get(self.NEA_URL, stream=True, timeout=(10, 60))
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
@@ -97,7 +99,7 @@ class MPCLoader:
         logger.warning("This is a large file (~200 MB), download may take several minutes")
         
         try:
-            response = requests.get(self.MPCORB_URL, stream=True)
+            response = requests.get(self.MPCORB_URL, stream=True, timeout=(10, 60))
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
