@@ -76,30 +76,27 @@ Legend:
 
 ## Phase 3 — De-duplication (one concern, one owner)
 
-- [ ] 3.1 Remove the naive `unpack_provisional_designation` from
-      `src/database.py:223-259`; route callers through
-      `designation_utils`. Add a regression test with a high-cycle
-      (base-62) designation.
-- [ ] 3.2 Single MPCORB fixed-width parser: `partition_mpcorb.py` and
-      `diagnose_missing.py` import from `mpc_loader` instead of hardcoding
-      offsets (they have already drifted: cols 91–103 vs 92–103 for `a`).
-- [ ] 3.3 Add `angular_separation()` / `haversine_separation()` helpers to
-      `CoordinateTransformer` (or a new `sky_math` module); replace the ~13
-      inline copies in `neolyzer.py` (2166, 3039, 3868, 3911, 4034, 4058,
-      4368, 5821, 6098, 6171, 8968, 9177, 9687).
-- [ ] 3.4 One named obliquity constant; fix the 23.439 vs 23.43928 mismatch
-      (`neolyzer.py:9630` vs `:430,456`) and replace inline
-      ecliptic/equatorial math at `neolyzer.py:1721,1729,9720-9728` with
-      `CoordinateTransformer` calls.
-- [ ] 3.5 Diagnose scripts import shared logic: `diagnose_cln.py` uses
-      `database.py`'s CLN constants/functions; `diagnose_sbdb.py` uses the
-      shared SBDB fetch. Consider moving all three under
-      `scripts/diagnostics/`.
-- [ ] 3.6 Deduplicate platform detection (`setup_database.py:43-78` ≈
-      `verify_installation.py:31-67`) into one helper.
-- [ ] 3.7 Launcher scripts: make `install.sh` the single source (stop
-      tracking the generated `run_*.sh`), or stop generating them and track
-      only the committed copies. Either way, one source of truth.
+- [x] 3.1 Naive `unpack_provisional_designation` removed from database.py
+      (it mis-unpacked every input, even its docstring examples); routes
+      through `designation_utils`; regression tests added. *(2026-07-16)*
+- [x] 3.2 Single MPCORB parser: `mpc_loader.parse_mpcorb_line` is
+      canonical; partition_mpcorb imports it (~90 duplicate lines gone);
+      diagnose_missing offsets corrected. *(2026-07-16)*
+- [x] 3.3 `src/sky_math.py`: `cos_angular_separation()` +
+      `angular_separation_deg()`; all ~15 inline copies in neolyzer.py
+      replaced; 10 new tests. *(2026-07-16)*
+- [x] 3.4 `OBLIQUITY_J2000_DEG/RAD` in sky_math; 23.439-vs-23.43928
+      mismatch fixed; all 7 inline obliquity literals in neolyzer.py and
+      orbit_calculator.py now use the shared constant. *(2026-07-16)*
+- [x] 3.5 Diagnose scripts moved to `scripts/diagnostics/`; diagnose_cln
+      imports CLN constants from database; diagnose_sbdb uses
+      net_utils.http_get; .gitignore `diagnostics/` anchored to root.
+      *(2026-07-16)*
+- [x] 3.6 Platform detection deduplicated into `src/platform_info.py`.
+      *(2026-07-16)*
+- [x] 3.7 Launchers: committed `run_*.sh` are the single source;
+      install.sh no longer regenerates them (chmod + existence check
+      only). *(2026-07-16)*
 - [x] 3.8 Remove dead code. *(done 2026-07-16, commit 59dcf3d: scalar
       `OrbitCalculator` deleted — it was internally broken and its only
       caller invoked a nonexistent method, see 5.1b. NOTE: `CacheBuilder`
@@ -108,16 +105,17 @@ Legend:
 
 ## Phase 4 — Test coverage where bugs actually live
 
-- [ ] 4.1 Parser tests for `mpc_loader.parse_mpc_format` using a few real
-      MPCORB lines as fixtures (numbered, provisional, high-cycle, comet-like
-      edge cases).
-- [ ] 4.2 Headless GUI smoke test in CI: `QT_QPA_PLATFORM=offscreen`, import
-      `neolyzer`, instantiate `SkyMapCanvas`, render one frame. Catches
-      import-time and first-render regressions cheaply.
+- [x] 4.1 Parser tests with real NEA.txt fixture lines (Eros full-field,
+      provisional, header/short-line, a-from-mean-motion fallback), in
+      `tests/test_mpc_loader.py`. *(2026-07-16)*
+- [x] 4.2 Headless GUI smoke test (`tests/test_gui_smoke.py`): module
+      import, offscreen SkyMapCanvas construction + draw,
+      CoordinateTransformer round-trip; CI gains offscreen Qt platform
+      and Linux Qt system libraries. *(2026-07-16)*
 - [x] 4.3 Epoch time-scale regression test. *(done 2026-07-16 with the 5.1
       fix: `tests/test_mpc_loader.py` — known packed epochs → exact TT JD,
       `.0 TT` invariant, malformed-input default)*
-- [ ] 4.4 Optional: coverage reporting in CI (informational, no gate yet).
+- [x] 4.4 Coverage reporting in CI (informational, no gate). *(2026-07-16)*
 
 ## Phase 5 — Investigations (findings before fixes)
 
