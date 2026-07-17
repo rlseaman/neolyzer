@@ -32,9 +32,10 @@ Legend:
 
 ## Phase 1 — Fix what's broken for users (docs & verify scripts)
 
-- [ ] 1.1 Fix `scripts/verify_installation.py:97` — `neo_orbits.db` →
+- [x] 1.1 Fix `scripts/verify_installation.py:97` — `neo_orbits.db` →
       `asteroids.db`. Also fix the `run_visualizer.sh`/`src/visualizer.py`
-      references at `verify_installation.py:247`.
+      references at `verify_installation.py:247`. *(done 2026-07-16,
+      commit a0f7ae9; script now passes all checks end-to-end)*
 - [ ] 1.2 **[DECISION]** Retire `scripts/verify_fixes.py` (hardcoded Jan-2026
       bug greps, references retired filenames), or modernize it. Recommended:
       delete; the pytest suite is the regression net now. Update
@@ -58,9 +59,10 @@ Legend:
 
 ## Phase 2 — Network robustness
 
-- [ ] 2.1 Add timeouts to the two MPC downloads
+- [x] 2.1 Add timeouts to the two MPC downloads
       (`src/mpc_loader.py:58,100`) — the primary catalog path can currently
-      hang forever. Smallest possible diff; ship first.
+      hang forever. *(done 2026-07-16, commit a0f7ae9; (10s connect, 60s
+      read) on both)*
 - [ ] 2.2 Factor a single shared download helper in `src/` (requests, tqdm
       progress, consistent timeout policy, simple retry-with-backoff).
       Migrate `mpc_loader`, the Gaia download in `setup_database.py:287-302`,
@@ -119,15 +121,29 @@ Legend:
 
 ## Phase 5 — Investigations (findings before fixes)
 
-- [ ] 5.1 **[INVESTIGATE] TT/UTC epoch bug** (`mpc_loader.py:324-358`).
-      Steps: (a) confirm MPCORB epoch definition (TT) against MPC docs;
-      (b) quantify positional effect of a ~69 s epoch shift for typical NEOs
-      and worst-case fast movers near perihelion; (c) determine why
-      `tests/test_orbit_positions.py` vs Horizons passes — tolerance or
-      fixture bypass; (d) decide fix + migration: correcting `epoch_jd`
-      changes stored values and invalidates the position cache, so the fix
-      should land together with a cache-rebuild step and a CHANGELOG note.
-      No code change until (a)–(c) are written up.
+- [x] 5.1 **[INVESTIGATE] TT/UTC epoch bug** (`mpc_loader.py:324-358`).
+      *(investigation done 2026-07-16 — see
+      `docs/EPOCH_TT_INVESTIGATION_16Jul26.md`)*. Confirmed: MPC docs say
+      epoch is ".0 TT"; every DB row carries a 64–69 s excess matching
+      ΔT(epoch) exactly. Sky effect: median 0.86″, p99 9″, worst close
+      approachers ~125″ — sub-pixel visually, relevant for quantitative
+      use. Tests miss it because fixtures hardcode `epoch_jd` and tolerance
+      is 0.5°. Proposed fix + migration in the write-up, §6.
+      **[DECISION]** approve fix: direct TT→JD in `_unpack_epoch`, one-time
+      epoch snap in DB, cache rebuild, regression test (4.3).
+- [ ] 5.1a **Kepler solver silently diverges** (found during 5.1; see
+      write-up §4). `_solve_kepler_vectorized` and `_solve_kepler` don't
+      normalize M and never check convergence; up to ~23 high-e (≥0.81)
+      NEOs render at garbage positions on some dates in today's app.
+      Fix verified: normalize M into [0, 2π) → 0 failures over 2.5 M
+      solves, residual ~1e-16. **[DECISION]** approve fix (normalize M in
+      both solvers + convergence warning + regression test).
+- [ ] 5.1b **Distance-vs-time plot is dead** (found during 5.1; see
+      write-up §5). `neolyzer.py:8267` calls nonexistent
+      `calculate_position()`; the AttributeError is swallowed and the plot
+      renders all-NaN. Fix by porting to `FastOrbitCalculator`; fold into
+      3.8 (delete scalar `OrbitCalculator` — confirmed broken and never
+      successfully executed).
 - [ ] 5.2 **[INVESTIGATE] Cache invalidation design.** What fingerprint
       belongs in HDF5 metadata (format version, DE kernel name/hash, catalog
       row count + max(updated_at))? How should the app react to a mismatch
