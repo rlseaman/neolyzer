@@ -144,26 +144,29 @@ Legend:
       plot rendered all-NaN. *(fixed 2026-07-16, commit 59dcf3d: ported
       to `FastOrbitCalculator`, failure now logged; verified 365 finite
       distances for 433 Eros)*
-- [ ] 5.2 **[INVESTIGATE] Cache invalidation design.** What fingerprint
-      belongs in HDF5 metadata (format version, DE kernel name/hash, catalog
-      row count + max(updated_at))? How should the app react to a mismatch
-      (refuse, warn, rebuild)? Also: real repack for `optimize_cache()`
-      (h5repack or copy-rewrite) — currently a no-op flush despite its
-      docstring. Design doc first; touches DELTA_CACHING.txt territory.
-- [ ] 5.3 **[INVESTIGATE] Settings persistence refactor.** 609 hand-mapped
-      lines + four parallel state systems. Evaluate a declarative
-      widget-registry (name → getter/setter/default) that drives save,
-      restore, factory reset, and script state from one table. Prototype on
-      one settings group before committing to the pattern.
-- [ ] 5.4 **[INVESTIGATE] QThread workers for network I/O.** Inventory which
-      downloads are reachable from the running GUI (SBDB MOID fetch,
-      ephemeris download, catalog update), then design one worker pattern
-      with progress/finished/error signals. Implement one call site first
-      (SBDB fetch is the likeliest freeze).
-- [ ] 5.5 **[INVESTIGATE] cython in requirements.txt** — find what needs it;
-      remove if nothing does. Also reconcile the PyQt5 fallback with the
-      hardcoded `backend_qt5agg` matplotlib import (`neolyzer.py:119-120`)
-      and decide whether the PyQt5 path is still supported at all.
+- [x] 5.2 Cache invalidation design written:
+      `docs/CACHE_INVALIDATION_DESIGN.md` (fingerprint attrs, mismatch
+      behavior, real repack via copy-rewrite, delta-rebuild hook; open
+      questions for Rob on size budget and reference-JD snapping).
+      **[DECISION]** approve design → implement in the listed order.
+      *(investigation done 2026-07-16)*
+- [x] 5.3 Settings registry design written:
+      `docs/SETTINGS_REGISTRY_DESIGN.md` (one table drives save/restore/
+      reset/script-state; prototype scope = Milky Way group; QSettings
+      rejected with rationale). **[DECISION]** approve → prototype.
+      *(investigation done 2026-07-16)*
+- [x] 5.4 Worker-threads design written:
+      `docs/GUI_WORKER_THREADS_DESIGN.md`. Inventory corrected the plan's
+      assumption: the SBDB fetch is NOT GUI-reachable (scripts only) —
+      the real freeze is the ephemeris download (de441 = 3.5 GB on the
+      GUI thread). Design: one generic IoWorker + progress callback on
+      net_utils.download_file, ephemeris-switch flow first.
+      **[DECISION]** approve → implement. *(investigation done 2026-07-16)*
+- [x] 5.5 Dependency audit done: cython removed (no .pyx, no build step,
+      no import anywhere); matplotlib backend switched to binding-
+      agnostic QtAgg (was hardcoded Qt5 shim while running PyQt6); the
+      PyQt5 fallback path retained and now actually consistent with the
+      backend import. *(2026-07-16)*
 
 ## Phase 6 — Larger structural work (each needs its own plan)
 
