@@ -155,13 +155,16 @@ Legend:
       reset/script-state; prototype scope = Milky Way group; QSettings
       rejected with rationale). **[DECISION]** approve → prototype.
       *(investigation done 2026-07-16)*
-- [x] 5.4 Worker-threads design written:
-      `docs/GUI_WORKER_THREADS_DESIGN.md`. Inventory corrected the plan's
-      assumption: the SBDB fetch is NOT GUI-reachable (scripts only) —
-      the real freeze is the ephemeris download (de441 = 3.5 GB on the
-      GUI thread). Design: one generic IoWorker + progress callback on
-      net_utils.download_file, ephemeris-switch flow first.
-      **[DECISION]** approve → implement. *(investigation done 2026-07-16)*
+- [x] 5.4 Worker threads designed AND implemented (2026-07-16; see
+      `docs/GUI_WORKER_THREADS_DESIGN.md`, `src/gui_workers.py`).
+      Inventory corrected two assumptions: the SBDB fetch is NOT
+      GUI-reachable (scripts only), and there is no in-GUI ephemeris
+      selector — the live trigger is a missing .bsp at startup.
+      `download_file` gained progress_callback/cancel_event;
+      `initialize_data` now routes a missing ephemeris through a
+      cancellable progress dialog (previously: silent multi-minute
+      freeze for de441's 3.5 GB). Verified end-to-end offscreen with a
+      real download.
 - [x] 5.5 Dependency audit done: cython removed (no .pyx, no build step,
       no import anywhere); matplotlib backend switched to binding-
       agnostic QtAgg (was hardcoded Qt5 shim while running PyQt6); the
