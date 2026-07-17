@@ -323,41 +323,51 @@ class MPCLoader:
             'pha_flag': False,
         }
     
-    def _unpack_epoch(self, packed: str) -> float:
+    @staticmethod
+    def _unpack_epoch(packed: str) -> float:
         """
-        Convert MPC packed epoch format to Julian Date
-        
+        Convert MPC packed epoch format to Julian Date (TT)
+
         Format: KYYMD where:
-        K = century code (J=2000, K=2010, etc.)
+        K = century code (I=1800, J=1900, K=2000, L=2100)
         YY = year within century
         M = month code (1-9=Jan-Sep, A=Oct, B=Nov, C=Dec)
-        D = day code (01-31)
+        D = day code (1-9, A=10 ... V=31)
+
+        MPCORB epochs are calendar dates in TT (".0 TT" per the format
+        spec), so the JD follows directly from the Gregorian date — no
+        time-scale conversion is involved. (An earlier version treated
+        the date as UTC and converted to TT, biasing every epoch_jd by
+        ΔT ≈ 64–69 s; see docs/EPOCH_TT_INVESTIGATION_16Jul26.md.)
         """
         if not packed or len(packed) < 5:
             return 2451545.0  # Default to J2000.0
-        
+
         # Century
         century_codes = {
             'I': 1800, 'J': 1900, 'K': 2000, 'L': 2100
         }
         century = century_codes.get(packed[0], 2000)
-        
+
         # Year
         year = century + int(packed[1:3])
-        
+
         # Month
         month_codes = '123456789ABC'
         month = month_codes.index(packed[3]) + 1 if packed[3] in month_codes else 1
-        
+
         # Day
         day_codes = '0123456789ABCDEFGHIJKLMNOPQRSTUV'
         day = day_codes.index(packed[4]) if packed[4] in day_codes else 1
-        
-        # Convert to JD
-        from skyfield.api import load
-        ts = load.timescale()
-        t = ts.utc(year, month, day)
-        return t.tt
+
+        # Gregorian date → Julian day number (Fliegel & Van Flandern),
+        # then back half a day from the noon JDN to 0h TT
+        a = (14 - month) // 12
+        y = year + 4800 - a
+        m = month + 12 * a - 3
+        jdn = (day + (153 * m + 2) // 5 + 365 * y + y // 4
+               - y // 100 + y // 400 - 32045)
+        return jdn - 0.5
     
     def _classify_orbits(self, asteroids: List[Dict]):
         """

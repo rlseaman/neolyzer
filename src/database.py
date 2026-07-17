@@ -895,6 +895,30 @@ class DatabaseManager:
                         conn.commit()
                     logger.info("Migration complete: catalog provenance columns added")
 
+            # Migration: snap epoch_jd values biased by the TT/UTC epoch bug.
+            # Epochs imported before 2026-07 carry a +ΔT excess (~64-69 s)
+            # because the packed TT calendar date was interpreted as UTC.
+            # True MPCORB epochs are .0 TT, i.e. a JD ending exactly in .5,
+            # so snapping is exact. Guard band 0.0001-0.002 d (~9-173 s)
+            # covers ΔT for all catalog epochs while leaving correct
+            # epochs (excess 0) untouched, making this idempotent.
+            tables = ['asteroids']
+            if 'alternate_asteroids' in inspector.get_table_names():
+                tables.append('alternate_asteroids')
+            with self.engine.connect() as conn:
+                for table in tables:
+                    result = conn.execute(text(
+                        f"UPDATE {table} "
+                        f"SET epoch_jd = CAST(epoch_jd - 0.5 AS INTEGER) + 0.5 "
+                        f"WHERE epoch_jd IS NOT NULL "
+                        f"AND epoch_jd - (CAST(epoch_jd - 0.5 AS INTEGER) + 0.5) "
+                        f"BETWEEN 0.0001 AND 0.002"))
+                    conn.commit()
+                    if result.rowcount:
+                        logger.info(f"Migration: snapped {result.rowcount} "
+                                    f"{table} epochs to .0 TT (removed ΔT bias "
+                                    f"from epoch import bug)")
+
         except Exception as e:
             logger.warning(f"Migration check failed: {e}")
     

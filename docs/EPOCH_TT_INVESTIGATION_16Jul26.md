@@ -123,8 +123,9 @@ successfully executes, this strengthens plan item 3.8: **delete
    `positions.h5` embeds positions computed from the biased epochs.
 4. **Kepler solver fix** (can land first, independently): normalize M in
    both solvers, add a convergence check with `logger.warning`.
-5. **Tests** (plan 4.3): packed-epoch → exact TT JD (e.g. `K261A` →
-   2461041.5); a high-e/large-M regression case for the solver.
+5. **Tests** (plan 4.3): packed-epoch → exact TT JD (e.g. `K261A` =
+   2026 Jan 10.0 TT → 2461050.5); a high-e/large-M regression case for
+   the solver.
 6. **Distance-time plot**: separate small fix (plan item added) — port to
    `FastOrbitCalculator`; delete scalar `OrbitCalculator` (plan 3.8).
 
