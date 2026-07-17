@@ -148,3 +148,40 @@ class TestDownloadFile:
                           show_progress=False)
         assert not dest.exists()
         assert not dest.with_name("out.dat.part").exists()
+
+
+class TestDownloadProgressAndCancel:
+    def test_progress_callback_invoked(self, monkeypatch, tmp_path):
+        patch_get(monkeypatch,
+                  lambda url, **kw: FakeResponse(b"x" * 200_000))
+        calls = []
+        download_file("https://example.test/f", tmp_path / "out.dat",
+                      show_progress=False,
+                      progress_callback=lambda done, total:
+                          calls.append((done, total)))
+        assert calls, "progress_callback never invoked"
+        assert calls[-1] == (200_000, 200_000)
+        assert all(t == 200_000 for _, t in calls)
+        # monotonically increasing byte counts
+        dones = [d for d, _ in calls]
+        assert dones == sorted(dones)
+
+    def test_cancel_event_aborts_cleanly(self, monkeypatch, tmp_path):
+        import threading
+        from net_utils import DownloadCancelled
+
+        patch_get(monkeypatch,
+                  lambda url, **kw: FakeResponse(b"x" * 500_000))
+        cancel = threading.Event()
+
+        def cancel_after_first_chunk(done, total):
+            cancel.set()
+
+        dest = tmp_path / "out.dat"
+        with pytest.raises(DownloadCancelled):
+            download_file("https://example.test/f", dest,
+                          show_progress=False,
+                          progress_callback=cancel_after_first_chunk,
+                          cancel_event=cancel)
+        assert not dest.exists()
+        assert not dest.with_name("out.dat.part").exists()

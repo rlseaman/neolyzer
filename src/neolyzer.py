@@ -16294,6 +16294,30 @@ class NEOVisualizer(QMainWindow):
     def initialize_data(self):
         try:
             logger.info("Initializing...")
+
+            # If the configured ephemeris is missing, download it in a
+            # worker with a progress dialog BEFORE anything triggers the
+            # synchronous ensure_ephemeris() path — de441 is 3.5 GB and
+            # would otherwise freeze the GUI for the entire download
+            # (docs/GUI_WORKER_THREADS_DESIGN.md)
+            from skyfield_loader import (ephemeris_path, ephemeris_url,
+                                         get_current_ephemeris,
+                                         EPHEMERIS_MIN_SIZE)
+            eph_file = get_current_ephemeris()
+            if not ephemeris_path(eph_file).exists():
+                from gui_workers import download_with_dialog
+                result = download_with_dialog(
+                    self, ephemeris_url(eph_file), ephemeris_path(eph_file),
+                    title=f"Downloading ephemeris {eph_file}...",
+                    min_size=EPHEMERIS_MIN_SIZE)
+                if result is None:
+                    self.status_label.setText(
+                        f"Ephemeris {eph_file} not available — "
+                        f"download cancelled or failed")
+                    logger.error(f"Ephemeris {eph_file} download did not "
+                                 f"complete; cannot initialize")
+                    return
+
             self.db = DatabaseManager(use_sqlite=True)
             self.cache = PositionCache() if self.use_cache else None
             self.calculator = FastOrbitCalculator()

@@ -79,6 +79,27 @@ def get_current_ephemeris() -> str:
         return 'de440.bsp'
 
 
+EPHEMERIS_URL_BASE = "https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/"
+
+# A real .bsp is many MB; used to reject error pages served as HTTP 200
+EPHEMERIS_MIN_SIZE = 1_000_000
+
+
+def ephemeris_path(filename=None) -> Path:
+    """Local cache path for an ephemeris file (configured default if
+    filename is None). Does not download."""
+    if filename is None:
+        filename = get_current_ephemeris()
+    return SKYFIELD_DATA_DIR / filename
+
+
+def ephemeris_url(filename=None) -> str:
+    """JPL download URL for an ephemeris file."""
+    if filename is None:
+        filename = get_current_ephemeris()
+    return EPHEMERIS_URL_BASE + filename
+
+
 def ensure_ephemeris(filename=None):
     """
     Ensure the ephemeris file exists, downloading with SSL fallback if needed.
@@ -86,6 +107,10 @@ def ensure_ephemeris(filename=None):
     Skyfield's internal downloader uses urllib which may fail on systems
     with incomplete CA certificate stores (like Raspberry Pi).
     This function downloads the file ourselves with fallback options.
+
+    NOTE: this download is synchronous — GUI code should check
+    ephemeris_path().exists() first and route a missing file through
+    gui_workers.download_with_dialog() instead (de441 is 3.5 GB).
 
     Parameters:
     -----------
@@ -96,22 +121,17 @@ def ensure_ephemeris(filename=None):
     --------
     Path : Path to the ephemeris file
     """
-    if filename is None:
-        filename = get_current_ephemeris()
-
-    cache_path = SKYFIELD_DATA_DIR / filename
+    cache_path = ephemeris_path(filename)
 
     if cache_path.exists():
         logger.debug(f"Ephemeris file already exists: {cache_path}")
         return cache_path
 
-    # Need to download (net_utils handles SSL fallback, retries, and
-    # rejects suspiciously small results — a real .bsp is many MB)
-    url = f"https://ssd.jpl.nasa.gov/ftp/eph/planets/bsp/{filename}"
-    logger.info(f"Downloading ephemeris file: {filename}")
+    logger.info(f"Downloading ephemeris file: {cache_path.name}")
 
     from net_utils import download_file
-    download_file(url, cache_path, desc=filename, min_size=1_000_000)
+    download_file(ephemeris_url(filename), cache_path,
+                  desc=cache_path.name, min_size=EPHEMERIS_MIN_SIZE)
     return cache_path
 
 

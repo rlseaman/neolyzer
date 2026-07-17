@@ -1,6 +1,16 @@
 # GUI Worker Threads for Blocking I/O — Design (plan item 5.4)
 
-Status: **proposal for review** (no code changes). 2026-07-16.
+Status: **implemented** 2026-07-16 (steps 1–3 below; see
+`src/gui_workers.py`). One correction found during implementation:
+there is **no in-GUI ephemeris selector** — `set_configured_ephemeris`
+is called only by the CLI setup wizard, so "user switches ephemeris in
+settings" below is not a live trigger. The real GUI scenario is a
+missing `.bsp` at startup (deleted cache, hand-edited
+`~/.neolyzer/ephemeris.json`, or interrupted setup), now handled in
+`NEOVisualizer.initialize_data` via `download_with_dialog()`. The
+synchronous `ensure_ephemeris()` calls in the render paths remain as a
+safety net and are no-ops once the file exists. If an in-GUI ephemeris
+selector is ever added, it should reuse the same pieces.
 
 ## Inventory — what actually blocks the GUI thread (verified by grep)
 

@@ -30,6 +30,10 @@ DEFAULT_RETRIES = 3
 RETRY_BACKOFF_S = 2.0  # first retry delay; doubles per attempt
 
 
+class DownloadCancelled(Exception):
+    """Raised by download_file() when its cancel_event is set."""
+
+
 def _get_with_ssl_fallback(url: str, *, params=None, stream=False,
                            timeout=DEFAULT_TIMEOUT) -> requests.Response:
     """Single GET attempt, walking the SSL-fallback ladder on SSL errors."""
@@ -104,7 +108,9 @@ def download_file(url: str, filepath: Union[str, Path], *,
                   timeout=DEFAULT_TIMEOUT,
                   retries: int = DEFAULT_RETRIES,
                   min_size: Optional[int] = None,
-                  show_progress: bool = True) -> Path:
+                  show_progress: bool = True,
+                  progress_callback=None,
+                  cancel_event=None) -> Path:
     """
     Stream url to filepath with a tqdm progress bar.
 
@@ -113,6 +119,12 @@ def download_file(url: str, filepath: Union[str, Path], *,
     would mistake for a good one. If min_size is given and the result is
     smaller, the download is rejected (guards against error pages served
     with HTTP 200, especially on the unverified-TLS ladder rung).
+
+    progress_callback(bytes_done, bytes_total) is invoked per chunk
+    (bytes_total is 0 when the server sent no content-length) — used by
+    GUI workers; it must be thread-safe (typically a Qt signal emit).
+    cancel_event (threading.Event) aborts the transfer at the next chunk
+    boundary, raising DownloadCancelled; no partial file is left behind.
     """
     from tqdm import tqdm
 
@@ -124,13 +136,19 @@ def download_file(url: str, filepath: Union[str, Path], *,
     total_size = int(response.headers.get('content-length', 0))
 
     try:
+        bytes_done = 0
         with open(partial, 'wb') as f, \
              tqdm(total=total_size, unit='B', unit_scale=True,
                   desc=desc or filepath.name,
                   disable=not show_progress) as pbar:
             for chunk in response.iter_content(chunk_size=65536):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise DownloadCancelled(f"Download of {url} cancelled")
                 f.write(chunk)
+                bytes_done += len(chunk)
                 pbar.update(len(chunk))
+                if progress_callback is not None:
+                    progress_callback(bytes_done, total_size)
 
         size = partial.stat().st_size
         if min_size is not None and size < min_size:
