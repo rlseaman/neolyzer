@@ -122,6 +122,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
 
+from version import __version__
 from orbit_calculator import FastOrbitCalculator
 from database import DatabaseManager
 from cache_manager import PositionCache
@@ -13852,7 +13853,7 @@ class SettingsDialog(QDialog):
             all_points = existing_points + self._script_buffer
 
             script_data = {
-                'version': '3.06',
+                'version': __version__,
                 'loop': loop_enabled,
                 'state': state,
                 'time_points': all_points
@@ -16950,7 +16951,7 @@ class NEOVisualizer(QMainWindow):
         
         help_text = """
         <h2>NEOlyzer</h2>
-        <p><b>Version 3.08</b> - Near-Earth Object sky position visualization and analysis tool</p>
+        <p><b>Version """ + __version__ + """</b> - Near-Earth Object sky position visualization and analysis tool</p>
         <p><i>Note: All positions are geocentric (Earth-centered), not topocentric (observer-centered).</i></p>
 
         <h3>Key Features</h3>
@@ -17396,7 +17397,7 @@ class NEOVisualizer(QMainWindow):
         
         try:
             settings = {
-                'version': '3.06',
+                'version': __version__,
                 'magnitude': {
                     'v_min': self.magnitude_panel.mag_min_spin.value(),
                     'v_max': self.magnitude_panel.mag_max_spin.value(),
