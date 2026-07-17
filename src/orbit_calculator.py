@@ -143,22 +143,30 @@ class OrbitCalculator:
         
         return position
     
-    def _solve_kepler(self, M: float, e: float, tol: float = 1e-10) -> float:
+    @staticmethod
+    def _solve_kepler(M: float, e: float, tol: float = 1e-10) -> float:
         """
         Solve Kepler's equation M = E - e*sin(E) for E
         Using Newton-Raphson iteration
+
+        M must be reduced to [0, 2*pi) before iterating: the E=pi seed
+        used for high-e orbits diverges chaotically when M lies far
+        outside that range (M0 + n*dt grows without bound).
         """
+        M = M % (2.0 * np.pi)
         E = M if e < 0.8 else np.pi
-        
+
         for _ in range(30):  # Max iterations
             f = E - e * np.sin(E) - M
             fp = 1 - e * np.cos(E)
             delta = f / fp
             E -= delta
-            
+
             if abs(delta) < tol:
                 return E
-        
+
+        logger.warning(f"Kepler solver did not converge (M={M:.6f}, e={e:.4f}, "
+                       f"residual={abs(E - e * np.sin(E) - M):.2e} rad)")
         return E  # Return best estimate
     
     def _sun_distance(self, position, t) -> float:
@@ -367,20 +375,33 @@ class FastOrbitCalculator:
         
         return np.column_stack([ra, dec, distance, mag])
     
-    def _solve_kepler_vectorized(self, M: np.ndarray, e: np.ndarray, 
+    @staticmethod
+    def _solve_kepler_vectorized(M: np.ndarray, e: np.ndarray,
                                  tol: float = 1e-10) -> np.ndarray:
-        """Vectorized Kepler equation solver"""
+        """Vectorized Kepler equation solver
+
+        M is reduced to [0, 2*pi) before iterating: the E=pi seed used
+        for high-e orbits diverges chaotically when M lies far outside
+        that range (M0 + n*dt grows without bound), silently producing
+        garbage positions for e >= ~0.8 objects at some dates.
+        """
+        M = np.mod(M, 2.0 * np.pi)
         E = np.where(e < 0.8, M, np.full_like(M, np.pi))
-        
+
         for _ in range(30):
             f = E - e * np.sin(E) - M
             fp = 1 - e * np.cos(E)
             delta = f / fp
             E -= delta
-            
+
             if np.all(np.abs(delta) < tol):
                 break
-        
+
+        residual = np.abs(E - e * np.sin(E) - M)
+        n_bad = int(np.count_nonzero(residual > 1e-6))
+        if n_bad:
+            logger.warning(f"Kepler solver did not converge for {n_bad} "
+                           f"objects (max residual {residual.max():.2e} rad)")
         return E
     
     def calculate_batch(self, 

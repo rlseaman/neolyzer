@@ -8,35 +8,27 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+# The solvers are @staticmethods, so this exercises the REAL production
+# code without instantiating the calculator (no ephemeris load).
+from orbit_calculator import FastOrbitCalculator
 
-# ── Standalone Kepler solver (extracted to avoid ephemeris load) ──
 
 def solve_kepler(M, e, tol=1e-10):
-    """Scalar Kepler solver (same algorithm as OrbitCalculator._solve_kepler)."""
-    E = M if e < 0.8 else np.pi
-    for _ in range(30):
-        f = E - e * np.sin(E) - M
-        fp = 1 - e * np.cos(E)
-        delta = f / fp
-        E -= delta
-        if abs(delta) < tol:
-            return E
-    return E
+    """Scalar convenience wrapper around the production vectorized solver."""
+    return float(FastOrbitCalculator._solve_kepler_vectorized(
+        np.array([M], dtype=float), np.array([e], dtype=float), tol)[0])
 
 
 def solve_kepler_vectorized(M, e, tol=1e-10):
-    """Vectorized Kepler solver (same algorithm as FastOrbitCalculator)."""
-    M = np.asarray(M, dtype=float)
-    e = np.asarray(e, dtype=float)
-    E = np.where(e < 0.8, M, np.full_like(M, np.pi))
-    for _ in range(30):
-        f = E - e * np.sin(E) - M
-        fp = 1 - e * np.cos(E)
-        delta = f / fp
-        E -= delta
-        if np.all(np.abs(delta) < tol):
-            break
-    return E
+    """Production vectorized solver."""
+    return FastOrbitCalculator._solve_kepler_vectorized(
+        np.asarray(M, dtype=float), np.asarray(e, dtype=float), tol)
+
+
+def kepler_residual(E, e, M):
+    """|E - e*sin(E) - M| reduced mod 2*pi (solver normalizes M internally)."""
+    r = E - e * np.sin(E) - M
+    return np.abs(np.remainder(r + np.pi, 2 * np.pi) - np.pi)
 
 
 # ── Kepler equation: E - e*sin(E) = M ───────────────────────────
@@ -112,6 +104,43 @@ class TestKeplerVectorized:
         E = solve_kepler_vectorized(M_vals, e_vals)
         residuals = np.abs(E - e_vals * np.sin(E) - M_vals)
         assert np.all(residuals < 1e-10)
+
+
+class TestKeplerUnnormalizedM:
+    """Regression tests for the 2026-07 divergence bug.
+
+    M = M0 + n*dt grows without bound, so the solver receives values far
+    outside [0, 2*pi). Before M-normalization was added, the E=pi Newton
+    seed used for e >= 0.8 wandered chaotically for such inputs and the
+    solver silently returned garbage (residuals up to ~1e6 rad) for up to
+    ~2 dozen catalog NEOs on some dates.
+    """
+
+    def test_k11e47l_case(self):
+        """2011 EL47-class failure: e=0.855, M just past 2*pi (residual was 36 rad)."""
+        E = solve_kepler(7.859331, 0.855)
+        assert kepler_residual(E, 0.855, 7.859331) < 1e-9
+
+    def test_k24b06t_case(self):
+        """2024 BT6-class failure: e=0.876, M=8.238 (residual was 1.9 rad)."""
+        E = solve_kepler(8.238003, 0.876)
+        assert kepler_residual(E, 0.876, 8.238003) < 1e-9
+
+    def test_high_e_large_M_sweep(self):
+        """High-e orbits must converge for M spanning many revolutions."""
+        M_vals = np.linspace(-50.0, 50.0, 401)
+        for e in [0.8, 0.85, 0.9, 0.95, 0.99]:
+            e_arr = np.full_like(M_vals, e)
+            E = solve_kepler_vectorized(M_vals, e_arr)
+            residuals = kepler_residual(E, e_arr, M_vals)
+            assert np.all(residuals < 1e-9), \
+                f"e={e}: max residual {residuals.max():.2e}"
+
+    def test_negative_M(self):
+        """Backwards propagation (negative rates) produces negative M."""
+        for M, e in [(-0.5, 0.1), (-3.0, 0.9), (-7.0, 0.85)]:
+            E = solve_kepler(M, e)
+            assert kepler_residual(E, e, M) < 1e-9
 
 
 # ── Coordinate transforms ────────────────────────────────────────
